@@ -24,7 +24,8 @@ function* xfetch({ pname, toParent, send: toSelf }, { url }) {
   })();
 
   yield* runDispatch(pname, (msg)=> {
-    if (msg.type === 'ABORT') {
+    if (msg.type === 'STOP') {
+      console.log('abort');
       controller.abort();
     }
     if (msg.type === 'ABORTED') {
@@ -39,7 +40,7 @@ function* xfetch({ pname, toParent, send: toSelf }, { url }) {
       toParent(msg);
       state.code = 'ok';
     }
-  }, ()=> state.code !== 'pending');
+  }, ()=> state.code !== 'pending', true);
 }
 
 export { xfetch };

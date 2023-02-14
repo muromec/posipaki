@@ -1,20 +1,18 @@
 import { runDispatch } from './core.js';
 
-function* supervise({pname, toParent, fork}, wrap = a=> a) {
+function* supervise({pname, toParent, fork}, wrap = a=> a, debugLevel) {
   const state = wrap({ processes: [], phase: 'wait' });
   yield state;
 
-  const hasExited = () => 
-    state.phase === 'running' && state.processes.length === 0;
+  const hasExited = () => state.phase === 'stopping';
 
   yield* runDispatch(pname, (msg)=> {
     if (msg.type === 'RUN') {
-      const newProcess = fork(msg.fn, msg.pname)(...msg.args);
-      state.processes.push(newProcess);
+      fork(msg.fn, msg.pname)(...msg.args);
       state.phase = 'running';
     }
-    if (msg.type === 'ERROR' || msg.type === 'ABORT') {
-      state.processes.forEach(p=> p.send({ type: 'ABORT'}));
+    if (msg.type === 'ERROR' || msg.type === 'STOP') {
+      state.phase = 'stopping';
     }
     if (msg.type === 'EXIT') {
       state.processes = state.processes.filter(
@@ -24,7 +22,7 @@ function* supervise({pname, toParent, fork}, wrap = a=> a) {
     if (msg.type === 'OK') {
       toParent(msg);
     }
-  }, hasExited);
+  }, hasExited, debugLevel);
 }
 
 function attach(supervisor, fn, pname) {

@@ -8,7 +8,7 @@ function* main({ pname, fork }) {
   const state = reactive({ s: null, r: null });
   yield state;
 
-  const s = fork(supervise, 'super')(reactive);
+  const s = fork(supervise, 'super')(reactive, true);
   const urls = [
     new URL('https://api.myip.com'),
     new URL('https://x.myip.com'),
@@ -20,8 +20,8 @@ function* main({ pname, fork }) {
   state.s = s;
 
   yield* runDispatch(pname, (msg)=> {
-    if (msg.type === 'ABORT') {
-      s.send({ type: 'ABORT'});
+    if (msg.type === 'STOP') {
+      state.s = null;
     }
     if (msg.type === 'EXIT') {
       state.s = null;
@@ -29,7 +29,7 @@ function* main({ pname, fork }) {
     if (msg.type === 'OK') {
       state.r = msg.text
     }
-  }, () => !state.s);
+  }, () => !state.s, true);
 }
 
 const m = spawn(main, 'main')();
@@ -45,6 +45,6 @@ watch(states, (value)=> {
 watch(m.state, () => {
   console.log('m', m.state.r);
 });
-//m.send({ type: 'ABORT', p: null});
+//m.send({ type: 'STOP', p: null});
 
 await m.wait();
