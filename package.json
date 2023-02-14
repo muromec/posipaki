@@ -1,0 +1,6 @@
+{
+  "type": "module",
+  "devDependencies": {
+    "vue": "^3.2.47"
+  }
+}
