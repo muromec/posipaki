@@ -1,6 +1,9 @@
 import { runDispatch } from './core.js';
 
 function* xfetch({ pname, toParent, send: toSelf }, { url }) {
+  const state = { code: 'pending' };
+  yield state;
+
   const controller = new AbortController();
   const signal = controller.signal;
 
@@ -18,18 +21,11 @@ function* xfetch({ pname, toParent, send: toSelf }, { url }) {
         toSelf({ type: 'ERROR', pname });
       }
     }
-    toSelf({ type: 'DONE' });
   })();
 
-  yield* runDispatch(pname, (state, msg)=> {
-    if (msg.type === 'INIT') {
-      state.code = 'pending';
-    }
+  yield* runDispatch(pname, (msg)=> {
     if (msg.type === 'ABORT') {
       controller.abort();
-    }
-    if (msg.type === 'DONE') {
-      return 'STOPPED';
     }
     if (msg.type === 'ABORTED') {
       toParent(msg);
@@ -43,7 +39,7 @@ function* xfetch({ pname, toParent, send: toSelf }, { url }) {
       toParent(msg);
       state.code = 'ok';
     }
-  });
+  }, ()=> state.code !== 'pending');
 }
 
 export { xfetch };

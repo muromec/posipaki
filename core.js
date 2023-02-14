@@ -1,6 +1,5 @@
 function spawn(fn, pname, toParent = ()=> null) {
   let current = null;
-  let state = {};
   let buffer = [];
   let resolveExit;
   let exitPromise = new Promise(resolve => {
@@ -8,7 +7,7 @@ function spawn(fn, pname, toParent = ()=> null) {
   });
 
   function send ({ to = pparent, ...msg }) {
-    let ret = to.next({ state, reply: toSelf, msg });
+    let ret = to.next({ msg });
     tick();
     if (ret.done) {
       resolveExit();
@@ -42,13 +41,15 @@ function spawn(fn, pname, toParent = ()=> null) {
       fork,
       toParent: toBuffer,
       id: Symbol(pname),
-      state,
+      state: null,
       wait,
     };
     const task = watchExit(fn)(process, ...args);
     current = task;
+    let ret = task.next();
+    process.state = ret.value;
     task.next();
-    toSelf({ type: 'INIT' });
+
     return process;
   }
 }
@@ -60,16 +61,12 @@ function watchExit(fn) {
   }
 }
 
-function* runDispatch(name, fn) {
-  let state = null;
+function* runDispatch(name, fn, readyFn = ()=> false) {
   let msg;
-  while(true) {
-    ({state, msg} = yield state);
+  while(!readyFn()) {
+    ({msg} = yield);
     console.log('msg', name, ' <- ', msg);
-    let ret = fn(state, msg);
-    if (ret === 'STOPPED') {
-      break;
-    }
+    fn(msg);
   }
 }
 export { spawn, runDispatch };
