@@ -2,34 +2,47 @@ function spawn(fn, pname, toParent = ()=> null) {
   let current = null;
   let buffer = [];
   let resolveExit;
+  let children = [];
   let exitPromise = new Promise(resolve => {
     resolveExit = resolve;
   });
 
   function send ({ to = pparent, ...msg }) {
-    let ret = to.next({ msg });
-    tick();
-    if (ret.done) {
-      resolveExit();
-    }
+    tick(to.next({ msg }));
   }
-  function tick () {
+
+  function tick (ret) {
     let msg;
     while(msg = buffer.pop()) {
-      toParent({pname, ...msg});
+      toSelf({pname, ...msg});
+    }
+    if (ret && ret.done) {
+      resolveExit();
     }
   }
   function toSelf(msg) {
     send({ to: current, ...msg});
   }
-  function fromChild(msg) {
-    toSelf(msg);
-  }
   function toBuffer(msg) {
     buffer.push(msg);
+    setImmediate(tick);
   }
+  function fromChild(msg) {
+    if (msg.type === 'EXIT') {
+      children = children.filter(p=> p !== msg.pid);
+    }
+    toBuffer(msg);
+  }
+  function toAllChildren(msg) {
+    children.forEach(p => p.send(msg));
+  }
+
   function fork (fn, pname) {
-    return spawn(fn, pname, fromChild);
+    return (...args) => {
+      const child =  spawn(fn, pname, fromChild)(...args);
+      children.push(child);
+      return child;
+    }
   }
   function wait () {
     return exitPromise;
@@ -37,9 +50,10 @@ function spawn(fn, pname, toParent = ()=> null) {
   return (...args) => {
     const process = {
       pname,
-      send: toSelf,
+      send: toBuffer,
       fork,
-      toParent: toBuffer,
+      toParent,
+      toAllChildren,
       id: Symbol(pname),
       state: null,
       wait,
@@ -48,7 +62,7 @@ function spawn(fn, pname, toParent = ()=> null) {
     current = task;
     let ret = task.next();
     process.state = ret.value;
-    task.next();
+    tick(task.next());
 
     return process;
   }
@@ -57,15 +71,22 @@ function spawn(fn, pname, toParent = ()=> null) {
 function watchExit(fn) {
   return function* (process, ...args) {
     yield* fn(process, ...args);
+    process.toAllChildren({ type: 'STOP' });
     process.toParent({ type: 'EXIT', pid: process.id});
   }
 }
 
-function* runDispatch(name, fn, readyFn = ()=> false) {
+function debugLog(level, ...args) {
+  if (level) {
+    console.log(...args);
+  }
+}
+
+function* runDispatch(name, fn, readyFn = ()=> false, debugLevel = false) {
   let msg;
   while(!readyFn()) {
     ({msg} = yield);
-    console.log('msg', name, ' <- ', msg);
+    debugLog(debugLevel, 'msg', name, ' <- ', msg);
     fn(msg);
   }
 }
