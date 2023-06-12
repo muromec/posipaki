@@ -1,3 +1,7 @@
+function defer(fn) {
+  (window.setImmediate || requestIdleCallback)(fn);
+}
+
 function spawn(fn, pname, toParent = ()=> null) {
   let current = null;
   let buffer = [];
@@ -25,7 +29,7 @@ function spawn(fn, pname, toParent = ()=> null) {
   }
   function toBuffer(msg) {
     buffer.push(msg);
-    setImmediate(tick);
+    defer(tick);
   }
   function fromChild(msg) {
     if (msg.type === 'EXIT') {
