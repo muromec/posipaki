@@ -98,7 +98,6 @@ class Process<Args, State> {
     this.notify();
     if (ret && ret.done) {
       this.exitWaiter.resolve();
-      this.subscribers.splice(0, this.subscribers.length);
     }
   }
 
@@ -113,6 +112,10 @@ class Process<Args, State> {
 
   notify() {
     this.subscribers.forEach((f) => f());
+  }
+
+  get isListenedTo() {
+    return this.subscribers.length > 0;
   }
 
   subscribe(f: NotifyFn) {
