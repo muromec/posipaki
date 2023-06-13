@@ -10,6 +10,7 @@ function spawn(fn, pname, toParent = ()=> null) {
   let exitPromise = new Promise(resolve => {
     resolveExit = resolve;
   });
+  let subscribers = [];
 
   function send ({ to = pparent, ...msg }) {
     tick(to.next({ msg }));
@@ -17,11 +18,13 @@ function spawn(fn, pname, toParent = ()=> null) {
 
   function tick (ret) {
     let msg;
-    while(msg = buffer.pop()) {
+    while(msg = buffer.shift()) {
       toSelf({pname, ...msg});
     }
+    notify();
     if (ret && ret.done) {
       resolveExit();
+      subscribers.splice(0, subscribers.length);
     }
   }
   function toSelf(msg) {
@@ -51,10 +54,26 @@ function spawn(fn, pname, toParent = ()=> null) {
   function wait () {
     return exitPromise;
   }
+  function notify() {
+    subscribers.forEach((f) => f());
+  }
+
+  function subscribe(f) {
+    subscribers.push(f);
+    return () => {
+      const idx = subscribers.indexOf(f);
+      if (idx < 0) {
+        return;
+      }
+      subscribers.splice(idx, 1);
+    }
+  }
+
   return (...args) => {
     const process = {
       pname,
       send: toBuffer,
+      subscribe,
       fork,
       toParent,
       toAllChildren,
