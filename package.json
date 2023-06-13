@@ -1,12 +1,17 @@
 {
   "type": "module",
-  "name": "pspki",
+  "name": "posipaki",
   "version": "0.3.2",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
     "build": "tsc"
   },
+  "files": [
+    "dist/*js",
+    "dist/*map",
+    "dist/*d.ts"
+  ],
   "devDependencies": {
     "typescript": "^4.4.3"
   }
