@@ -1,7 +1,7 @@
 {
   "type": "module",
   "name": "posipaki",
-  "version": "0.3.2",
+  "version": "0.3.3",
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "scripts": {
@@ -10,7 +10,8 @@
   "files": [
     "dist/*js",
     "dist/*map",
-    "dist/*d.ts"
+    "dist/*d.ts",
+    "src/*ts"
   ],
   "devDependencies": {
     "typescript": "^4.4.3"
