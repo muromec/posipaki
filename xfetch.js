@@ -1,4 +1,4 @@
-import { runDispatch } from './core.js';
+import { runDispatch } from './index.js';
 
 function isJsonHelper(res) {
   const ct = res.headers.get('content-type');

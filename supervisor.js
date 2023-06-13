@@ -1,4 +1,4 @@
-import { runDispatch } from './core.js';
+import { runDispatch } from './index.js';
 
 function* supervise({pname, toParent, fork}, wrap = a=> a, debugLevel) {
   const state = wrap({ processes: [], phase: 'wait' });

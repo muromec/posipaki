@@ -1,7 +1,9 @@
 {
   "type": "module",
   "name": "pspki",
-  "version": "0.1.2",
+  "version": "0.2.0",
+  "main": "./index.js",
+  "types": "./index.d.ts",
   "devDependencies": {
     "vue": "^3.2.47"
   }

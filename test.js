@@ -1,4 +1,4 @@
-import { spawn, runDispatch } from './core.js';
+import { spawn, runDispatch } from './index.js';
 import { supervise, attach } from './supervisor.js';
 import { xfetch } from './xfetch.js';
 

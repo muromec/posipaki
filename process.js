@@ -1,3 +1,5 @@
+import { watchExit, defer, makeWaiter } from './util.js';
+
 export function spawn(fn, pname, toParent) {
   return (...args) => {
     const process = new Process(fn, pname, toParent);
@@ -6,25 +8,6 @@ export function spawn(fn, pname, toParent) {
   };
 }
 const noop = ()=> null;
-
-function watchExit(process) {
-  return function* (ctx, ...args) {
-    yield* process.pgenerator(ctx, ...args);
-    process.toAllChildren({ type: 'STOP' });
-    process.toParent({ type: 'EXIT', pid: process.id});
-  }
-}
-function defer(fn) {
-  (globalThis.setImmediate || requestIdleCallback)(fn);
-}
-
-function makeWaiter() {
-  let resolve;
-  let promise = new Promise(_resolve => {
-    resolve = _resolve;
-  });
-  return {promise, resolve};
-}
 
 export default class Process {
   constructor(fn, pname, toParent) {
