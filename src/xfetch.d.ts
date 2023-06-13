@@ -1,4 +1,4 @@
-declare module 'pspki/xfetch.js';
+declare module 'pspki/src/xfetch.js';
 
 declare type FetchState<DataType> = {
   data: DataType;
