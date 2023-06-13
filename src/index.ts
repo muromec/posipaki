@@ -1,4 +1,4 @@
-import Process, { spawn } from './process';
-import { runDispatch } from './util';
+import Process, { spawn, Message, ProcessCtx, ProcessFn } from './process.js';
+import { runDispatch } from './util.js';
 
-export { Process, spawn, runDispatch }
+export { Process, spawn, runDispatch, Message, ProcessCtx, ProcessFn }

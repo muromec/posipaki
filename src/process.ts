@@ -8,21 +8,24 @@ type ExitMessage = {
   pid: Symbol;
 };
 
-type ProcessGenerator<ProcessState> =  Generator<ProcessState, void, Message>;
+type ProcessGenerator<ProcessState> =  Generator<ProcessState | null, void, Message>;
+type Fork<ChildArgs, ChildState> = (fn : ProcessFn<ChildArgs, ChildState>, pname : string) => (args: ChildArgs) => Process<ChildArgs, ChildState>;
 
-type ProcessCtx = {
-};
 
-type ProcessFn<Args, State> = (ctx: ProcessCtx, args: Args) => ProcessGenerator<State>;
+export type ProcessFn<Args, State> = (ctx: ProcessCtx, args: Args) => ProcessGenerator<State>;
 type ProcessMessageCb = (msg: Message | ExitMessage) => void;
+
+export type ProcessCtx = {
+  pname: string,
+  fork: Fork<unknown, unknown>,
+  send: (msg: Message) => void,
+  toParent: ProcessMessageCb,
+};
 
 type NotifyFn = () => void;
 type UnsubscibeFn = () => void;
 
-export type Pctx = {
-};
-
-export function spawn<Args, State>(fn: ProcessFn<Args, State>, pname: string, toParent: ProcessMessageCb) {
+export function spawn<Args, State>(fn: ProcessFn<Args, State>, pname: string, toParent?: ProcessMessageCb) {
   return (args: Args): Process<Args, State> => {
     const process = new Process(fn, pname, toParent);
     process.start(args);
@@ -36,9 +39,9 @@ class Process<Args, State> {
   pname: string;
   toParent: ProcessMessageCb;
   id: Symbol;
+  state: State | null;
 
   private current: ProcessGenerator<State> | null;
-  private state: State | null;
   private buffer: Array<Message>;
   private children: Array<Process<unknown, unknown>>;
   private subscribers: Array<NotifyFn>;
@@ -61,7 +64,7 @@ class Process<Args, State> {
   }
 
   start(arg0: Args) {
-    const ctx: Pctx = {
+    const ctx: ProcessCtx = {
       pname: this.pname,
       fork: this.fork.bind(this),
       send: this.send.bind(this),
@@ -83,7 +86,7 @@ class Process<Args, State> {
     }
   }
 
-  _tick (ret: IteratorResult<State, void> | null) {
+  _tick (ret: IteratorResult<State | null, void> | null) {
     if (!this.current) {
       return;
     }

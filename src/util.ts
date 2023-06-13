@@ -1,5 +1,5 @@
 import type Process from './process';
-import type { Pctx, Message } from './process';
+import type { ProcessCtx, Message } from './process';
 
 function debugLog(level: boolean, ...args: Array<unknown>) {
   if (level) {
@@ -11,17 +11,17 @@ type ReducerClosure = (msg: Message) => void;
 type ReadyFn = () => boolean;
 type NotifyFn = () => void;
 
-function* runDispatch(name: string, fn : ReducerClosure, readyFn: ReadyFn = ()=> false, debugLevel = false) {
+function* runDispatch(name: string, fn : ReducerClosure, readyFn: ReadyFn = ()=> false, debugLevel = false) : Generator<null, void, Message> {
   let msg: Message;
   while(!readyFn()) {
-    msg = yield;
+    msg = yield null;
     debugLog(debugLevel, 'msg', name, ' <- ', msg);
     fn(msg);
   }
 }
 
 function watchExit<Args, State>(process: Process<Args, State>) {
-  return function* (ctx: Pctx, arg0: Args) {
+  return function* (ctx: ProcessCtx, arg0: Args) {
     yield* process.pgenerator(ctx, arg0);
     process.toAllChildren({ type: 'STOP' });
     process.toParent({ type: 'EXIT', pid: process.id});
