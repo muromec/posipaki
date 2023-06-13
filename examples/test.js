@@ -1,6 +1,6 @@
-import { spawn, runDispatch } from './index.js';
-import { supervise, attach } from './supervisor.js';
-import { xfetch } from './xfetch.js';
+import { spawn, runDispatch } from '../src/index.js';
+import { supervise, attach } from '../src/supervisor.js';
+import { xfetch } from '../src/xfetch.js';
 
 import { reactive, computed, watch } from 'vue'
 

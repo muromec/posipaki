@@ -1,5 +1,5 @@
-import { spawn, runDispatch } from './index.js';
-import { pipe } from './pipe.js';
+import { spawn, runDispatch } from '../src/index.js';
+import { pipe } from '../src/pipe.js';
 
 const timer = setTimeout(()=> null, 1000 * 30);
 

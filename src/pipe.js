@@ -1,4 +1,4 @@
-import { runDispatch } from './core.js';
+import { runDispatch } from './util.js';
 
 function pipe(fns) {
   return function* ({ pname, fork }, params) {

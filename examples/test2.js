@@ -1,4 +1,4 @@
-import { spawn, runDispatch } from './index.js';
+import { spawn, runDispatch } from '../src/index.js';
 
 const timer = setTimeout(()=> null, 1000 * 30);
 
