@@ -5,7 +5,7 @@ export interface Message {
 };
 
 type ProcessGenerator<ProcessState, InMessage> =  Generator<ProcessState | null, void, InMessage>;
-type Fork = <ChildArgs, ChildState, InMessage extends Message, OutMessage extends ExitMessage>(fn : ProcessFn<ChildArgs, ChildState, InMessage, OutMessage>, pname : string) => (args: ChildArgs) => Process<ChildArgs, ChildState, InMessage, OutMessage>;
+type Fork = <ChildArgs, ChildState, InMessage extends Message, OutMessage extends Message>(fn : ProcessFn<ChildArgs, ChildState, InMessage, OutMessage>, pname : string) => (args: ChildArgs) => Process<ChildArgs, ChildState, InMessage, OutMessage>;
 
 
 export type ProcessFn<Args, State, InMessage, OutMessage> = (ctx: ProcessCtx<InMessage, OutMessage>, args: Args) => ProcessGenerator<State, InMessage>;
@@ -21,7 +21,7 @@ export type ProcessCtx<IM, OM> = {
 type NotifyFn = () => void;
 type UnsubscibeFn = () => void;
 
-export function spawn<Args, State, InMessage extends Message=Message, OutMessage extends ExitMessage=ExitMessage>(fn: ProcessFn<Args, State, InMessage, OutMessage>, pname: string, toParent?: ProcessMessageCb<OutMessage>) {
+export function spawn<Args, State, InMessage extends Message=Message, OutMessage extends Message=ExitMessage>(fn: ProcessFn<Args, State, InMessage, OutMessage>, pname: string, toParent?: ProcessMessageCb<OutMessage>) {
   return (args: Args): Process<Args, State, InMessage, OutMessage> => {
     const process = new Process<Args, State, InMessage, OutMessage>(fn, pname, toParent);
     process.start(args);
@@ -30,7 +30,7 @@ export function spawn<Args, State, InMessage extends Message=Message, OutMessage
 }
 const noop = ()=> null;
 
-class Process<Args, State, InMessage extends Message, OutMessage extends ExitMessage> {
+class Process<Args, State, InMessage extends Message, OutMessage extends Message> {
   pgenerator: ProcessFn<Args, State, InMessage, OutMessage>;
   pname: string;
   toParent: ProcessMessageCb<OutMessage>;
@@ -39,7 +39,7 @@ class Process<Args, State, InMessage extends Message, OutMessage extends ExitMes
 
   private current: ProcessGenerator<State, InMessage> | null;
   private buffer: Array<InMessage>;
-  private children: Array<Process<unknown, unknown, Message, ExitMessage>>;
+  private children: Array<Process<unknown, unknown, Message, Message>>;
   private subscribers: Array<NotifyFn>;
   private exitWaiter: Waiter;
 
@@ -73,13 +73,13 @@ class Process<Args, State, InMessage extends Message, OutMessage extends ExitMes
     this._tick(task.next());
   }
 
-  fork<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends ExitMessage> (fn : ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>, pname : string) {
+  fork<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends Message> (fn : ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>, pname : string) {
     return (args: ChildArgs): Process<ChildArgs, ChildState, ChildIM, ChildOM>  => {
       // not enough typescript power in this one
       const fromChild = this.fromChild.bind(this) as unknown;
       const child =  new Process<ChildArgs, ChildState, ChildIM, ChildOM>(fn, pname, fromChild as ProcessMessageCb<ChildOM>);
       // we don't keep track of what is happening down there
-      this.children.push(child as unknown as Process<unknown, unknown, Message, ExitMessage>);
+      this.children.push(child as unknown as Process<unknown, unknown, Message, Message>);
       child.start(args);
       return child;
     }

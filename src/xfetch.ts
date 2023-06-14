@@ -1,4 +1,4 @@
-import { runDispatch } from './util.js';
+import { ExitMessage, runDispatch } from './util.js';
 import type { ProcessCtx, Message } from './process';
 
 function isJsonHelper(res : Response) {
@@ -24,10 +24,12 @@ type FetchArgsSend<T> = {
 export type FetchArgs<T> = FetchArgsGet | FetchArgsSend<T>;
 
 export type FetchMessage<T> = {
-  type: string,
+  type: 'OK',
   data?: T | null,
   text?: string | null,
-};
+}
+| { type: 'ERROR' | 'LOADING' | 'ABORTED' | 'STOP' }
+| ExitMessage;
 
 type FetchGenerator<T, M> = Generator<FetchState<T> | null, void, M>;
 
@@ -69,7 +71,7 @@ function* xfetch<Type>({ pname, toParent, send } : ProcessCtx<FetchMessage<Type>
 
   const isDone = ()=> !(state.code === 'pending' || state.code === 'loading')
 
-  yield* runDispatch(pname, (msg : FetchMessage<Type>)=> {
+  yield* runDispatch<FetchMessage<Type>>(pname, (msg : FetchMessage<Type>)=> {
     if (msg.type === 'STOP') {
       controller.abort();
     }

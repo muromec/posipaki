@@ -7,12 +7,12 @@ function debugLog(level: boolean, ...args: Array<unknown>) {
   }
 }
 
-type ReducerClosure = (msg: Message) => void;
+type ReducerClosure<M> = (msg: M) => void;
 type ReadyFn = () => boolean;
 type NotifyFn = () => void;
 
-function* runDispatch(name: string, fn : ReducerClosure, readyFn: ReadyFn = ()=> false, debugLevel = false) : Generator<null, void, Message> {
-  let msg: Message;
+function* runDispatch<M>(name: string, fn : ReducerClosure<M>, readyFn: ReadyFn = ()=> false, debugLevel = false) : Generator<null, void, M> {
+  let msg: M;
   while(!readyFn()) {
     msg = yield null;
     debugLog(debugLevel, 'msg', name, ' <- ', msg);
@@ -25,7 +25,7 @@ export type ExitMessage = {
   pid: Symbol;
 };
 
-function watchExit<Args, State, InMessage extends Message, OutMessage extends ExitMessage>(process: Process<Args, State, InMessage, OutMessage>) {
+function watchExit<Args, State, InMessage extends Message, OutMessage extends (Message | ExitMessage)>(process: Process<Args, State, InMessage, OutMessage>) {
   return function* (ctx: ProcessCtx<InMessage, OutMessage>, arg0: Args) {
     yield* process.pgenerator(ctx, arg0);
     process.toAllChildren({ type: 'STOP' });
