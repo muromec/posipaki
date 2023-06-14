@@ -20,11 +20,16 @@ function* runDispatch(name: string, fn : ReducerClosure, readyFn: ReadyFn = ()=>
   }
 }
 
-function watchExit<Args, State>(process: Process<Args, State>) {
-  return function* (ctx: ProcessCtx, arg0: Args) {
+export type ExitMessage = {
+  type: 'EXIT';
+  pid: Symbol;
+};
+
+function watchExit<Args, State, InMessage extends Message, OutMessage extends ExitMessage>(process: Process<Args, State, InMessage, OutMessage>) {
+  return function* (ctx: ProcessCtx<InMessage, OutMessage>, arg0: Args) {
     yield* process.pgenerator(ctx, arg0);
     process.toAllChildren({ type: 'STOP' });
-    process.toParent({ type: 'EXIT', pid: process.id});
+    process.toParent({ type: 'EXIT', pid: process.id} as OutMessage);
   }
 }
 

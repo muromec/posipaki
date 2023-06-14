@@ -1,53 +1,49 @@
-import { watchExit, Waiter, defer, makeWaiter } from './util.js';
+import { ExitMessage, watchExit, Waiter, defer, makeWaiter } from './util.js';
 
-export type Message = {
+export interface Message {
   type: string;
 };
-type ExitMessage = {
-  type: 'EXIT';
-  pid: Symbol;
-};
 
-type ProcessGenerator<ProcessState> =  Generator<ProcessState | null, void, Message>;
-type Fork = <ChildArgs, ChildState>(fn : ProcessFn<ChildArgs, ChildState>, pname : string) => (args: ChildArgs) => Process<ChildArgs, ChildState>;
+type ProcessGenerator<ProcessState, InMessage> =  Generator<ProcessState | null, void, InMessage>;
+type Fork = <ChildArgs, ChildState, InMessage extends Message, OutMessage extends ExitMessage>(fn : ProcessFn<ChildArgs, ChildState, InMessage, OutMessage>, pname : string) => (args: ChildArgs) => Process<ChildArgs, ChildState, InMessage, OutMessage>;
 
 
-export type ProcessFn<Args, State> = (ctx: ProcessCtx, args: Args) => ProcessGenerator<State>;
-type ProcessMessageCb = (msg: Message | ExitMessage) => void;
+export type ProcessFn<Args, State, InMessage, OutMessage> = (ctx: ProcessCtx<InMessage, OutMessage>, args: Args) => ProcessGenerator<State, InMessage>;
+type ProcessMessageCb<M> = (msg: M) => void;
 
-export type ProcessCtx = {
+export type ProcessCtx<IM, OM> = {
   pname: string,
   fork: Fork,
-  send: (msg: Message) => void,
-  toParent: ProcessMessageCb,
+  send: (msg: IM) => void,
+  toParent: ProcessMessageCb<OM>,
 };
 
 type NotifyFn = () => void;
 type UnsubscibeFn = () => void;
 
-export function spawn<Args, State>(fn: ProcessFn<Args, State>, pname: string, toParent?: ProcessMessageCb) {
-  return (args: Args): Process<Args, State> => {
-    const process = new Process(fn, pname, toParent);
+export function spawn<Args, State, InMessage extends Message=Message, OutMessage extends ExitMessage=ExitMessage>(fn: ProcessFn<Args, State, InMessage, OutMessage>, pname: string, toParent?: ProcessMessageCb<OutMessage>) {
+  return (args: Args): Process<Args, State, InMessage, OutMessage> => {
+    const process = new Process<Args, State, InMessage, OutMessage>(fn, pname, toParent);
     process.start(args);
     return process;
   };
 }
 const noop = ()=> null;
 
-class Process<Args, State> {
-  pgenerator: ProcessFn<Args, State>;
+class Process<Args, State, InMessage extends Message, OutMessage extends ExitMessage> {
+  pgenerator: ProcessFn<Args, State, InMessage, OutMessage>;
   pname: string;
-  toParent: ProcessMessageCb;
+  toParent: ProcessMessageCb<OutMessage>;
   id: Symbol;
   state: State | null;
 
-  private current: ProcessGenerator<State> | null;
-  private buffer: Array<Message>;
-  private children: Array<Process<unknown, unknown>>;
+  private current: ProcessGenerator<State, InMessage> | null;
+  private buffer: Array<InMessage>;
+  private children: Array<Process<unknown, unknown, Message, ExitMessage>>;
   private subscribers: Array<NotifyFn>;
   private exitWaiter: Waiter;
 
-  constructor(fn: ProcessFn<Args, State>, pname: string, toParent: ProcessMessageCb | undefined) {
+  constructor(fn: ProcessFn<Args, State, InMessage, OutMessage>, pname: string, toParent: ProcessMessageCb<OutMessage> | undefined) {
     this.pgenerator = fn;
     this.pname = pname;
     this.toParent = toParent || noop;
@@ -64,23 +60,26 @@ class Process<Args, State> {
   }
 
   start(arg0: Args) {
-    const ctx: ProcessCtx = {
+    const ctx: ProcessCtx<InMessage, OutMessage> = {
       pname: this.pname,
       fork: this.fork.bind(this),
       send: this.send.bind(this),
       toParent: this.toParent,
     };
-    const task = watchExit<Args, State>(this)(ctx, arg0);
+    const task = watchExit<Args, State, InMessage, OutMessage>(this)(ctx, arg0);
     this.current = task;
     let ret = task.next();
     this.state = ret.value || null;
     this._tick(task.next());
   }
 
-  fork<ChildArgs, ChildState> (fn : ProcessFn<ChildArgs, ChildState>, pname : string) {
-    return (args: ChildArgs): Process<ChildArgs, ChildState>  => {
-      const child =  new Process<ChildArgs, ChildState>(fn, pname, this.fromChild.bind(this));
-      this.children.push(child as Process<unknown, unknown>);
+  fork<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends ExitMessage> (fn : ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>, pname : string) {
+    return (args: ChildArgs): Process<ChildArgs, ChildState, ChildIM, ChildOM>  => {
+      // not enough typescript power in this one
+      const fromChild = this.fromChild.bind(this) as unknown;
+      const child =  new Process<ChildArgs, ChildState, ChildIM, ChildOM>(fn, pname, fromChild as ProcessMessageCb<ChildOM>);
+      // we don't keep track of what is happening down there
+      this.children.push(child as unknown as Process<unknown, unknown, Message, ExitMessage>);
       child.start(args);
       return child;
     }
@@ -91,7 +90,7 @@ class Process<Args, State> {
       return;
     }
 
-    let msg: Message | undefined;
+    let msg: InMessage | undefined;
     while(msg = this.buffer.shift()) {
       this._tick(this.current.next(msg));
     }
@@ -105,7 +104,7 @@ class Process<Args, State> {
     this.children.forEach(p => p.send(msg));
   }
 
-  send(msg: Message) {
+  send(msg: InMessage) {
     this.buffer.push(msg);
     defer(()=> this._tick(null));
   }
@@ -133,9 +132,9 @@ class Process<Args, State> {
     return this.exitWaiter.promise;
   }
 
-  fromChild(msg: Message | ExitMessage) {
+  fromChild(msg: InMessage) {
     if (msg.type === 'EXIT') {
-      this.children = this.children.filter(p=> p.id !== (msg as ExitMessage).pid);
+      this.children = this.children.filter(p=> p.id !== (msg as unknown as ExitMessage).pid);
     }
     this.send(msg);
   }

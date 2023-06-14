@@ -29,16 +29,16 @@ type FetchMessage<T> = {
   text?: string | null,
 };
 
-type FetchGenerator<T> = Generator<FetchState<T> | null, void, Message>;
+type FetchGenerator<T, M> = Generator<FetchState<T> | null, void, M>;
 
-function* xfetch<Type>({ pname, toParent, send } : ProcessCtx, { method='GET', url, body } : FetchArgs<Type>) : FetchGenerator<Type> {
+function* xfetch<Type>({ pname, toParent, send } : ProcessCtx<FetchMessage<Type>, FetchMessage<Type>>, { method='GET', url, body } : FetchArgs<Type>) : FetchGenerator<Type, FetchMessage<Type>> {
   const state: FetchState<Type> = { code: 'pending', data: null, text: null };
   yield state;
 
   const controller = new AbortController();
   const signal = controller.signal;
 
-  const toSelf = (msg: unknown) => send(msg as Message);
+  const toSelf = send;
 
   (async function do_request() {
     try {
@@ -59,10 +59,10 @@ function* xfetch<Type>({ pname, toParent, send } : ProcessCtx, { method='GET', u
     } catch (e) {
       const isAborted = (e instanceof DOMException && e.name === 'AbortError');
       if (isAborted) {
-        toSelf({ type: 'ABORTED', pname });
+        toSelf({ type: 'ABORTED' });
       } else {
         //console.log('e', e);
-        toSelf({ type: 'ERROR', pname });
+        toSelf({ type: 'ERROR' });
       }
     }
   })();
