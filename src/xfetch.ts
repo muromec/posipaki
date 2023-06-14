@@ -23,7 +23,7 @@ type FetchArgsSend<T> = {
 };
 export type FetchArgs<T> = FetchArgsGet | FetchArgsSend<T>;
 
-type FetchMessage<T> = {
+export type FetchMessage<T> = {
   type: string,
   data?: T | null,
   text?: string | null,
