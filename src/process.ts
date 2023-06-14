@@ -9,7 +9,7 @@ type ExitMessage = {
 };
 
 type ProcessGenerator<ProcessState> =  Generator<ProcessState | null, void, Message>;
-type Fork<ChildArgs, ChildState> = (fn : ProcessFn<ChildArgs, ChildState>, pname : string) => (args: ChildArgs) => Process<ChildArgs, ChildState>;
+type Fork = <ChildArgs, ChildState>(fn : ProcessFn<ChildArgs, ChildState>, pname : string) => (args: ChildArgs) => Process<ChildArgs, ChildState>;
 
 
 export type ProcessFn<Args, State> = (ctx: ProcessCtx, args: Args) => ProcessGenerator<State>;
@@ -17,7 +17,7 @@ type ProcessMessageCb = (msg: Message | ExitMessage) => void;
 
 export type ProcessCtx = {
   pname: string,
-  fork: Fork<unknown, unknown>,
+  fork: Fork,
   send: (msg: Message) => void,
   toParent: ProcessMessageCb,
 };
@@ -78,8 +78,8 @@ class Process<Args, State> {
   }
 
   fork<ChildArgs, ChildState> (fn : ProcessFn<ChildArgs, ChildState>, pname : string) {
-    return (args: ChildArgs) => {
-      const child =  new Process(fn, pname, this.fromChild.bind(this));
+    return (args: ChildArgs): Process<ChildArgs, ChildState>  => {
+      const child =  new Process<ChildArgs, ChildState>(fn, pname, this.fromChild.bind(this));
       this.children.push(child as Process<unknown, unknown>);
       child.start(args);
       return child;
