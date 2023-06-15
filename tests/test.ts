@@ -20,6 +20,12 @@ describe('Process', () => {
     expect(proc.state).toEqual({'state': 's1'});
   });
 
+  it('should set process id to unique symbol created from the process name', () => {
+    const proc = spawn(p1, 'p1')(null);
+    expect(proc.id).not.toBe(Symbol.for('p1'));
+    expect(proc.id.toString()).toEqual('Symbol(p1)');
+  });
+
   function* p2() {
     const state = {state: 'p1'};
     yield state;
@@ -30,7 +36,7 @@ describe('Process', () => {
   it('should change internal state in response to message', () => {
     const proc = spawn<Nil, SimpleStore, ChangeM>(p2, 'p2')(null);
     proc.send({ type: 'CHANGE', data: 's2' });
-    proc._tick(null);
+    proc._tick();
     expect(proc.state).toEqual({'state': 's2'});
   });
 
@@ -39,8 +45,8 @@ describe('Process', () => {
     const proc = spawn<Nil, SimpleStore, ChangeM>(p2, 'p2')(null);
     proc.subscribe(callback);
     proc.send({ type: 'CHANGE', data: 's2' });
-    proc._tick(null);
-    expect(callback).toBeCalledTimes(2); // second time on exit
+    proc._tick();
+    expect(callback).toBeCalledTimes(1);
   });
 
   it('should resolve proc.wait() when generator runs out', async () => {
@@ -53,9 +59,9 @@ describe('Process', () => {
     const proc = spawn<Nil, SimpleStore, ChangeM>(p2, 'p2')(null);
     const res = proc.wait();
     expect(inspect(res)).toMatch(/pending/);
-    
+
     proc.send({ type: 'CHANGE', data: 's2' });
-    proc._tick(null);
+    proc._tick();
     expect(inspect(res)).not.toMatch(/pending/);
 
     expect(await res).toBe(undefined);
@@ -104,23 +110,23 @@ describe('Process', () => {
     const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(p4, 'p4', bus)(null);
 
     proc.send({ type: 'PING', pseq: 0 });
-    proc._tick(null);
+    proc._tick();
     expect(bus).toBeCalledWith({ type: 'PONG', pseq: 0 });
 
     proc.send({ type: 'PING', pseq: 1 });
-    proc._tick(null);
+    proc._tick();
     expect(bus).toBeCalledWith({ type: 'PONG', pseq: 1 });
 
     proc.send({ type: 'PING', pseq: 2 });
-    proc._tick(null);
+    proc._tick();
     expect(bus).toBeCalledWith({ type: 'PONG', pseq: 2 });
 
     proc.send({ type: 'PING', pseq: 3 });
-    proc._tick(null);
+    proc._tick();
     expect(bus).toBeCalledWith({ type: 'PONG', pseq: 3 });
 
     proc.send({ type: 'PING', pseq: 4 });
-    proc._tick(null);
+    proc._tick();
     expect(bus).toBeCalledWith({ type: 'PONG', pseq: 4 });
     expect(bus).toBeCalledWith({ type: 'EXIT', pid: proc.id });
     expect(bus).toBeCalledTimes(6);
@@ -131,14 +137,73 @@ describe('Process', () => {
     const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(p4, 'p4', bus)(null);
 
     proc.send({ type: 'PING', pseq: 0 });
-    proc._tick(null);
+    proc._tick();
     expect(bus).toBeCalledWith({ type: 'PONG', pseq: 0 });
 
     proc.send({ type: 'PING', pseq: 2 });
-    proc._tick(null);
+    proc._tick();
     expect(bus).toBeCalledWith({ type: 'EXIT', pid: proc.id });
 
     expect(bus).toBeCalledTimes(2);
+  });
+
+  it('should allow two subscribers', () => {
+    const sub1 = jest.fn();
+    const sub2 = jest.fn();
+
+    const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(p4, 'p4')(null);
+
+    const cb1 = ()=> sub1(proc.state ? proc.state.seq : null);
+    const cb2 = ()=> sub2(proc.state ? proc.state.seq : null);
+
+    expect(proc.isListenedTo).toBe(false);;
+    const un1 = proc.subscribe(cb1);
+
+    // dispatch
+    jest.clearAllMocks();
+    proc.send({ type: 'PING', pseq: 0 });
+    proc.tick();
+
+    // check callbacks
+    expect(sub1).toBeCalledWith(1);
+    expect(sub2).not.toBeCalled();
+    expect(proc.isListenedTo).toBe(true);
+
+    const un2 = proc.subscribe(cb2);
+
+    // dispatch
+    jest.clearAllMocks();
+    proc.send({ type: 'PING', pseq: 1 });
+    proc.tick();
+
+    // check callbacks
+    expect(sub1).toBeCalledWith(2);
+    expect(sub2).toBeCalledWith(2);
+    expect(proc.isListenedTo).toBe(true);
+
+    un2();
+
+    // dispatch
+    jest.clearAllMocks();
+    proc.send({ type: 'PING', pseq: 2 });
+    proc.tick();
+
+    // check callbacks
+    expect(sub1).toBeCalledWith(3);
+    expect(sub2).not.toBeCalled();
+    expect(proc.isListenedTo).toBe(true);
+
+    un1();
+
+    // dispatch
+    jest.clearAllMocks();
+    proc.send({ type: 'PING', pseq: 3 });
+    proc.tick();
+
+    // check callbacks
+    expect(sub1).not.toBeCalled();
+    expect(sub2).not.toBeCalled();
+    expect(proc.isListenedTo).toBe(false);
   });
 
 });

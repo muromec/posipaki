@@ -1,4 +1,4 @@
-import { ExitMessage, watchExit, Waiter, defer, makeWaiter } from './util';
+import { ExitMessage, watchExit, Waiter, defer, DeferredCall, makeWaiter } from './util';
 
 export interface Message {
   type: string;
@@ -39,6 +39,7 @@ class Process<Args, State, InMessage extends Message, OutMessage extends Message
 
   private current: ProcessGenerator<State, InMessage> | null;
   private buffer: Array<InMessage>;
+  private nextTick: DeferredCall | null;
   private children: Array<Process<unknown, unknown, Message, Message>>;
   private subscribers: Array<NotifyFn>;
   private exitWaiter: Waiter;
@@ -53,6 +54,7 @@ class Process<Args, State, InMessage extends Message, OutMessage extends Message
     this.current = null;
     this.state = null;
     this.buffer = [];
+    this.nextTick = null;
 
     this.children = [];
     this.subscribers = [];
@@ -70,7 +72,7 @@ class Process<Args, State, InMessage extends Message, OutMessage extends Message
     this.current = task;
     let ret = task.next();
     this.state = ret.value || null;
-    this._tick(task.next());
+    this._eatResult(task.next());
   }
 
   fork<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends Message> (fn : ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>, pname : string) {
@@ -85,16 +87,23 @@ class Process<Args, State, InMessage extends Message, OutMessage extends Message
     }
   }
 
-  _tick (ret: IteratorResult<State | null, void> | null) {
+  _tick () {
     if (!this.current) {
       return;
     }
-
     let msg: InMessage | undefined;
+    let ret: IteratorResult<State | null, void> | null = null;
     while(msg = this.buffer.shift()) {
-      this._tick(this.current.next(msg));
+      ret = this.current.next(msg);
+      if (ret.done) {
+        break;
+      }
     }
     this.notify();
+    this._eatResult(ret);
+  }
+
+  _eatResult(ret: IteratorResult<State | null, void> | null) {
     if (ret && ret.done) {
       this.exitWaiter.resolve();
     }
@@ -106,7 +115,19 @@ class Process<Args, State, InMessage extends Message, OutMessage extends Message
 
   send(msg: InMessage) {
     this.buffer.push(msg);
-    defer(()=> this._tick(null));
+    this._scheduleTick();
+  }
+
+  tick() {
+    this.nextTick?.flush();
+  }
+  
+  _scheduleTick() {
+    this.nextTick?.cancel();
+    this.nextTick = defer(()=>  {
+      this.nextTick = null;
+      this._tick()
+    });
   }
 
   notify() {

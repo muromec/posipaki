@@ -34,15 +34,42 @@ function watchExit<Args, State, InMessage extends Message, OutMessage extends (M
 }
 
 type DeferCb = () => void;
-type Defer = (fn: DeferCb) => void;
+type Defer = (fn: DeferCb) => unknown;
+type Cancel = (taskId: any)=> void;
 type WindowGlobal = {
-  setImmediate?: Defer
+  setImmediate?: Defer,
+  clearImmediate?: Cancel,
+  requestIdleCallback?: Defer,
+  cancelIdleCallback?: Cancel,
+  setTimeout: Defer,
+  clearTimeout: Cancel,
 };
 
-function defer(fn: DeferCb) {
+export type DeferredCall = {
+  cancel: ()=> void,
+  flush: () => void,
+};
+function defer(fn: DeferCb) : DeferredCall {
   const g = globalThis as WindowGlobal;
-  const setDefer = (g.setImmediate || requestIdleCallback) as Defer;
-  setDefer(fn);
+  function schedule(deferFn: Defer, cancelFn: Cancel) {
+    const taskId = deferFn(fn);
+    return ()=> cancelFn(taskId);
+  }
+  let cancel : ()=> void;
+  if (g.setImmediate && g.clearImmediate) {
+    cancel = schedule(g.setImmediate, g.clearImmediate);
+  } else if (g.requestIdleCallback && g.cancelIdleCallback) {
+    cancel = schedule(g.requestIdleCallback, g.cancelIdleCallback);
+  } else {
+    cancel = schedule((f) => setTimeout(f, 0), clearTimeout);
+  }
+
+  function flush() {
+    cancel();
+    fn();
+  }
+
+  return { flush, cancel };
 }
 export type Waiter = {
   promise: Promise<void>;
