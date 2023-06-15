@@ -1,6 +1,7 @@
 {
   "compilerOptions": {
     "outDir": "./dist",
+    "rootDirs": ["./src/", "./tests"],
     "target": "ES2015",
     "module": "ESNext",
     "moduleResolution": "node",
