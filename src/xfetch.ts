@@ -1,6 +1,6 @@
 import { ExitMessage, runDispatch } from './util.js';
-import type Process from './process';
-import type { ProcessCtx, Message } from './process';
+import type Process from './process.js';
+import type { ProcessCtx, Message } from './process.js';
 
 function isJsonHelper(res : Response) {
   const ct = res.headers.get('content-type');

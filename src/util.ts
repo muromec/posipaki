@@ -1,5 +1,5 @@
-import type Process from './process';
-import type { ProcessCtx, Message } from './process';
+import type Process from './process.js';
+import type { ProcessCtx, Message } from './process.js';
 
 function debugLog(level: boolean, ...args: Array<unknown>) {
   if (level) {

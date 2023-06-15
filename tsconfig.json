@@ -3,6 +3,8 @@
     "outDir": "./dist",
     "target": "ES2015",
     "module": "ESNext",
+    "moduleResolution": "node",
+    "esModuleInterop": true,
     "declaration": true,
     "sourceMap": true,
     "strict": true

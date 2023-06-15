@@ -1,4 +1,4 @@
-import { ExitMessage, watchExit, Waiter, defer, makeWaiter } from './util.js';
+import { ExitMessage, watchExit, Waiter, defer, makeWaiter } from './util';
 
 export interface Message {
   type: string;
