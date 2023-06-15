@@ -43,6 +43,7 @@ class Process<Args, State, InMessage extends Message, OutMessage extends Message
   private children: Array<Process<unknown, unknown, Message, Message>>;
   private subscribers: Array<NotifyFn>;
   private exitWaiter: Waiter;
+  private _isPaused: boolean = false;
 
   constructor(fn: ProcessFn<Args, State, InMessage, OutMessage>, pname: string, toParent: ProcessMessageCb<OutMessage> | undefined) {
     this.pgenerator = fn;
@@ -120,9 +121,14 @@ class Process<Args, State, InMessage extends Message, OutMessage extends Message
 
   tick() {
     this.nextTick?.flush();
+    this.nextTick = null;
   }
   
   _scheduleTick() {
+    if (this._isPaused) {
+      return;
+    }
+
     this.nextTick?.cancel();
     this.nextTick = defer(()=>  {
       this.nextTick = null;
@@ -147,6 +153,17 @@ class Process<Args, State, InMessage extends Message, OutMessage extends Message
       }
       this.subscribers.splice(idx, 1);
     }
+  }
+
+  pause() {
+    this.nextTick?.cancel();
+    this.nextTick = null;
+    this._isPaused = true;
+  }
+
+  resume() {
+    this._isPaused = false;
+    this._scheduleTick();
   }
 
   wait() {

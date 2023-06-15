@@ -206,4 +206,17 @@ describe('Process', () => {
     expect(proc.isListenedTo).toBe(false);
   });
 
+  it('should pause the process and keep messages in a buffer until resume', () => {
+    const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(p4, 'p4')(null);
+    proc.pause();
+    proc.send({ type: 'PING', pseq: 0 });
+    proc.send({ type: 'PING', pseq: 1 });
+    proc.send({ type: 'PING', pseq: 2 });
+
+    expect(proc.state).toEqual({ seq: 0 });
+    proc.resume();
+    proc.tick();
+    expect(proc.state).toEqual({ seq: 3 });
+  });
+
 });
