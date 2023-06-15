@@ -1,4 +1,5 @@
 import { ExitMessage, runDispatch } from './util.js';
+import type Process from './process';
 import type { ProcessCtx, Message } from './process';
 
 function isJsonHelper(res : Response) {
@@ -32,6 +33,9 @@ export type FetchMessage<T> = {
 | ExitMessage;
 
 type FetchGenerator<T, M> = Generator<FetchState<T> | null, void, M>;
+
+export type FetchProcess<D> = Process<FetchArgs<D>, FetchState<D>, FetchMessage<D>, FetchMessage<D>>;
+
 
 function* xfetch<Type>({ pname, toParent, send } : ProcessCtx<FetchMessage<Type>, FetchMessage<Type>>, { method='GET', url, body } : FetchArgs<Type>) : FetchGenerator<Type, FetchMessage<Type>> {
   const state: FetchState<Type> = { code: 'pending', data: null, text: null };
