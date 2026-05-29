@@ -1,4 +1,4 @@
-import type Process from './process.js';
+import type { Process } from './process.js';
 import type { ProcessCtx, Message } from './process.js';
 
 function debugLog(level: boolean, ...args: Array<unknown>) {
@@ -11,6 +11,11 @@ type ReducerClosure<M> = (msg: M) => void;
 type ReadyFn = () => boolean;
 type NotifyFn = () => void;
 
+/**
+ * Generator helper that loops, yielding `null` and feeding incoming
+ * messages to `fn` until `readyFn()` returns true. Used inside
+ * process generators to build the main message loop.
+ */
 function* runDispatch<M>(name: string, fn : ReducerClosure<M>, readyFn: ReadyFn = ()=> false, debugLevel = false) : Generator<null, void, M> {
   let msg: M;
   while(!readyFn()) {
@@ -20,11 +25,14 @@ function* runDispatch<M>(name: string, fn : ReducerClosure<M>, readyFn: ReadyFn 
   }
 }
 
+/** Message emitted by a process to its parent when it terminates. */
 export type ExitMessage = {
   type: 'EXIT';
-  pid: Symbol;
+  pid: symbol;
 };
 
+/** Wrap a process generator so that on completion it sends `STOP`
+ * to all children and `EXIT` to the parent. */
 function watchExit<Args, State, InMessage extends Message, OutMessage extends (Message | ExitMessage)>(process: Process<Args, State, InMessage, OutMessage>) {
   return function* (ctx: ProcessCtx<InMessage, OutMessage>, arg0: Args) {
     yield* process.pgenerator(ctx, arg0);
@@ -45,10 +53,13 @@ type WindowGlobal = {
   clearTimeout: Cancel,
 };
 
+/** Handle to a scheduled (but not yet executed) callback. */
 export type DeferredCall = {
   cancel: ()=> void,
   flush: () => void,
 };
+/** Schedule a function to run on the next microtask. Returns an
+ * object with `cancel()` and `flush()` methods. */
 function defer(fn: DeferCb) : DeferredCall {
   const g = globalThis as WindowGlobal;
   function schedule(deferFn: Defer, cancelFn: Cancel) {
@@ -71,10 +82,13 @@ function defer(fn: DeferCb) : DeferredCall {
 
   return { flush, cancel };
 }
+/** A promise paired with its resolve function — used to signal
+ * process completion. */
 export type Waiter = {
   promise: Promise<void>;
   resolve: NotifyFn;
 };
+/** Create a new {@link Waiter}. */
 function makeWaiter() : Waiter {
   let resolve: unknown;
   let promise = new Promise<void>(_resolve => {

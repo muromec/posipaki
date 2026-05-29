@@ -1,12 +1,13 @@
 import { ExitMessage, runDispatch } from './util.js';
-import type Process from './process.js';
-import type { ProcessCtx, Message } from './process.js';
+import type { Process } from './process.js';
+import type { ProcessCtx } from './process.js';
 
 function isJsonHelper(res : Response) {
   const ct = res.headers.get('content-type');
   return ct === 'application/json';
 }
 
+/** State of an in-flight or completed fetch. */
 export type FetchState<T> = {
   code: 'pending' | 'loading' | 'aborted' | 'failed' | 'ok',
   data: T | null,
@@ -22,8 +23,10 @@ type FetchArgsSend<T> = {
   method?: 'POST' | 'PUT' | 'PATCH',
   body: T,
 };
+/** Arguments for a fetch process. */
 export type FetchArgs<T> = FetchArgsGet | FetchArgsSend<T>;
 
+/** Messages emitted by a fetch process during its lifecycle. */
 export type FetchMessage<T> = {
   type: 'OK',
   data?: T | null,
@@ -37,6 +40,11 @@ type FetchGenerator<T, M> = Generator<FetchState<T> | null, void, M>;
 export type FetchProcess<D> = Process<FetchArgs<D>, FetchState<D>, FetchMessage<D>, FetchMessage<D>>;
 
 
+/**
+ * A fetch wrapper implemented as a process. Supports GET/POST/PUT/PATCH,
+ * JSON detection, abort via AbortController, and yields a
+ * {@link FetchState} with the current status.
+ */
 function* xfetch<Type>({ pname, toParent, send } : ProcessCtx<FetchMessage<Type>, FetchMessage<Type>>, { method='GET', url, body } : FetchArgs<Type>) : FetchGenerator<Type, FetchMessage<Type>> {
   const state: FetchState<Type> = { code: 'pending', data: null, text: null };
   yield state;
