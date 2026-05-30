@@ -1,11 +1,6 @@
-import {
-  ExitMessage,
-  Waiter,
-  defer,
-  DeferredCall,
-  makeWaiter,
-} from "./util.js";
-import type { ProcessFn, ProcessCtx, Message } from "./process.js";
+import { defer, makeWaiter, debugLog } from "./util.js"
+import type { DeferredCall, Waiter } from "./util.js"
+import type { Message, ExitMessage, ProcessCtx, AsyncProcessFn } from "./types.js"
 
 // ---- types ------------------------------------------------------------------
 
@@ -16,14 +11,6 @@ type AsyncProcessGenerator<ProcessState, InMessage> = AsyncGenerator<
   InMessage
 >;
 
-/**
- * A process generator function that may contain `await` expressions.
- * Otherwise identical to {@link ProcessFn}.
- */
-export type AsyncProcessFn<Args, State, InMessage, OutMessage> = (
-  ctx: ProcessCtx<InMessage, OutMessage>,
-  args: Args,
-) => AsyncProcessGenerator<State, InMessage>;
 
 type NotifyFn = () => void;
 
@@ -31,12 +18,6 @@ type NotifyFn = () => void;
 
 type AsyncReducer<M> = (msg: M) => Promise<void>;
 type ReadyFn = () => boolean;
-
-function debugLog(level: boolean, ...args: Array<unknown>) {
-  if (level) {
-    console.log(...args);
-  }
-}
 
 /**
  * Async equivalent of `runDispatch`. Loops, yielding `null` and feeding
@@ -123,7 +104,7 @@ export class AsyncProcess<
 
     this.current = this._watchExit(ctx, arg0);
     // AsyncGenerator.next() always returns a Promise<IteratorResult>
-    void this.current.next().then((ret) => {
+    void this.current.next().then((ret: IteratorResult<State | null, void>) => {
       this.state = ret.value ?? null;
       // Prime the generator so it enters runDispatchAsync's `yield null`
       this._eatResult(this.current!.next());
@@ -318,16 +299,6 @@ export class AsyncProcess<
 
 // ---- spawnAsync -------------------------------------------------------------
 
-/** Any process function, sync or async. */
-type AnyProcessFn<
-  Args,
-  State,
-  InMessage extends Message,
-  OutMessage extends Message,
-> =
-  | ProcessFn<Args, State, InMessage, OutMessage>
-  | AsyncProcessFn<Args, State, InMessage, OutMessage>;
-
 /**
  * Spawn a new async process. Accepts both sync and async process
  * functions — sync ones are automatically wrapped with {@link asyncify}.
@@ -338,55 +309,17 @@ export function spawnAsync<
   InMessage extends Message = Message,
   OutMessage extends Message = ExitMessage,
 >(
-  fn: AnyProcessFn<Args, State, InMessage, OutMessage>,
+  fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
   pname: string,
   toParent?: ProcessMessageCb<OutMessage>,
 ): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage> {
-  const asyncFn = isAsyncFn(fn) ? fn : asyncify(fn);
-
   return (args: Args) => {
     const proc = new AsyncProcess<Args, State, InMessage, OutMessage>(
-      asyncFn,
+      fn,
       pname,
       toParent,
     );
     proc.start(args);
     return proc;
   };
-}
-
-// ---- asyncify ---------------------------------------------------------------
-
-/**
- * Wrap a synchronous {@link ProcessFn} so it can be used with
- * {@link spawnAsync} and {@link AsyncProcess}.
- *
- * The wrapped generator is driven synchronously — `await` on `.next()`
- * returns immediately since the value is already resolved.
- */
-export function asyncify<
-  Args,
-  State,
-  InMessage extends Message,
-  OutMessage extends Message,
->(
-  fn: ProcessFn<Args, State, InMessage, OutMessage>,
-): AsyncProcessFn<Args, State, InMessage, OutMessage> {
-  return async function* (ctx, args) {
-    yield* fn(ctx, args) as unknown as AsyncGenerator<State | null, void, InMessage>;
-  };
-}
-
-// ---- helpers ----------------------------------------------------------------
-
-function isAsyncFn<
-  Args,
-  State,
-  InMessage extends Message,
-  OutMessage extends Message,
->(
-  fn: AnyProcessFn<Args, State, InMessage, OutMessage>,
-): fn is AsyncProcessFn<Args, State, InMessage, OutMessage> {
-  // AsyncGeneratorFunction constructor name
-  return fn.constructor.name === "AsyncGeneratorFunction";
 }

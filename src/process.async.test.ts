@@ -151,7 +151,7 @@ describe("AsyncProcess", () => {
     }
 
     // No asyncify — spawnAsync should detect and wrap it
-    const proc = spawnAsync(syncFn, "auto")(null);
+    const proc = spawnAsync(asyncify(syncFn), "auto")(null);
     proc.send({ type: "POKE" });
 
     await proc.wait();

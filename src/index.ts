@@ -7,12 +7,14 @@
  */
 
 import { Process, spawn } from "./process"
-import type { Message, ProcessCtx, ProcessFn } from "./process"
 import { runDispatch } from "./util"
-import type { ExitMessage } from "./util"
-import { AsyncProcess, spawnAsync, runDispatchAsync, asyncify } from "./process.async"
-import type { AsyncProcessFn } from "./process.async"
+import { AsyncProcess, spawnAsync, runDispatchAsync } from "./process.async"
+import { asyncify } from "./adapters"
 
 export { Process, spawn, runDispatch }
 export { AsyncProcess, spawnAsync, runDispatchAsync, asyncify }
-export type { Message, ExitMessage, ProcessCtx, ProcessFn, AsyncProcessFn }
+
+export type {
+  Message, ExitMessage, ProcessFn, ProcessCtx,
+  AsyncProcessFn, PipeState, SupervisorState,
+} from "./types"

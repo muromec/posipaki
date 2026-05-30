@@ -1,7 +1,7 @@
 import type { Process } from './process.js';
 import type { ProcessCtx, Message } from './process.js';
 
-function debugLog(level: boolean, ...args: Array<unknown>) {
+export function debugLog(level: boolean, ...args: Array<unknown>) {
   if (level) {
     console.log(...args);
   }
