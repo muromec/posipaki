@@ -134,7 +134,7 @@ describe("AsyncProcess", () => {
     expect(proc.state).toEqual({ count: 2 });
   });
 
-  it("should auto-wrap a sync function passed directly to spawnAsync", async () => {
+  it("should run a sync generator via asyncify with a single message", async () => {
     function* syncFn({ pname }: ProcessCtx<PokeM, Message>) {
       const state = { count: 0 };
       yield state;
@@ -147,8 +147,8 @@ describe("AsyncProcess", () => {
       );
     }
 
-    // No asyncify — spawnAsync should detect and wrap it
-    const proc = spawnAsync(asyncify(syncFn), "auto")(null);
+    // Explicit asyncify with one message
+    const proc = spawnAsync(asyncify(syncFn), "single")(null);
     proc.send({ type: "POKE" });
 
     await proc.wait();

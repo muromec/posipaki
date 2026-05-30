@@ -68,7 +68,11 @@ describe("Process", () => {
   type PongM = { type: "PONG"; pseq: number };
   function* p3(ctx: ProcessCtx<Message, ExitMessage | PongM>) {
     yield null;
+    const msg: Message = yield null;
     ctx.toParent({ type: "PONG", pseq: 0 });
+    if (msg.type === "TRIGGER") {
+      ctx.toParent({ type: "PONG", pseq: 0 });
+    }
   }
 
   it("emits to parent and sends EXIT", async () => {
@@ -79,7 +83,7 @@ describe("Process", () => {
       bus,
     )(null);
     await proc.ready();
-    proc.send({ type: "ANY" } as Message);
+    proc.send({ type: "TRIGGER" } as Message);
     await proc.tick();
     expect(bus).toHaveBeenCalledWith({ type: "PONG", pseq: 0 });
     expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }));
