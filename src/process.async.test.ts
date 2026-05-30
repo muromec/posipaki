@@ -242,4 +242,41 @@ describe("AsyncProcess", () => {
 
     await expect(proc.wait()).rejects.toThrow("boom");
   });
+
+  // ---- message ordering with mixed delays ----------------------------------
+
+  it("should process messages in order even when some have delays", async () => {
+    type OrderMsg = { type: "START" } | { type: "LONG" } | { type: "SHORT" };
+
+    const fn: AsyncProcessFn<null, { trace: string }, OrderMsg, Message> =
+      async function* ({ pname }) {
+        const state = { trace: "" };
+        yield state;
+
+        yield* runDispatchAsync<Message | OrderMsg>(
+          pname,
+          async (msg) => {
+            if (msg.type === "START") {
+              state.trace += "START";
+            }
+            if (msg.type === "LONG") {
+              await new Promise((r) => setTimeout(r, 200));
+              state.trace += "-LONG";
+            }
+            if (msg.type === "SHORT") {
+              state.trace += "-SHORT";
+            }
+          },
+          () => state.trace === "START-LONG-SHORT",
+        );
+      };
+
+    const proc = spawnAsync(fn, "order-test")(null);
+    proc.send({ type: "START" });
+    proc.send({ type: "LONG" });
+    proc.send({ type: "SHORT" });
+
+    await proc.wait();
+    expect(proc.state?.trace).toBe("START-LONG-SHORT");
+  });
 });
