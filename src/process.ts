@@ -117,6 +117,13 @@ class Process<
     this.exitWaiter = makeWaiter();
   }
 
+  private _initWaiter: Waiter = makeWaiter();
+
+  /** Promise that resolves once the initial state is available. */
+  ready(): Promise<void> {
+    return this._initWaiter.promise;
+  }
+
   /** Kick off the generator with initial arguments. */
   start(arg0: Args) {
     const ctx: ProcessCtx<InMessage, OutMessage> = {
@@ -129,6 +136,7 @@ class Process<
     this.current = task;
     let ret = task.next();
     this.state = ret.value || null;
+    this._initWaiter.resolve();
     this._eatResult(task.next());
   }
 
@@ -192,9 +200,17 @@ class Process<
   }
 
   /** Synchronously flush the message buffer. Useful in tests. */
-  tick() {
+  tick(): void {
     this.nextTick?.flush();
     this.nextTick = null;
+  }
+
+  /** Async version of tick — returns a promise that resolves
+   *  after all buffered messages have been processed. */
+  async tickAsync(): Promise<void> {
+    this.nextTick?.cancel();
+    this.nextTick = null;
+    this._tick();
   }
 
   _scheduleTick() {

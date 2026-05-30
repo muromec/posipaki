@@ -17,8 +17,9 @@ describe("Process", () => {
     yield { state: "s1" };
   }
 
-  it("should expose process state returned from generator", () => {
+  it("should expose process state returned from generator", async () => {
     const proc = spawn(p1, "p1")(null);
+    await proc.ready();
     expect(proc.state).toEqual({ state: "s1" });
   });
 
@@ -35,19 +36,20 @@ describe("Process", () => {
     state.state = msg.data;
   }
 
-  it("should change internal state in response to message", () => {
+  it("should change internal state in response to message", async () => {
     const proc = spawn<Nil, SimpleStore, ChangeM>(p2, "p2")(null);
+    await proc.ready();
     proc.send({ type: "CHANGE", data: "s2" });
-    proc._tick();
+    await await proc.tickAsync();
     expect(proc.state).toEqual({ state: "s2" });
   });
 
-  it("should notify subscriber when the state changes", () => {
+  it("should notify subscriber when the state changes", async () => {
     const callback = vi.fn();
     const proc = spawn<Nil, SimpleStore, ChangeM>(p2, "p2")(null);
     proc.subscribe(callback);
     proc.send({ type: "CHANGE", data: "s2" });
-    proc._tick();
+    await await proc.tickAsync();
     expect(callback).toHaveBeenCalledTimes(1);
   });
 
@@ -63,7 +65,7 @@ describe("Process", () => {
     expect(res).toBeInstanceOf(Promise);
 
     proc.send({ type: "CHANGE", data: "s2" });
-    proc._tick();
+    await await proc.tickAsync();
 
     expect(await res).toBe(undefined);
   });
@@ -77,7 +79,7 @@ describe("Process", () => {
     ctx.toParent({ type: "PONG", pseq: 0 });
   }
 
-  it("should emit messages to parent", () => {
+  it("should emit messages to parent", async () => {
     const bus = vi.fn();
     const proc = spawn<Nil, SimpleStore, Message, ExitMessage | PongM>(
       p3,
@@ -110,7 +112,7 @@ describe("Process", () => {
     }
   }
 
-  it("should play ping-pong and keep count of messages", () => {
+  it("should play ping-pong and keep count of messages", async () => {
     const bus = vi.fn();
     const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(
       p4,
@@ -119,29 +121,29 @@ describe("Process", () => {
     )(null);
 
     proc.send({ type: "PING", pseq: 0 });
-    proc._tick();
+    await await proc.tickAsync();
     expect(bus).toHaveBeenCalledWith({ type: "PONG", pseq: 0 });
 
     proc.send({ type: "PING", pseq: 1 });
-    proc._tick();
+    await await proc.tickAsync();
     expect(bus).toHaveBeenCalledWith({ type: "PONG", pseq: 1 });
 
     proc.send({ type: "PING", pseq: 2 });
-    proc._tick();
+    await await proc.tickAsync();
     expect(bus).toHaveBeenCalledWith({ type: "PONG", pseq: 2 });
 
     proc.send({ type: "PING", pseq: 3 });
-    proc._tick();
+    await await proc.tickAsync();
     expect(bus).toHaveBeenCalledWith({ type: "PONG", pseq: 3 });
 
     proc.send({ type: "PING", pseq: 4 });
-    proc._tick();
+    await await proc.tickAsync();
     expect(bus).toHaveBeenCalledWith({ type: "PONG", pseq: 4 });
     expect(bus).toHaveBeenCalledWith({ type: "EXIT", pid: proc.id });
     expect(bus).toHaveBeenCalledTimes(6);
   });
 
-  it("should exit ping-pong when sequence breaks", () => {
+  it("should exit ping-pong when sequence breaks", async () => {
     const bus = vi.fn();
     const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(
       p4,
@@ -150,17 +152,17 @@ describe("Process", () => {
     )(null);
 
     proc.send({ type: "PING", pseq: 0 });
-    proc._tick();
+    await await proc.tickAsync();
     expect(bus).toHaveBeenCalledWith({ type: "PONG", pseq: 0 });
 
     proc.send({ type: "PING", pseq: 2 });
-    proc._tick();
+    await await proc.tickAsync();
     expect(bus).toHaveBeenCalledWith({ type: "EXIT", pid: proc.id });
 
     expect(bus).toHaveBeenCalledTimes(2);
   });
 
-  it("should allow two subscribers", () => {
+  it("should allow two subscribers", async () => {
     const sub1 = vi.fn();
     const sub2 = vi.fn();
 
@@ -178,7 +180,7 @@ describe("Process", () => {
     // dispatch
     vi.clearAllMocks();
     proc.send({ type: "PING", pseq: 0 });
-    proc.tick();
+    await proc.tickAsync();
 
     // check callbacks
     expect(sub1).toHaveBeenCalledWith(1);
@@ -190,7 +192,7 @@ describe("Process", () => {
     // dispatch
     vi.clearAllMocks();
     proc.send({ type: "PING", pseq: 1 });
-    proc.tick();
+    await proc.tickAsync();
 
     // check callbacks
     expect(sub1).toHaveBeenCalledWith(2);
@@ -202,7 +204,7 @@ describe("Process", () => {
     // dispatch
     vi.clearAllMocks();
     proc.send({ type: "PING", pseq: 2 });
-    proc.tick();
+    await proc.tickAsync();
 
     // check callbacks
     expect(sub1).toHaveBeenCalledWith(3);
@@ -214,7 +216,7 @@ describe("Process", () => {
     // dispatch
     vi.clearAllMocks();
     proc.send({ type: "PING", pseq: 3 });
-    proc.tick();
+    await proc.tickAsync();
 
     // check callbacks
     expect(sub1).not.toHaveBeenCalled();
@@ -222,7 +224,7 @@ describe("Process", () => {
     expect(proc.isListenedTo).toBe(false);
   });
 
-  it("should pause the process and keep messages in a buffer until resume", () => {
+  it("should pause the process and keep messages in a buffer until resume", async () => {
     const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(
       p4,
       "p4",
@@ -234,7 +236,7 @@ describe("Process", () => {
 
     expect(proc.state).toEqual({ seq: 0 });
     proc.resume();
-    proc.tick();
+    await proc.tickAsync();
     expect(proc.state).toEqual({ seq: 3 });
   });
 });
