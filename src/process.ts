@@ -32,7 +32,7 @@ class Process<
     super(asyncify(fn), pname, tp);
   }
 
-  start(a: A): this {
+  start(a: A) {
     super.start(a);
     return this;
   }

@@ -1,7 +1,7 @@
 import { runDispatch } from "./util.js";
 import type { ExitMessage } from "./util.js";
 import type { ProcessFn, ProcessCtx } from "./process.js";
-import { Process } from "./process.js";
+import type { AsyncProcess } from "./process.async.js";
 import type { Message } from "./types.js";
 
 /**
@@ -21,7 +21,7 @@ export interface PipeState<Params, Result> {
  * of the next.
  */
 function pipe<Params, Result>(
-  fns: ProcessFn<Params, any, any, any>[],
+  fns: ProcessFn<unknown, unknown, Message, Message>[],
 ): ProcessFn<
   Params,
   PipeState<Params, Result>,
@@ -29,7 +29,12 @@ function pipe<Params, Result>(
   Message | ExitMessage
 > {
   return function* (
-    { pname, fork }: ProcessCtx<Message, Message | ExitMessage>,
+    ctx: ProcessCtx<
+      Params,
+      PipeState<Params, Result>,
+      Message,
+      Message | ExitMessage
+    >,
     params: Params,
   ) {
     const state: PipeState<Params, Result> = {
@@ -40,13 +45,13 @@ function pipe<Params, Result>(
     yield state;
 
     const queue = [...fns];
-    let task: Process<any, any, any, any>;
+    let task: AsyncProcess<any, any, any, any>;
 
     function spawnNext(): void {
       const fn = queue.shift()!;
-      task = fork(
+      task = ctx.forkSync(
         fn,
-        `${pname} [${fn.name || "<anonymous>"}]`,
+        `${ctx.pname} [${fn.name || "<anonymous>"}]`,
       )(state.params as Params);
     }
 
@@ -58,7 +63,7 @@ function pipe<Params, Result>(
     state.running = hasNext();
 
     yield* runDispatch<Message | ExitMessage>(
-      pname,
+      ctx.pname,
       (msg) => {
         if (msg.type === "STOP") {
           state.params = null;

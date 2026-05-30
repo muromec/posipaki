@@ -44,7 +44,7 @@ export interface SupervisorState {
  *              each yield (e.g. `reactive` from Vue)
  */
 function* supervise(
-  { pname, toParent, fork }: ProcessCtx<SupMsg, SupMsg>,
+  { pname, toParent, fork }: ProcessCtx<null, SupervisorState, SupMsg, SupMsg>,
   wrap: (s: SupervisorState) => SupervisorState = (a) => a,
   debugLevel = false,
 ): Generator<SupervisorState | null, void, SupMsg> {

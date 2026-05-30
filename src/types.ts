@@ -3,6 +3,7 @@
  *
  * @module
  */
+import type { AsyncProcess } from "./process.async";
 
 // ---- Message -----------------------------------------------------------------
 
@@ -20,35 +21,60 @@ export type ExitMessage = {
 
 // ---- ProcessFn (sync) -------------------------------------------------------
 
-export type ProcessFn<Args, State, InMessage extends Message, OutMessage extends Message> = (
-  ctx: ProcessCtx<InMessage, OutMessage>,
+export type ProcessFn<
+  Args,
+  State,
+  InMessage extends Message,
+  OutMessage extends Message,
+> = (
+  ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
 ) => Generator<State | null, void, InMessage>;
 
 // ---- ProcessFn (async) ------------------------------------------------------
 
-export type AsyncProcessFn<Args, State, InMessage extends Message, OutMessage extends Message> = (
-  ctx: ProcessCtx<InMessage, OutMessage>,
+export type AsyncProcessFn<
+  Args,
+  State,
+  InMessage extends Message,
+  OutMessage extends Message,
+> = (
+  ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
 ) => AsyncGenerator<State | null, void, InMessage>;
 
 // ---- ProcessCtx -------------------------------------------------------------
 
-type ProcessMessageCb<M> = (msg: M) => void
+type ProcessMessageCb<M> = (msg: M) => void;
 
 /** Fork a child process. Takes a ProcessFn and a name, returns a
  *  curried function that accepts the child's initial args. */
-export type Fork<_IM extends Message, _OM extends Message> = <CA, CS, CIM extends Message, COM extends Message>(
-  fn: ProcessFn<CA, CS, CIM, COM>, pname: string,
-) => (a: CA) => any // returns Process<CA, CS, CIM, COM> — circular
+export type Fork<
+  ChildArgs,
+  ChildState,
+  ChildIM extends Message,
+  ChildOM extends Message,
+> = (
+  fn: AsyncProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
+  pname: string,
+) => (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM>;
+
+export type ForkSync<
+  ChildArgs,
+  ChildState,
+  ChildIM extends Message,
+  ChildOM extends Message,
+> = (
+  fn: ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
+  pname: string,
+) => (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM>;
 
 /** Context injected into every running process. */
-export type ProcessCtx<IM extends Message, OM extends Message> = {
-  pname: string
-  fork: Fork<IM, OM>
-  send: (msg: IM) => void
-  toParent: ProcessMessageCb<OM>
-}
+export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
+  pname: string;
+  send: (msg: IM) => void;
+  toParent: ProcessMessageCb<OM>;
+} & Pick<AsyncProcess<Args, State, IM, OM>, "fork" | "forkSync">;
 
 // ---- Pipe -------------------------------------------------------------------
 

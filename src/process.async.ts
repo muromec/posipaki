@@ -5,7 +5,10 @@ import type {
   ExitMessage,
   ProcessCtx,
   AsyncProcessFn,
+  ProcessFn,
+  Fork,
 } from "./types.js";
+import { asyncify } from "./adapters.js";
 
 // ---- types ------------------------------------------------------------------
 
@@ -107,10 +110,11 @@ export class AsyncProcess<
    * Kick off the async generator. The first `yield` sets the initial
    * state; for async generators this happens in a microtask.
    */
-  start(arg0: Args): void {
-    const ctx: ProcessCtx<InMessage, OutMessage> = {
+  start(arg0: Args) {
+    const ctx: ProcessCtx<Args, State, InMessage, OutMessage> = {
       pname: this.pname,
-      fork: this.fork.bind(this) as any,
+      fork: this.fork.bind(this),
+      forkSync: this.forkSync.bind(this),
       send: this.send.bind(this),
       toParent: this.toParent,
     };
@@ -119,7 +123,10 @@ export class AsyncProcess<
     void this.current.next().then((ret: IteratorResult<State | null, void>) => {
       this.state = ret.value ?? null;
       this._resolveReady();
-      if (ret.done) { this.exitWaiter.resolve(); return; }
+      if (ret.done) {
+        this.exitWaiter.resolve();
+        return;
+      }
       // Advance past the initial yield so the _watchExit generator
       // runs its finally block (EXIT/STOP) and the inner generator
       // enters its dispatch loop. The second .next() sends no
@@ -127,11 +134,12 @@ export class AsyncProcess<
       // yield, not the user's generator.
       this._eatResult(this.current!.next({ type: "__ADVANCE__" } as any));
     });
+    return this;
   }
 
   /** Wrap the user's generator so EXIT/STOP logic fires on completion. */
   private async *_watchExit(
-    ctx: ProcessCtx<InMessage, OutMessage>,
+    ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
     arg0: Args,
   ): AsyncProcessGenerator<State, InMessage> {
     try {
@@ -165,6 +173,20 @@ export class AsyncProcess<
       child.start(args);
       return child;
     };
+  }
+
+  forkSync<
+    ChildArgs,
+    ChildState,
+    ChildIM extends Message,
+    ChildOM extends Message,
+  >(
+    fn: ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
+    pname: string,
+  ): (
+    args: ChildArgs,
+  ) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM> {
+    return this.fork(asyncify(fn), pname);
   }
 
   // ---- message processing ---------------------------------------------------
