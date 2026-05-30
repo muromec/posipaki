@@ -1,6 +1,3 @@
-import type { Process } from "./process.js";
-import type { ProcessCtx, Message } from "./types.js";
-
 export function debugLog(level: boolean, ...args: Array<unknown>) {
   if (level) {
     console.log(...args);

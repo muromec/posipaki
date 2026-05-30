@@ -12,16 +12,13 @@ describe("AsyncProcess", () => {
   // ---- basic lifecycle ------------------------------------------------------
 
   it("should expose initial state from an async generator", async () => {
-    const fn: AsyncProcessFn<Nil, CountStore, Message, Message> =
-      async function* () {
-        const state: CountStore = { count: 0 };
-        yield state;
-      };
+    async function* p1() {
+      yield { count: 0 } as CountStore;
+    }
 
-    const proc = spawnAsync(fn, "counter")(null);
-    await vi.waitFor(() => expect(proc.state).toEqual({ count: 0 }), {
-      timeout: 100,
-    });
+    const proc = spawnAsync(p1, "counter")(null);
+    await proc.ready();
+    expect(proc.state).toEqual({ count: 0 });
     await proc.wait();
   });
 

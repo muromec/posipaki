@@ -1,6 +1,11 @@
-import { defer, makeWaiter, debugLog } from "./util.js"
-import type { DeferredCall, Waiter } from "./util.js"
-import type { Message, ExitMessage, ProcessCtx, AsyncProcessFn } from "./types.js"
+import { defer, makeWaiter, debugLog } from "./util.js";
+import type { DeferredCall, Waiter } from "./util.js";
+import type {
+  Message,
+  ExitMessage,
+  ProcessCtx,
+  AsyncProcessFn,
+} from "./types.js";
 
 // ---- types ------------------------------------------------------------------
 
@@ -10,7 +15,6 @@ type AsyncProcessGenerator<ProcessState, InMessage> = AsyncGenerator<
   void,
   InMessage
 >;
-
 
 type NotifyFn = () => void;
 
@@ -74,6 +78,8 @@ export class AsyncProcess<
   private _isPaused: boolean = false;
   private _tickInProgress: boolean = false;
   private _exitReject: ((e: unknown) => void) | null = null;
+  private _ready!: Waiter;
+  private _resolveReady!: () => void;
 
   constructor(
     fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
@@ -86,6 +92,13 @@ export class AsyncProcess<
     this.id = Symbol(pname);
     this.state = null;
     this.exitWaiter = makeWaiter();
+    this._ready = makeWaiter();
+    this._resolveReady = this._ready.resolve;
+  }
+
+  /** Promise that resolves once the initial state is available. */
+  ready(): Promise<void> {
+    return this._ready.promise;
   }
 
   // ---- lifecycle ------------------------------------------------------------
@@ -103,11 +116,16 @@ export class AsyncProcess<
     };
 
     this.current = this._watchExit(ctx, arg0);
-    // AsyncGenerator.next() always returns a Promise<IteratorResult>
     void this.current.next().then((ret: IteratorResult<State | null, void>) => {
       this.state = ret.value ?? null;
-      // Prime the generator so it enters runDispatchAsync's `yield null`
-      this._eatResult(this.current!.next());
+      this._resolveReady();
+      if (ret.done) { this.exitWaiter.resolve(); return; }
+      // Advance past the initial yield so the _watchExit generator
+      // runs its finally block (EXIT/STOP) and the inner generator
+      // enters its dispatch loop. The second .next() sends no
+      // message — it just consumes the _watchExit wrapper's own
+      // yield, not the user's generator.
+      this._eatResult(this.current!.next({ type: "__ADVANCE__" } as any));
     });
   }
 
@@ -151,7 +169,7 @@ export class AsyncProcess<
 
   // ---- message processing ---------------------------------------------------
 
-  private async _tick(): Promise<void> {
+  protected async _tick(): Promise<void> {
     if (!this.current || this._tickInProgress) return;
 
     this._tickInProgress = true;
