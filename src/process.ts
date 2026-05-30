@@ -6,14 +6,7 @@ import {
   DeferredCall,
   makeWaiter,
 } from "./util";
-
-/**
- * Base message type. All messages must include a `type` field
- * for discrimination in reducers.
- */
-export interface Message {
-  type: string;
-}
+import type { Message } from "./types";
 
 type ProcessGenerator<ProcessState, InMessage> = Generator<
   ProcessState | null,
@@ -52,7 +45,6 @@ export type ProcessCtx<IM, OM> = {
 };
 
 type NotifyFn = () => void;
-type _UnsubscibeFn = () => void;
 
 /**
  * Spawn a new process from a process function. Returns a curried

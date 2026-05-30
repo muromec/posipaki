@@ -1,7 +1,7 @@
-import { describe, it, expect, vi } from "vitest"
-import { spawn } from "./index"
-import type { ProcessCtx, Message } from "./process"
-import type { ExitMessage } from "./util"
+import { describe, it, expect, vi } from "vitest";
+import { spawn } from "./index";
+import type { ProcessCtx, Message } from "./types";
+import type { ExitMessage } from "./util";
 
 describe("Process", () => {
   type SimpleStore = {
