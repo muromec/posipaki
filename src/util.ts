@@ -1,3 +1,4 @@
+import type { ExitMessage } from "./types.js";
 export function debugLog(level: boolean, ...args: Array<unknown>) {
   if (level) {
     console.log(...args);
@@ -27,24 +28,32 @@ function* runDispatch<M>(
   }
 }
 
-/** Message emitted by a process to its parent when it terminates. */
-export type ExitMessage = {
-  type: "EXIT";
-  pid: symbol;
-};
-
-/** Wrap a process generator so that on completion it sends `STOP`
- * to all children and `EXIT` to the parent. */
+/**
+ * Wrap a process generator so that on completion it sends STOP to
+ * all children and EXIT to the parent. Useful for custom process
+ * wrappers that need lifecycle management without extending
+ * AsyncProcess.
+ */
 function watchExit<
-  Args,
-  State,
-  InMessage extends Message,
-  OutMessage extends Message | ExitMessage,
->(process: Process<Args, State, InMessage, OutMessage>) {
-  return function* (ctx: ProcessCtx<InMessage, OutMessage>, arg0: Args) {
-    yield* process.pgenerator(ctx, arg0);
-    process.toAllChildren({ type: "STOP" });
-    process.toParent({ type: "EXIT", pid: process.id } as OutMessage);
+  A,
+  S,
+  IM extends { type: string },
+  OM extends { type: string } | ExitMessage,
+>(
+  proc: {
+    toAllChildren: (m: { type: string }) => void;
+    toParent: (m: OM) => void;
+    id: symbol;
+  },
+  gen: (ctx: any, args: A) => Generator<S | null, void, IM>,
+): (ctx: any, args: A) => Generator<S | null, void, IM> {
+  return function* (ctx, args) {
+    try {
+      yield* gen(ctx, args);
+    } finally {
+      proc.toAllChildren({ type: "STOP" });
+      proc.toParent({ type: "EXIT", pid: proc.id } as OM);
+    }
   };
 }
 
@@ -104,4 +113,5 @@ function makeWaiter(): Waiter {
   return { promise, resolve: resolve as NotifyFn };
 }
 
-export { runDispatch, watchExit, defer, makeWaiter };
+export { runDispatch, defer, makeWaiter, watchExit };
+export type { ExitMessage };
