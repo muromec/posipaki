@@ -62,7 +62,9 @@ describe("xfetch", () => {
     expect(fetchCall[0]).toBe("https://example.com/api/items");
     expect(fetchCall[1]?.method).toBe("GET");
 
-    expect(bus).toHaveBeenCalledWith({ type: "OK", data });
+    expect(bus).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "OK", data }),
+    );
     expect(proc.state).toMatchObject({ code: "ok", data });
     expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }));
   });
@@ -89,10 +91,12 @@ describe("xfetch", () => {
     await proc.ready();
     await vi.runAllTimersAsync();
 
-    expect(bus).toHaveBeenCalledWith({
-      type: "OK",
-      text: JSON.stringify(text),
-    });
+    expect(bus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "OK",
+        text: JSON.stringify(text),
+      }),
+    );
     expect(proc.state).toMatchObject({
       code: "ok",
       text: JSON.stringify(text),
@@ -133,8 +137,119 @@ describe("xfetch", () => {
     const reqHeaders = fetchCall[1]?.headers as Headers;
     expect(reqHeaders.get("content-type")).toBe("application/json");
 
-    expect(bus).toHaveBeenCalledWith({ type: "OK", data: responseData });
+    expect(bus).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "OK", data: responseData }),
+    );
     expect(proc.state).toMatchObject({ code: "ok", data: responseData });
+  });
+
+  // -- status code & response headers ---------------------------------------
+
+  it("exposes response status code and headers in OK message", async () => {
+    const responseData = { ok: true };
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockResponse(responseData, {
+        status: 201,
+        headers: {
+          "content-type": "application/json",
+          "x-ratelimit-remaining": "42",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bus = vi.fn();
+    const proc = spawn(
+      xfetch<typeof responseData>,
+      "xfetch-status-headers",
+      bus,
+    )({
+      url: new URL("https://example.com/api/created"),
+      method: "POST",
+      body: responseData,
+    } as FetchArgs<typeof responseData>);
+
+    await proc.ready();
+    await vi.runAllTimersAsync();
+
+    expect(bus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "OK",
+        data: responseData,
+        status: 201,
+        responseHeaders: expect.objectContaining({
+          "x-ratelimit-remaining": "42",
+        }),
+      }),
+    );
+  });
+
+  it("exposes status and responseHeaders in FetchState", async () => {
+    const responseData = { done: true };
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockResponse(responseData, {
+        status: 200,
+        headers: {
+          "content-type": "application/json",
+          "x-request-id": "abc-123",
+        },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bus = vi.fn();
+    const proc = spawn(
+      xfetch<typeof responseData>,
+      "xfetch-state-headers",
+      bus,
+    )({
+      url: new URL("https://example.com/api/item"),
+      method: "GET",
+    } as FetchArgs<typeof responseData>);
+
+    await proc.ready();
+    await vi.runAllTimersAsync();
+
+    expect(proc.state).toMatchObject({
+      code: "ok",
+      status: 200,
+      responseHeaders: expect.objectContaining({
+        "x-request-id": "abc-123",
+      }),
+    });
+  });
+
+  it("exposes status and headers for non-JSON responses too", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(
+      mockResponse("Not Found", {
+        status: 404,
+        headers: { "content-type": "text/plain" },
+      }),
+    );
+    vi.stubGlobal("fetch", fetchMock);
+
+    const bus = vi.fn();
+    const proc = spawn(
+      xfetch<string>,
+      "xfetch-nonjson-headers",
+      bus,
+    )({
+      url: new URL("https://example.com/api/missing"),
+      method: "GET",
+    } as FetchArgs<string>);
+
+    await proc.ready();
+    await vi.runAllTimersAsync();
+
+    expect(bus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "OK",
+        text: JSON.stringify("Not Found"),
+        status: 404,
+        responseHeaders: expect.any(Object),
+      }),
+    );
+    expect(proc.state).toMatchObject({ code: "ok", status: 404 });
   });
 
   // -- custom headers --------------------------------------------------------
@@ -400,10 +515,12 @@ describe("xfetch", () => {
     await vi.runAllTimersAsync();
 
     expect(proc.state).toMatchObject({ code: "ok", data: { done: true } });
-    expect(bus).toHaveBeenCalledWith({
-      type: "OK",
-      data: { done: true },
-    });
+    expect(bus).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "OK",
+        data: { done: true },
+      }),
+    );
   });
 
   // -- wait() ----------------------------------------------------------------

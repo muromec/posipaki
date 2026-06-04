@@ -9,6 +9,8 @@ export type FetchState<T> = {
   code: "pending" | "loading" | "aborted" | "failed" | "ok";
   data: T | null;
   text: string | null;
+  status: number;
+  responseHeaders: Record<string, string>;
 };
 
 /** Arguments for a fetch process. */
@@ -28,7 +30,13 @@ export type FetchArgs<T> =
 
 /** Messages emitted by a fetch process during its lifecycle. */
 export type FetchMessage<T> =
-  | { type: "OK"; data?: T | null; text?: string | null }
+  | {
+      type: "OK";
+      data?: T | null;
+      text?: string | null;
+      status: number;
+      responseHeaders: Record<string, string>;
+    }
   | { type: "ERROR" | "LOADING" | "ABORTED" | "STOP" }
   | ExitMessage;
 
@@ -45,6 +53,15 @@ export type FetchProcess<D> = Process<
 function isJsonHelper(res: Response): boolean {
   const ct = res.headers.get("content-type");
   return ct === "application/json";
+}
+
+/** Convert a Headers object to a plain Record. */
+function headersToRecord(h: Headers): Record<string, string> {
+  const out: Record<string, string> = {};
+  h.forEach((v, k) => {
+    out[k] = v;
+  });
+  return out;
 }
 
 // ---- xfetch -----------------------------------------------------------------
@@ -67,7 +84,13 @@ function* xfetch<Type>(
   >,
   { method = "GET", url, body, headers: callerHeaders }: FetchArgs<Type>,
 ): Generator<FetchState<Type> | null, void, FetchMessage<Type>> {
-  const state: FetchState<Type> = { code: "pending", data: null, text: null };
+  const state: FetchState<Type> = {
+    code: "pending",
+    data: null,
+    text: null,
+    status: 0,
+    responseHeaders: {},
+  };
   yield state;
 
   const controller = new AbortController();
@@ -89,12 +112,14 @@ function* xfetch<Type>(
         body: serializedBody,
         headers,
       });
+      const status = res.status;
+      const responseHeaders = headersToRecord(res.headers);
       if (isJsonHelper(res)) {
         const data = await res.json();
-        toSelf({ type: "OK", data });
+        toSelf({ type: "OK", data, status, responseHeaders });
       } else {
         const text = await res.text();
-        toSelf({ type: "OK", text });
+        toSelf({ type: "OK", text, status, responseHeaders });
       }
     } catch (e) {
       const isAborted = e instanceof DOMException && e.name === "AbortError";
@@ -131,6 +156,8 @@ function* xfetch<Type>(
         state.code = "ok";
         state.data = msg.data || null;
         state.text = msg.text || null;
+        state.status = msg.status;
+        state.responseHeaders = msg.responseHeaders;
       }
     },
     isDone,
