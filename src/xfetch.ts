@@ -13,8 +13,18 @@ export type FetchState<T> = {
 
 /** Arguments for a fetch process. */
 export type FetchArgs<T> =
-  | { url: URL; method?: "GET"; body?: undefined }
-  | { url: URL; method?: "POST" | "PUT" | "PATCH"; body: T };
+  | {
+      url: URL;
+      method?: "GET";
+      body?: undefined;
+      headers?: Record<string, string>;
+    }
+  | {
+      url: URL;
+      method?: "POST" | "PUT" | "PATCH";
+      body: T;
+      headers?: Record<string, string>;
+    };
 
 /** Messages emitted by a fetch process during its lifecycle. */
 export type FetchMessage<T> =
@@ -45,8 +55,17 @@ function isJsonHelper(res: Response): boolean {
  * {@link FetchState} with the current status.
  */
 function* xfetch<Type>(
-  { pname, toParent, send }: ProcessCtx<FetchMessage<Type>, FetchMessage<Type>>,
-  { method = "GET", url, body }: FetchArgs<Type>,
+  {
+    pname,
+    toParent,
+    send,
+  }: ProcessCtx<
+    FetchArgs<Type>,
+    FetchState<Type>,
+    FetchMessage<Type>,
+    FetchMessage<Type>
+  >,
+  { method = "GET", url, body, headers: callerHeaders }: FetchArgs<Type>,
 ): Generator<FetchState<Type> | null, void, FetchMessage<Type>> {
   const state: FetchState<Type> = { code: "pending", data: null, text: null };
   yield state;
@@ -60,7 +79,7 @@ function* xfetch<Type>(
       toSelf({ type: "LOADING" });
       const serializedBody =
         method === "GET" ? undefined : JSON.stringify(body);
-      const headers = new Headers({});
+      const headers = new Headers(callerHeaders ?? {});
       if (serializedBody) {
         headers.set("content-type", "application/json");
       }
@@ -115,7 +134,7 @@ function* xfetch<Type>(
       }
     },
     isDone,
-    true,
+    false,
   );
 }
 

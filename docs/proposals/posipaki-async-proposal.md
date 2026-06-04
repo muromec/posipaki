@@ -1,17 +1,23 @@
-# posipaki async generator support — proposal
+# posipaki async generator support — implemented ✅
+
+> **Status**: Implemented. This document captures the original proposal,
+> what was actually built, and how each open question was resolved.
 
 ## Motivation
 
-posipaki process functions are currently synchronous generators:
+posipaki process functions were originally synchronous generators:
 
 ```ts
 type ProcessGenerator<State, InMessage> = Generator<State | null, void, InMessage>;
 ```
 
-This forces all work inside `runDispatch` reducers to be synchronous. Any I/O — API calls, database queries, AI inference, timers — must be kicked off as a side-effect via `setTimeout` or `ctx.toParent()`, with no way to sequence results naturally. The agent loop from demonstrates the pain:
+This forced all work inside `runDispatch` reducers to be synchronous. Any I/O —
+API calls, database queries, AI inference, timers — had to be kicked off as a
+side-effect via `setTimeout` or `ctx.toParent()`, with no way to sequence
+results naturally:
 
 ```ts
-// CURRENT — awkward and order-dependent
+// BEFORE — awkward and order-dependent
 yield* runDispatch("agent", (msg) => {
   if (msg.body === "wait") {
     setTimeout(() => {
@@ -23,51 +29,40 @@ yield* runDispatch("agent", (msg) => {
 });
 ```
 
-Two replies to the same message type, split across a synchronous path and a `setTimeout` callback. Testing this is fragile; debugging is worse. If the process exits before the timer fires, the reply is lost silently.
+Two replies to the same message type, split across a synchronous path and a
+`setTimeout` callback. Testing this was fragile; debugging was worse. If the
+process exited before the timer fired, the reply was lost silently.
 
-The proposal: support `AsyncGenerator` alongside `Generator` so process functions can use `await` for I/O, timers, and other async work while retaining the message-driven actor model.
+## What was built
 
-## Proposal
+Rather than modifying the existing `Process` class (which would risk breaking
+sync-only users), async support was added as a **parallel class** —
+`AsyncProcess` — alongside new types, helpers, and a bridge function.
 
-Add a single new type alias and make the `Process` class handle both sync and async generators.
-
-### New type alias
-
-```ts
-type AsyncProcessGenerator<ProcessState, InMessage> = AsyncGenerator<
-  ProcessState | null,
-  void,
-  InMessage
->;
-```
-
-### ProcessFn overload (or union type)
-
-Process functions that return an `AsyncGenerator` declare so explicitly. The existing `ProcessFn` for sync generators remains unchanged:
+### New type alias (`src/types.ts`)
 
 ```ts
-// unchanged — sync process
-export type ProcessFn<Args, State, InMessage, OutMessage> = (
-  ctx: ProcessCtx<InMessage, OutMessage>,
-  args: Args,
-) => Generator<State | null, void, InMessage>;
-
-// new — async process
-export type AsyncProcessFn<Args, State, InMessage, OutMessage> = (
-  ctx: ProcessCtx<InMessage, OutMessage>,
+export type AsyncProcessFn<
+  Args,
+  State,
+  InMessage extends Message,
+  OutMessage extends Message,
+> = (
+  ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
 ) => AsyncGenerator<State | null, void, InMessage>;
 ```
 
-### `runDispatch` becomes async-aware
+### `runDispatchAsync` (`src/process.async.ts`)
 
-A new `runDispatchAsync` helper (or an overload) that works with async reducers:
+An async equivalent of `runDispatch`. The only structural difference is
+`await fn(msg)` instead of `fn(msg)`:
 
 ```ts
-async function* runDispatchAsync<M>(
+export async function* runDispatchAsync<M>(
   name: string,
-  fn: (msg: M) => Promise<void>,
-  readyFn: () => boolean = () => false,
+  fn: AsyncReducer<M>,
+  readyFn: ReadyFn = () => false,
   debugLevel = false,
 ): AsyncGenerator<null, void, M> {
   let msg: M;
@@ -79,79 +74,116 @@ async function* runDispatchAsync<M>(
 }
 ```
 
-The only difference from the current `runDispatch` is `await fn(msg)` instead of `fn(msg)`.
+### `AsyncProcess` class (`src/process.async.ts`)
 
-### `Process._tick` becomes `async _tick`
+A full `Process`-equivalent built around `AsyncGenerator`. Key differences
+from `Process`:
 
-The internal message processing loop needs to `await` each step when the generator is async. A runtime check (`Symbol.asyncIterator` or `instanceof`) distinguishes sync from async generators.
+| Aspect | `Process` (sync) | `AsyncProcess` |
+|---|---|---|
+| Generator type | `Generator<S, void, IM>` | `AsyncGenerator<S, void, IM>` |
+| Tick execution | Synchronous `_tick(): void` | `async _tick(): Promise<void>` with `#tickInProgress` guard |
+| `watchExit` | Shared utility in `util.ts` | Private `async *_watchExit` method on the class |
+| `send()` | Enqueues + schedules microtask | Same, but tick is `await`-based |
+| `wait()` | Resolves on generator completion | Returns `Promise<void>` that also rejects on unhandled reducer errors |
+
+### `asyncify` bridge (`src/adapters.ts`)
+
+Wraps any sync `ProcessFn` into an `AsyncProcessFn`, so sync process functions
+can be forked from async processes via `forkSync`:
 
 ```ts
-async _tick() {
-  if (!this.current) return;
-  let msg: InMessage | undefined;
-  while ((msg = this.buffer.shift())) {
-    const ret = await this.current.next(msg);
-    if (ret.done) break;
+export function asyncify<A, S, IM extends Message, OM extends Message>(
+  fn: ProcessFn<A, S, IM, OM>,
+): AsyncProcessFn<A, S, IM, OM> {
+  return async function* (ctx, args) {
+    yield* fn(ctx, args) as any
   }
-  this.notify();
-  this._eatResult(ret);
 }
 ```
 
-The `await` on `next()` is a no-op for sync generators (they return `IteratorResult`, not `Promise<IteratorResult>`, but `await` on a non-Promise value returns it immediately).
+This is used internally by `AsyncProcess.forkSync()`.
 
-### Minimal API surface change
-
-| What | Before | After |
-|---|---|---|
-| `ProcessFn` return type | `Generator<S, void, IM>` | unchanged |
-| New: `AsyncProcessFn` | — | `AsyncGenerator<S, void, IM>` |
-| `runDispatch` | sync reducer | unchanged |
-| New: `runDispatchAsync` | — | async reducer, `await fn(msg)` |
-| `Process._tick` | `_tick(): void` | `async _tick(): Promise<void>` |
-| `spawn()` signature | unchanged | unchanged |
-
-All existing sync code continues to work. Async is opt-in: use `AsyncProcessFn` + `runDispatchAsync`.
-
-## Usage
-
-The agent loop from rewritten:
+### `spawnAsync` entry point
 
 ```ts
-import { runDispatchAsync } from "posipaki";
-import type { AsyncProcessFn } from "posipaki";
-
-const agentLoop: AsyncProcessFn<...> = async function* (ctx, _args) {
-  const state = { done: false };
-  yield state;
-
-  yield* runDispatchAsync("agent", async (msg) => {
-    if (msg.type === "MESSAGE") {
-      if (msg.body === "wait") {
-        await new Promise((r) => setTimeout(r, 1000));
-      }
-      const reply = await runAgent(msg); // real AI call
-      ctx.toParent({ type: "REPLY", body: reply });
-    }
-  });
-};
+export function spawnAsync<Args, State, InMessage, OutMessage>(
+  fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
+  pname: string,
+  toParent?: ProcessMessageCb<OutMessage>,
+): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage>
 ```
 
-All paths through the reducer use `await` naturally. Ordering is guaranteed by the `yield` / `await` chain. If the agent call fails, the error propagates to the caller and can be caught.
+### Public API surface (`src/index.ts`)
 
-## Open questions
+```ts
+export { Process, spawn, runDispatch }           // sync — unchanged
+export { AsyncProcess, spawnAsync, runDispatchAsync, asyncify }
+export type { AsyncProcessFn, ... }
+```
 
-1. **Back-pressure**: If the reducer takes 30 seconds but 5 more messages arrive in the buffer, should the next tick process all of them or just one? The current sync `_tick` drains the entire buffer in a `while` loop. For async reducers, this means messages are processed serially within a single tick — which is probably correct but worth documenting.
+## Resolution of open questions
 
-2. **`_scheduleTick` concurrency**: Currently `_scheduleTick` uses `defer` (microtask). If an async tick is already in-flight and a new message arrives, a new tick is scheduled. The second tick would try to call `.next()` on a generator that's already mid-`await`. This needs a guard — skip scheduling if a tick is already running (`#tickInProgress` flag).
+### 1. Back-pressure
 
-3. **Should `ProcessFn` become a union type?** So that `spawn()` accepts both sync and async process functions without the author having to pick `AsyncProcessFn` explicitly. This is ergonomic but makes the type signature harder to read. Starting with separate types is safer.
+> If the reducer takes 30 seconds but 5 more messages arrive in the buffer,
+> should the next tick process all of them or just one?
 
-4. **Does `watchExit` need changes?** It wraps `process.pgenerator(ctx, arg0)` in a generator — for async processes this would need to be an async generator wrapper. Probably a separate `watchExitAsync`.
+**Resolved**: `_tick` drains the entire buffer in a `while` loop, processing
+messages **serially** within a single tick (same as the sync `Process`). When
+the reducer contains `await`, each message waits for the previous one's
+promise to settle before `.next()` is called with the next buffered message.
+This is documented in the `AsyncProcess` class JSDoc: *"Messages are processed
+one at a time — if a tick is already in-flight, new messages are buffered and
+processed when the current tick completes."*
 
-## Non-goals (for this proposal)
+### 2. `_scheduleTick` concurrency (`#tickInProgress` guard)
+
+> If an async tick is already in-flight and a new message arrives, a second
+> tick would try to call `.next()` on a generator that's already mid-`await`.
+
+**Resolved**: Added a `#tickInProgress` boolean flag. `_tick()` returns
+immediately (no-op) if a tick is already running:
+
+```ts
+protected async _tick(): Promise<void> {
+  if (!this.current || this._tickInProgress) return;
+
+  this._tickInProgress = true;
+  try {
+    // ... drain buffer ...
+  } finally {
+    this._tickInProgress = false;
+  }
+}
+```
+
+This is verified by the test *"should never allow concurrent ticks on the same
+generator"* in `process.async.test.ts`.
+
+### 3. Should `ProcessFn` become a union type?
+
+> So that `spawn()` accepts both sync and async process functions without the
+> author having to pick `AsyncProcessFn` explicitly.
+
+**Resolved**: Kept separate types. `spawnAsync` accepts `AsyncProcessFn`, and
+`asyncify` bridges sync → async. `forkSync` on `AsyncProcess` accepts
+`ProcessFn` directly and calls `asyncify` internally. The types stay
+unambiguous — no union type needed.
+
+### 4. Does `watchExit` need changes?
+
+> It wraps `process.pgenerator(ctx, arg0)` in a generator — for async
+> processes this would need an async generator wrapper.
+
+**Resolved**: The shared `watchExit` utility in `util.ts` was left unchanged.
+`AsyncProcess` has its own private `async *_watchExit` method that does the
+same job (STOP to children, EXIT to parent in a `finally` block) but for async
+generators. No separate public `watchExitAsync` was created.
+
+## Non-goals (still true)
 
 - Changing the sync API in any way
-- Supporting `AsyncGenerator` in `pipe` or `supervisor` (those can follow later)
+- Supporting `AsyncGenerator` in `pipe` or `supervisor`
 - Adding reactive / observable patterns on top
 - Changing the message type system
