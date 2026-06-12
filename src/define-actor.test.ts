@@ -2,9 +2,8 @@
 //
 // RED-GREEN-PURPLE-GREEN cycle.
 //
-// RED:    Test written against normal AsyncProcessFn.  The process function
-//         doesn't exist — counterFn is undefined.  Test FAILS.
-// GREEN:  Implement counterFn using normal async generator + runDispatchAsync.
+// RED:    Test written against normal AsyncProcessFn.  counterFn was undefined.
+// GREEN:  counterFn implemented using normal async generator + runDispatchAsync.
 // PURPLE: describe.each runs the same expectations against defineActor
 //         (which doesn't exist yet — PURPLE variant FAILS).
 // FINAL GREEN: Implement defineActor.  Both variants PASS.
@@ -13,7 +12,7 @@
 
 import { describe, it, expect } from "vitest";
 import { spawnAsync, runDispatchAsync } from "./index.js";
-import type { AsyncProcessFn, Message } from "./index.js";
+import type { AsyncProcessFn, Message, ProcessCtx } from "./index.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Shared types
@@ -24,15 +23,53 @@ type CountState = { count: number };
 type CounterArgs = { max: number };
 type CounterOut = { type: "DONE"; count: number } | Message;
 
+// Helper: wait for the async tick to flush by sending a benign message.
+// The process processes the POKE, updates state, then the next message
+// (STOP) arrives and triggers exit.  We check state after tick, before
+// stopping.
+async function tickAndStop(proc: ReturnType<typeof spawnAsync>, check: () => void) {
+  // Give the async tick time to process.
+  await new Promise(r => setTimeout(r, 50));
+  check();
+  proc.send({ type: "STOP" } as Message);
+  await proc.wait();
+}
+
 // ═══════════════════════════════════════════════════════════════════════════════
-// RED phase — test behaviour, counterFn is undefined → FAILS
+// GREEN phase — real implementation using normal async generator
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// The process function — undefined for RED phase.
-// @ts-expect-error — intentional: RED phase, not implemented yet
-const counterFn: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> = undefined;
+const counterFn: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> =
+  async function* counterFn(
+    ctx: ProcessCtx<CounterArgs, CountState, PokeM, CounterOut>,
+    args: CounterArgs,
+  ) {
+    const state: CountState = { count: 0 };
+    yield state;
 
-describe("RED: counter process (normal AsyncProcessFn)", () => {
+    yield* runDispatchAsync(
+      ctx.pname,
+      async (msg) => {
+        if (msg.type === "POKE") {
+          state.count++;
+          if (state.count >= args.max) {
+            ctx.toParent({ type: "DONE", count: state.count });
+          }
+        }
+        if (msg.type === "STOP") {
+          // Force exit on STOP — set count past max so readyFn returns true.
+          state.count = args.max;
+        }
+      },
+      () => state.count >= args.max,
+    );
+  };
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Tests
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe("GREEN: counter process (normal AsyncProcessFn)", () => {
   it("starts with count 0", async () => {
     const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
       counterFn, "counter",
@@ -52,9 +89,12 @@ describe("RED: counter process (normal AsyncProcessFn)", () => {
 
     await proc.ready();
     proc.send({ type: "POKE" });
-    await proc.wait();
+    await new Promise(r => setTimeout(r, 50));
 
     expect(proc.state).toEqual({ count: 1 });
+
+    proc.send({ type: "STOP" } as Message);
+    await proc.wait();
   });
 
   it("increments multiple times", async () => {
@@ -66,9 +106,12 @@ describe("RED: counter process (normal AsyncProcessFn)", () => {
     proc.send({ type: "POKE" });
     proc.send({ type: "POKE" });
     proc.send({ type: "POKE" });
+    await new Promise(r => setTimeout(r, 50));
 
-    await proc.wait();
     expect(proc.state).toEqual({ count: 3 });
+
+    proc.send({ type: "STOP" } as Message);
+    await proc.wait();
   });
 
   it("exits when count reaches max, ignoring further POKEs", async () => {
@@ -79,8 +122,7 @@ describe("RED: counter process (normal AsyncProcessFn)", () => {
     await proc.ready();
     proc.send({ type: "POKE" });
     proc.send({ type: "POKE" });
-    // This POKE should be dropped — exit condition already met.
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }); // dropped — exit condition already met
 
     await proc.wait();
     expect(proc.state?.count).toBe(2);
