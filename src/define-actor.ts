@@ -143,7 +143,7 @@ export function defineActor<
         fork(childFn, name, childArgs) {
           // Unwrap ActorDefinition, pass to ctx.fork.
           const resolved = typeof childFn === "function" ? childFn : childFn.fn;
-          const child = ctx.fork(resolved, name)(childArgs as any);
+          const child = ctx.fork(resolved, name)(childArgs!);
           self.$child[name] = child as unknown as AsyncProcess<unknown, unknown, Message, Message>;
           return child;
         },
