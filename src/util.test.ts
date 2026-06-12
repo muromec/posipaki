@@ -6,7 +6,7 @@ describe("watchExit", () => {
   type PingM = { type: "PING"; pseq: number };
   type PongM = { type: "PONG"; pseq: number };
 
-  function* pingPong(_ctx: ProcessCtx<PingM, ExitMessage | PongM>) {
+  function* pingPong(_ctx: ProcessCtx<unknown, { seq: number }, PingM, ExitMessage | PongM>) {
     const state = { seq: 0 };
     yield state;
     while (true) {
@@ -65,7 +65,7 @@ describe("watchExit", () => {
       },
     };
 
-    function* infinite(_ctx: ProcessCtx<Message, ExitMessage>) {
+    function* infinite(_ctx: ProcessCtx<unknown, number, Message, ExitMessage>) {
       let n = 0;
       yield n;
       while (true) {

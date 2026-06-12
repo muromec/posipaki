@@ -114,7 +114,7 @@ describe("AsyncProcess", () => {
   // ---- asyncify: wrap a sync generator for async spawn ----------------------
 
   it("should run a sync generator via asyncify", async () => {
-    function* syncFn({ pname }: ProcessCtx<PokeM, Message>) {
+    function* syncFn({ pname }: ProcessCtx<unknown, { count: number }, PokeM, Message>) {
       const state = { count: 0 };
       yield state;
       yield* runDispatch(
@@ -135,7 +135,7 @@ describe("AsyncProcess", () => {
   });
 
   it("should run a sync generator via asyncify with a single message", async () => {
-    function* syncFn({ pname }: ProcessCtx<PokeM, Message>) {
+    function* syncFn({ pname }: ProcessCtx<unknown, { count: number }, PokeM, Message>) {
       const state = { count: 0 };
       yield state;
       yield* runDispatch(

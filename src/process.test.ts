@@ -66,7 +66,7 @@ describe("Process", () => {
   });
 
   type PongM = { type: "PONG"; pseq: number };
-  function* p3(ctx: ProcessCtx<Message, ExitMessage | PongM>) {
+  function* p3(ctx: ProcessCtx<unknown, null, Message, ExitMessage | PongM>) {
     yield null;
     const msg: Message = yield null;
     ctx.toParent({ type: "PONG", pseq: 0 });
@@ -92,7 +92,7 @@ describe("Process", () => {
   type PingM = { type: "PING"; pseq: number };
   type CountStore = { seq: number };
 
-  function* p4(ctx: ProcessCtx<PingM, ExitMessage | PongM>) {
+  function* p4(ctx: ProcessCtx<unknown, { seq: number }, PingM, ExitMessage | PongM>) {
     const state = { seq: 0 };
     yield state;
     while (state.seq < 5) {
