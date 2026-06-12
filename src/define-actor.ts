@@ -6,9 +6,8 @@
 // See docs/proposals/define-actor-proposal.md for the full design.
 
 import { runDispatchAsync } from "./process.async.js";
-import type { AsyncProcessFn, Message, ProcessCtx } from "./types.js";
+import type { AsyncProcessFn, Message, ProcessCtx, ProcessFn } from "./types.js";
 import type { AsyncProcess } from "./process.async.js";
-import type { ProcessFn } from "./types.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Types
@@ -117,16 +116,21 @@ export function defineActor<
         ? config.expose(rawState)
         : rawState as unknown as ExposedState;
 
+      // The process's Symbol id is constructed from its name in both
+      // Process and AsyncProcess constructors.  ctx doesn't carry `id`,
+      // but `Symbol(ctx.pname)` matches `proc.id` exactly.
+      const procId = Symbol(ctx.pname);
+
       // Build the actor context.
       const self: ActorContext<Args, InternalState, InMsg, OutMsg> = {
         state: rawState,
         name: ctx.pname,
-        id: ctx.id,
+        id: procId,
         emit(msg) {
           ctx.toParent({
             ...msg,
             fromName: ctx.pname,
-            fromId: ctx.id,
+            fromId: procId,
           } as OutMsg);
         },
         agreeToStop() {
@@ -139,9 +143,11 @@ export function defineActor<
         },
         $child: {},
         fork(childFn, name, childArgs) {
-          const resolvedFn: AsyncProcessFn<any, any, any, any> | ProcessFn<any, any, any, any> =
-            typeof childFn === "function" ? childFn : (childFn as ActorDefinition<any, any, any, any>).fn;
-          const child = ctx.fork(resolvedFn, name)(childArgs);
+          // Unwrap ActorDefinition, pass to ctx.fork.
+          // asyncify handles both sync ProcessFn and async generators
+          // at runtime; the cast bridges the type gap.
+          const resolved = typeof childFn === "function" ? childFn : childFn.fn;
+          const child = ctx.fork(resolved as AsyncProcessFn<any, any, any, any>, name)(childArgs);
           self.$child[name] = child;
           return child;
         },
