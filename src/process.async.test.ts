@@ -1,13 +1,13 @@
 import { describe, it, expect, vi } from "vitest";
 import { runDispatch } from "./index";
 import { spawnAsync, asyncify, runDispatchAsync } from "./index";
-import type { ProcessCtx, Message, AsyncProcessFn } from "./index";
-import type { PokeM, CountStore } from "./test-helpers.js";
-type Nil = null;
+import type { ProcessCtx, Message } from "./index";
+
 import type { ExitMessage } from "./util";
 
-describe("AsyncProcess", () => {
+import type { PokeM, CountStore } from "./test-helpers.js";
 
+describe("AsyncProcess", () => {
   // ---- basic lifecycle ------------------------------------------------------
 
   it("should expose initial state from an async generator", async () => {
@@ -22,19 +22,20 @@ describe("AsyncProcess", () => {
   });
 
   it("should process messages via runDispatchAsync and update state", async () => {
-    const fn: AsyncProcessFn<Nil, CountStore, PokeM, Message> =
-      async function* ({ pname }) {
-        const state: CountStore = { count: 0 };
-        yield state;
+    const fn = async function* (
+      { pname }: ProcessCtx<null, CountStore, PokeM, Message>,
+    ) {
+      const state: CountStore = { count: 0 };
+      yield state;
 
-        yield* runDispatchAsync<Message | PokeM>(
-          pname,
-          async (msg: any) => {
-            if (msg.type === "POKE") state.count++;
-          },
-          () => state.count >= 2,
-        );
-      };
+      yield* runDispatchAsync<Message | PokeM>(
+        pname,
+        async (msg: any) => {
+          if (msg.type === "POKE") state.count++;
+        },
+        () => state.count >= 2,
+      );
+    };
 
     const proc = spawnAsync(fn, "counter")(null);
     proc.send({ type: "POKE" });
@@ -45,20 +46,21 @@ describe("AsyncProcess", () => {
   });
 
   it("should wait for an async timer inside a reducer", async () => {
-    const fn: AsyncProcessFn<Nil, { fired: boolean }, PokeM, Message> =
-      async function* ({ pname }) {
-        const state = { fired: false };
-        yield state;
+    const fn = async function* (
+      { pname }: ProcessCtx<null, { fired: boolean }, PokeM, Message>,
+    ) {
+      const state = { fired: false };
+      yield state;
 
-        yield* runDispatchAsync<Message | PokeM>(
-          pname,
-          async () => {
-            await new Promise((r) => setTimeout(r, 10));
-            state.fired = true;
-          },
-          () => state.fired,
-        );
-      };
+      yield* runDispatchAsync<Message | PokeM>(
+        pname,
+        async () => {
+          await new Promise((r) => setTimeout(r, 10));
+          state.fired = true;
+        },
+        () => state.fired,
+      );
+    };
 
     const proc = spawnAsync(fn, "timer")(null);
     proc.send({ type: "POKE" });
@@ -70,19 +72,20 @@ describe("AsyncProcess", () => {
   it("should notify subscribers after an async tick", async () => {
     const callback = vi.fn();
 
-    const fn: AsyncProcessFn<Nil, CountStore, PokeM, Message> =
-      async function* ({ pname }) {
-        const state: CountStore = { count: 0 };
-        yield state;
+    const fn = async function* (
+      { pname }: ProcessCtx<null, CountStore, PokeM, Message>,
+    ) {
+      const state: CountStore = { count: 0 };
+      yield state;
 
-        yield* runDispatchAsync<Message | PokeM>(
-          pname,
-          async () => {
-            state.count++;
-          },
-          () => state.count >= 1,
-        );
-      };
+      yield* runDispatchAsync<Message | PokeM>(
+        pname,
+        async () => {
+          state.count++;
+        },
+        () => state.count >= 1,
+      );
+    };
 
     const proc = spawnAsync(fn, "counter")(null);
     proc.subscribe(callback);
@@ -97,10 +100,11 @@ describe("AsyncProcess", () => {
   it("should send EXIT to parent on completion", async () => {
     const bus = vi.fn();
 
-    const fn: AsyncProcessFn<Nil, null, Message, ExitMessage | Message> =
-      async function* () {
-        yield null;
-      };
+    const fn = async function* (
+      _ctx: ProcessCtx<null, null, Message, ExitMessage | Message>,
+    ) {
+      yield null;
+    };
 
     const proc = spawnAsync(fn, "exiter", bus)(null);
     await proc.wait();
@@ -113,7 +117,9 @@ describe("AsyncProcess", () => {
   // ---- asyncify: wrap a sync generator for async spawn ----------------------
 
   it("should run a sync generator via asyncify", async () => {
-    function* syncFn({ pname }: ProcessCtx<unknown, { count: number }, PokeM, Message>) {
+    function* syncFn(
+      { pname }: ProcessCtx<unknown, { count: number }, PokeM, Message>,
+    ) {
       const state = { count: 0 };
       yield state;
       yield* runDispatch(
@@ -134,7 +140,9 @@ describe("AsyncProcess", () => {
   });
 
   it("should run a sync generator via asyncify with a single message", async () => {
-    function* syncFn({ pname }: ProcessCtx<unknown, { count: number }, PokeM, Message>) {
+    function* syncFn(
+      { pname }: ProcessCtx<unknown, { count: number }, PokeM, Message>,
+    ) {
       const state = { count: 0 };
       yield state;
       yield* runDispatch(
@@ -146,7 +154,6 @@ describe("AsyncProcess", () => {
       );
     }
 
-    // Explicit asyncify with one message
     const proc = spawnAsync(asyncify(syncFn), "single")(null);
     proc.send({ type: "POKE" });
 
@@ -157,19 +164,20 @@ describe("AsyncProcess", () => {
   // ---- pause / resume -------------------------------------------------------
 
   it("should buffer messages while paused and process them on resume", async () => {
-    const fn: AsyncProcessFn<Nil, { hits: number }, PokeM, Message> =
-      async function* ({ pname }) {
-        const state = { hits: 0 };
-        yield state;
+    const fn = async function* (
+      { pname }: ProcessCtx<null, { hits: number }, PokeM, Message>,
+    ) {
+      const state = { hits: 0 };
+      yield state;
 
-        yield* runDispatchAsync<Message | PokeM>(
-          pname,
-          async () => {
-            state.hits++;
-          },
-          () => state.hits >= 2,
-        );
-      };
+      yield* runDispatchAsync<Message | PokeM>(
+        pname,
+        async () => {
+          state.hits++;
+        },
+        () => state.hits >= 2,
+      );
+    };
 
     const proc = spawnAsync(fn, "pausable")(null);
     proc.pause();
@@ -192,26 +200,26 @@ describe("AsyncProcess", () => {
     let concurrent = 0;
     let maxConcurrent = 0;
 
-    const fn: AsyncProcessFn<Nil, { count: number }, PokeM, Message> =
-      async function* ({ pname }) {
-        const state = { count: 0 };
-        yield state;
+    const fn = async function* (
+      { pname }: ProcessCtx<null, { count: number }, PokeM, Message>,
+    ) {
+      const state = { count: 0 };
+      yield state;
 
-        yield* runDispatchAsync<Message | PokeM>(
-          pname,
-          async () => {
-            concurrent++;
-            maxConcurrent = Math.max(maxConcurrent, concurrent);
-            await new Promise((r) => setTimeout(r, 10));
-            state.count++;
-            concurrent--;
-          },
-          () => state.count >= 3,
-        );
-      };
+      yield* runDispatchAsync<Message | PokeM>(
+        pname,
+        async () => {
+          concurrent++;
+          maxConcurrent = Math.max(maxConcurrent, concurrent);
+          await new Promise((r) => setTimeout(r, 10));
+          state.count++;
+          concurrent--;
+        },
+        () => state.count >= 3,
+      );
+    };
 
     const proc = spawnAsync(fn, "concurrent")(null);
-    // Fire multiple messages quickly — they should queue, not overlap
     proc.send({ type: "POKE" });
     proc.send({ type: "POKE" });
     proc.send({ type: "POKE" });
@@ -224,9 +232,9 @@ describe("AsyncProcess", () => {
   // ---- error propagation ----------------------------------------------------
 
   it("should propagate errors from an async reducer to wait()", async () => {
-    const fn: AsyncProcessFn<Nil, null, PokeM, Message> = async function* ({
-      pname,
-    }) {
+    const fn = async function* (
+      { pname }: ProcessCtx<null, null, PokeM, Message>,
+    ) {
       yield null;
       yield* runDispatchAsync<Message>(pname, async () => {
         throw new Error("boom");
@@ -242,30 +250,34 @@ describe("AsyncProcess", () => {
   // ---- message ordering with mixed delays ----------------------------------
 
   it("should process messages in order even when some have delays", async () => {
-    type OrderMsg = { type: "START" } | { type: "LONG" } | { type: "SHORT" };
+    type OrderMsg =
+      | { type: "START" }
+      | { type: "LONG" }
+      | { type: "SHORT" };
 
-    const fn: AsyncProcessFn<null, { trace: string }, OrderMsg, Message> =
-      async function* ({ pname }) {
-        const state = { trace: "" };
-        yield state;
+    const fn = async function* (
+      { pname }: ProcessCtx<null, { trace: string }, OrderMsg, Message>,
+    ) {
+      const state = { trace: "" };
+      yield state;
 
-        yield* runDispatchAsync<Message | OrderMsg>(
-          pname,
-          async (msg) => {
-            if (msg.type === "START") {
-              state.trace += "START";
-            }
-            if (msg.type === "LONG") {
-              await new Promise((r) => setTimeout(r, 200));
-              state.trace += "-LONG";
-            }
-            if (msg.type === "SHORT") {
-              state.trace += "-SHORT";
-            }
-          },
-          () => state.trace === "START-LONG-SHORT",
-        );
-      };
+      yield* runDispatchAsync<Message | OrderMsg>(
+        pname,
+        async (msg) => {
+          if (msg.type === "START") {
+            state.trace += "START";
+          }
+          if (msg.type === "LONG") {
+            await new Promise((r) => setTimeout(r, 200));
+            state.trace += "-LONG";
+          }
+          if (msg.type === "SHORT") {
+            state.trace += "-SHORT";
+          }
+        },
+        () => state.trace === "START-LONG-SHORT",
+      );
+    };
 
     const proc = spawnAsync(fn, "order-test")(null);
     proc.send({ type: "START" });

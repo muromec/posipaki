@@ -14,6 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { spawnAsync, runDispatchAsync, defineActor } from "./index.js";
 import type { AsyncProcessFn, Message, ProcessCtx } from "./index.js";
+
 import type { PokeM } from "./test-helpers.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -26,33 +27,32 @@ type CounterArgs = { max: number };
 type CounterOut = { type: "DONE"; count: number } | Message;
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Variant A (GREEN): normal AsyncProcessFn
+// Variant A (GREEN): normal async generator — ctx param carries the types
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const counterFn_vA: AsyncProcessFn<CounterArgs, CountState, CounterIn, CounterOut> =
-  async function* counterFn(
-    ctx: ProcessCtx<CounterArgs, CountState, CounterIn, CounterOut>,
-    args: CounterArgs,
-  ) {
-    const state: CountState = { count: 0, max: args.max };
-    yield state;
+const counterFn_vA = async function* counterFn(
+  ctx: ProcessCtx<CounterArgs, CountState, CounterIn, CounterOut>,
+  args: CounterArgs,
+) {
+  const state: CountState = { count: 0, max: args.max };
+  yield state;
 
-    yield* runDispatchAsync(
-      ctx.pname,
-      async (msg) => {
-        if (msg.type === "POKE") {
-          state.count++;
-          if (state.count >= state.max) {
-            ctx.toParent({ type: "DONE", count: state.count });
-          }
+  yield* runDispatchAsync<CounterIn>(
+    ctx.pname,
+    async (msg) => {
+      if (msg.type === "POKE") {
+        state.count++;
+        if (state.count >= state.max) {
+          ctx.toParent({ type: "DONE", count: state.count });
         }
-        if (msg.type === "STOP") {
-          state.count = state.max;
-        }
-      },
-      () => state.count >= state.max,
-    );
-  };
+      }
+      if (msg.type === "STOP") {
+        state.count = state.max;
+      }
+    },
+    () => state.count >= state.max,
+  );
+};
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Variant B (FINAL GREEN): defineActor
@@ -79,8 +79,8 @@ const counterDef_vB = defineActor<CounterArgs, CountState, CountState, CounterIn
 // ═══════════════════════════════════════════════════════════════════════════════
 
 describe.each([
-  { variant: "A: normal AsyncProcessFn", fn: () => counterFn_vA },
-  { variant: "B: defineActor",           fn: () => counterDef_vB.fn },
+  { variant: "A: normal async generator", fn: () => counterFn_vA },
+  { variant: "B: defineActor",            fn: () => counterDef_vB.fn },
 ])("counter process — $variant", ({ fn }) => {
   const getFn = fn as () => AsyncProcessFn<CounterArgs, CountState, CounterIn, CounterOut>;
 
