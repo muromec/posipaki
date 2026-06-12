@@ -4,8 +4,9 @@
 //
 // RED:    Test written against normal AsyncProcessFn.  counterFn was undefined.
 // GREEN:  counterFn implemented using normal async generator + runDispatchAsync.
-// PURPLE: describe.each runs the same expectations against defineActor
-//         (which doesn't exist yet — PURPLE variant FAILS).
+// PURPLE: describe.each runs the same expectations against both the normal
+//         AsyncProcessFn variant AND a defineActor variant.  The defineActor
+//         variant fails — defineActor doesn't exist yet.
 // FINAL GREEN: Implement defineActor.  Both variants PASS.
 //
 // Run:  npx vitest run src/define-actor.test.ts
@@ -23,23 +24,11 @@ type CountState = { count: number };
 type CounterArgs = { max: number };
 type CounterOut = { type: "DONE"; count: number } | Message;
 
-// Helper: wait for the async tick to flush by sending a benign message.
-// The process processes the POKE, updates state, then the next message
-// (STOP) arrives and triggers exit.  We check state after tick, before
-// stopping.
-async function tickAndStop(proc: ReturnType<typeof spawnAsync>, check: () => void) {
-  // Give the async tick time to process.
-  await new Promise(r => setTimeout(r, 50));
-  check();
-  proc.send({ type: "STOP" } as Message);
-  await proc.wait();
-}
-
 // ═══════════════════════════════════════════════════════════════════════════════
-// GREEN phase — real implementation using normal async generator
+// Variant A (GREEN): normal AsyncProcessFn
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const counterFn: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> =
+const counterFn_vA: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> =
   async function* counterFn(
     ctx: ProcessCtx<CounterArgs, CountState, PokeM, CounterOut>,
     args: CounterArgs,
@@ -57,7 +46,6 @@ const counterFn: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> =
           }
         }
         if (msg.type === "STOP") {
-          // Force exit on STOP — set count past max so readyFn returns true.
           state.count = args.max;
         }
       },
@@ -66,13 +54,29 @@ const counterFn: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> =
   };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Tests
+// Variant B (PURPLE): defineActor — doesn't exist yet
 // ═══════════════════════════════════════════════════════════════════════════════
 
-describe("GREEN: counter process (normal AsyncProcessFn)", () => {
+// defineActor will be imported from the index once implemented.
+// For PURPLE phase: undefined — the test suite will fail for this variant.
+
+// @ts-expect-error — PURPLE: defineActor not implemented yet
+const counterFn_vB: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> = undefined;
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// describe.each — run the same test suite against both variants
+// ═══════════════════════════════════════════════════════════════════════════════
+
+describe.each([
+  { variant: "A: normal AsyncProcessFn", fn: () => counterFn_vA },
+  { variant: "B: defineActor (PURPLE)",  fn: () => counterFn_vB },
+])("counter process — $variant", ({ fn }) => {
+  // Each test case gets a fresh counter.
+  const getFn = fn as () => AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut>;
+
   it("starts with count 0", async () => {
     const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
-      counterFn, "counter",
+      getFn(), "counter",
     )({ max: 3 });
 
     await proc.ready();
@@ -84,7 +88,7 @@ describe("GREEN: counter process (normal AsyncProcessFn)", () => {
 
   it("increments count on POKE", async () => {
     const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
-      counterFn, "counter",
+      getFn(), "counter",
     )({ max: 3 });
 
     await proc.ready();
@@ -99,7 +103,7 @@ describe("GREEN: counter process (normal AsyncProcessFn)", () => {
 
   it("increments multiple times", async () => {
     const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
-      counterFn, "counter",
+      getFn(), "counter",
     )({ max: 5 });
 
     await proc.ready();
@@ -116,7 +120,7 @@ describe("GREEN: counter process (normal AsyncProcessFn)", () => {
 
   it("exits when count reaches max, ignoring further POKEs", async () => {
     const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
-      counterFn, "counter",
+      getFn(), "counter",
     )({ max: 2 });
 
     await proc.ready();
@@ -130,7 +134,7 @@ describe("GREEN: counter process (normal AsyncProcessFn)", () => {
 
   it("exposes process name and id", async () => {
     const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
-      counterFn, "my-counter",
+      getFn(), "my-counter",
     )({ max: 1 });
 
     await proc.ready();
@@ -145,7 +149,7 @@ describe("GREEN: counter process (normal AsyncProcessFn)", () => {
   it("emits DONE to parent with final count", async () => {
     const messages: CounterOut[] = [];
     const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
-      counterFn, "counter",
+      getFn(), "counter",
       (msg) => messages.push(msg),
     )({ max: 1 });
 
