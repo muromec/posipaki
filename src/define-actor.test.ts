@@ -19,7 +19,7 @@ import type { AsyncProcessFn, Message, ProcessCtx } from "./index.js";
 // Shared types
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type PokeM = { type: "POKE" };
+type PokeM = { type: "POKE" }; type CounterIn = PokeM | { type: "STOP" };
 type CountState = { count: number; max: number };
 type CounterArgs = { max: number };
 type CounterOut = { type: "DONE"; count: number } | Message;
@@ -28,9 +28,9 @@ type CounterOut = { type: "DONE"; count: number } | Message;
 // Variant A (GREEN): normal AsyncProcessFn
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const counterFn_vA: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> =
+const counterFn_vA: AsyncProcessFn<CounterArgs, CountState, CounterIn, CounterOut> =
   async function* counterFn(
-    ctx: ProcessCtx<CounterArgs, CountState, PokeM, CounterOut>,
+    ctx: ProcessCtx<CounterArgs, CountState, CounterIn, CounterOut>,
     args: CounterArgs,
   ) {
     const state: CountState = { count: 0, max: args.max };
@@ -57,7 +57,7 @@ const counterFn_vA: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> =
 // Variant B (FINAL GREEN): defineActor
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const counterDef_vB = defineActor<CounterArgs, CountState, CountState, PokeM, CounterOut>({
+const counterDef_vB = defineActor<CounterArgs, CountState, CountState, CounterIn, CounterOut>({
   initialState(args) {
     return { count: 0, max: args.max };
   },
@@ -81,22 +81,22 @@ describe.each([
   { variant: "A: normal AsyncProcessFn", fn: () => counterFn_vA },
   { variant: "B: defineActor",           fn: () => counterDef_vB.fn },
 ])("counter process — $variant", ({ fn }) => {
-  const getFn = fn as () => AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut>;
+  const getFn = fn as () => AsyncProcessFn<CounterArgs, CountState, CounterIn, CounterOut>;
 
   it("starts with count 0", async () => {
-    const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
+    const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
       getFn(), "counter",
     )({ max: 3 });
 
     await proc.ready();
     expect(proc.state).toEqual({ count: 0, max: 3 });
 
-    proc.send({ type: "STOP" } as Message);
+    proc.send({ type: "STOP" } as CounterIn);
     await proc.wait();
   });
 
   it("increments count on POKE", async () => {
-    const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
+    const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
       getFn(), "counter",
     )({ max: 3 });
 
@@ -106,12 +106,12 @@ describe.each([
 
     expect(proc.state!.count).toBe(1);
 
-    proc.send({ type: "STOP" } as Message);
+    proc.send({ type: "STOP" } as CounterIn);
     await proc.wait();
   });
 
   it("increments multiple times", async () => {
-    const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
+    const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
       getFn(), "counter",
     )({ max: 5 });
 
@@ -123,12 +123,12 @@ describe.each([
 
     expect(proc.state!.count).toBe(3);
 
-    proc.send({ type: "STOP" } as Message);
+    proc.send({ type: "STOP" } as CounterIn);
     await proc.wait();
   });
 
   it("exits when count reaches max, ignoring further POKEs", async () => {
-    const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
+    const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
       getFn(), "counter",
     )({ max: 2 });
 
@@ -142,7 +142,7 @@ describe.each([
   });
 
   it("exposes process name and id", async () => {
-    const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
+    const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
       getFn(), "my-counter",
     )({ max: 1 });
 
@@ -157,7 +157,7 @@ describe.each([
 
   it("emits DONE to parent with final count", async () => {
     const messages: CounterOut[] = [];
-    const proc = spawnAsync<CounterArgs, CountState, PokeM, CounterOut>(
+    const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
       getFn(), "counter",
       (msg) => messages.push(msg),
     )({ max: 1 });
