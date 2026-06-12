@@ -20,4 +20,4 @@ export type {
 } from "./types"
 
 export { defineActor } from "./define-actor.js"
-export type { ActorDefinition, ActorConfig, ActorContext } from "./define-actor.js"
+export type { ActorDefinition, ActorConfig, ActorContext } from "./actor-types.js"
