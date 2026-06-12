@@ -2,12 +2,11 @@ import { describe, it, expect, vi } from "vitest";
 import { runDispatch } from "./index";
 import { spawnAsync, asyncify, runDispatchAsync } from "./index";
 import type { ProcessCtx, Message, AsyncProcessFn } from "./index";
+import type { PokeM, CountStore } from "./test-helpers.js";
+type Nil = null;
 import type { ExitMessage } from "./util";
 
 describe("AsyncProcess", () => {
-  type PokeM = { type: "POKE" };
-  type CountStore = { count: number };
-  type Nil = null;
 
   // ---- basic lifecycle ------------------------------------------------------
 

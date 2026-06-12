@@ -1,6 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { spawn } from "./index";
 import type { ProcessCtx, Message } from "./types";
+import type { PongM, PingM } from "./test-helpers.js";
 import type { ExitMessage } from "./util";
 
 describe("Process", () => {
@@ -65,7 +66,6 @@ describe("Process", () => {
     await expect(res).resolves.toBe(undefined);
   });
 
-  type PongM = { type: "PONG"; pseq: number };
   function* p3(ctx: ProcessCtx<unknown, null, Message, ExitMessage | PongM>) {
     yield null;
     const msg: Message = yield null;
@@ -89,7 +89,6 @@ describe("Process", () => {
     expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }));
   });
 
-  type PingM = { type: "PING"; pseq: number };
   type CountStore = { seq: number };
 
   function* p4(ctx: ProcessCtx<unknown, { seq: number }, PingM, ExitMessage | PongM>) {

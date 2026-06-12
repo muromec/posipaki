@@ -1,10 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { watchExit } from "./util";
 import type { Message, ExitMessage, ProcessCtx } from "./types";
+import type { PingM, PongM } from "./test-helpers.js";
 
 describe("watchExit", () => {
-  type PingM = { type: "PING"; pseq: number };
-  type PongM = { type: "PONG"; pseq: number };
 
   function* pingPong(_ctx: ProcessCtx<unknown, { seq: number }, PingM, ExitMessage | PongM>) {
     const state = { seq: 0 };

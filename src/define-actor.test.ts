@@ -14,12 +14,13 @@
 import { describe, it, expect } from "vitest";
 import { spawnAsync, runDispatchAsync, defineActor } from "./index.js";
 import type { AsyncProcessFn, Message, ProcessCtx } from "./index.js";
+import type { PokeM } from "./test-helpers.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Shared types
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type PokeM = { type: "POKE" }; type CounterIn = PokeM | { type: "STOP" };
+type CounterIn = PokeM | { type: "STOP" };
 type CountState = { count: number; max: number };
 type CounterArgs = { max: number };
 type CounterOut = { type: "DONE"; count: number } | Message;
