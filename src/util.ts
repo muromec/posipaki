@@ -44,6 +44,7 @@ function watchExit<
     toAllChildren: (m: { type: string }) => void;
     toParent: (m: OM) => void;
     id: symbol;
+    pname: string;
   },
   gen: (ctx: any, args: A) => Generator<S | null, void, IM>,
 ): (ctx: any, args: A) => Generator<S | null, void, IM> {
@@ -52,7 +53,12 @@ function watchExit<
       yield* gen(ctx, args);
     } finally {
       proc.toAllChildren({ type: "STOP" });
-      proc.toParent({ type: "EXIT", pid: proc.id } as OM);
+      proc.toParent({
+        type: "EXIT",
+        pid: proc.id,
+        fromName: proc.pname,
+        fromId: proc.id,
+      } as OM);
     }
   };
 }

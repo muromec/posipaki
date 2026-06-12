@@ -150,6 +150,8 @@ export class AsyncProcess<
       this.toParent({
         type: "EXIT",
         pid: this.id,
+        fromName: this.pname,
+        fromId: this.id,
       } as unknown as OutMessage);
     }
   }

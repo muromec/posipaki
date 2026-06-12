@@ -22,6 +22,7 @@ describe("watchExit", () => {
 
     const proc = {
       id: Symbol("test"),
+      pname: "test",
       toAllChildren(m: Message) {
         childCalls.push(m);
       },
@@ -46,7 +47,7 @@ describe("watchExit", () => {
     gen.next({ type: "PING", pseq: 99 }); // mismatch → generator exits
 
     expect(childCalls).toEqual([{ type: "STOP" }]);
-    expect(parentCalls).toContainEqual({ type: "EXIT", pid: proc.id });
+    expect(parentCalls).toContainEqual({ type: "EXIT", pid: proc.id, fromName: "test", fromId: proc.id });
   });
 
   it("does not send STOP or EXIT if the generator never completes", () => {
@@ -55,6 +56,7 @@ describe("watchExit", () => {
 
     const proc = {
       id: Symbol("test"),
+      pname: "test",
       toAllChildren(m: Message) {
         childCalls.push(m);
       },

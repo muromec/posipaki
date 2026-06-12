@@ -6,7 +6,7 @@
 // See docs/proposals/define-actor-proposal.md for the full design.
 
 import { runDispatchAsync } from "./process.async.js";
-import type { AsyncProcessFn, Message, ProcessCtx } from "./types.js";
+import type { AsyncProcessFn, Message, ProcessCtx, ExitMessage } from "./types.js";
 import type { AsyncProcess } from "./process.async.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -57,7 +57,7 @@ export interface ActorConfig<
   onChildExit?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg>,
     name: string,
-    reason: { type: "EXIT"; pid: symbol; fromName?: string; fromId?: symbol },
+    reason: ExitMessage,
   ) => void | Promise<void>;
 }
 
@@ -189,9 +189,7 @@ export function defineActor<
 
           // ── Built-in EXIT handling ──────────────────────────────────
           if (msg.type === "EXIT") {
-            const exitMsg = msg as unknown as {
-              type: "EXIT"; pid: symbol; fromName?: string; fromId?: symbol;
-            };
+            const exitMsg = msg as unknown as ExitMessage;
             const childName = exitMsg.fromName;
 
             if (childName && self.$child[childName]) {
