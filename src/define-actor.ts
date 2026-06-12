@@ -118,19 +118,17 @@ export function defineActor<
 
       // The process's Symbol id is constructed from its name in both
       // Process and AsyncProcess constructors.  ctx doesn't carry `id`,
-      // but `Symbol(ctx.pname)` matches `proc.id` exactly.
-      const procId = Symbol(ctx.pname);
 
       // Build the actor context.
       const self: ActorContext<Args, InternalState, InMsg, OutMsg> = {
         state: rawState,
         name: ctx.pname,
-        id: procId,
+        id: ctx.id,
         emit(msg) {
           ctx.toParent({
             ...msg,
             fromName: ctx.pname,
-            fromId: procId,
+            fromId: ctx.id,
           } as OutMsg);
         },
         agreeToStop() {

@@ -113,6 +113,7 @@ export class AsyncProcess<
   start(arg0: Args) {
     const ctx: ProcessCtx<Args, State, InMessage, OutMessage> = {
       pname: this.pname,
+        id: this.id,
       fork: this.fork.bind(this),
       forkSync: this.forkSync.bind(this),
       send: this.send.bind(this),

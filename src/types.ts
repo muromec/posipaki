@@ -72,6 +72,7 @@ export type ForkSync<
 /** Context injected into every running process. */
 export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   pname: string;
+  id: symbol;
   send: (msg: IM) => void;
   toParent: ProcessMessageCb<OM>;
 } & Pick<AsyncProcess<Args, State, IM, OM>, "fork" | "forkSync">;
