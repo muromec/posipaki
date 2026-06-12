@@ -18,3 +18,6 @@ export type {
   Message, ExitMessage, ProcessFn, ProcessCtx,
   AsyncProcessFn, PipeState, SupervisorState,
 } from "./types"
+
+export { defineActor } from "./define-actor.js"
+export type { ActorDefinition, ActorConfig, ActorContext } from "./define-actor.js"

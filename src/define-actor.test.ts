@@ -5,14 +5,14 @@
 // RED:    Test written against normal AsyncProcessFn.  counterFn was undefined.
 // GREEN:  counterFn implemented using normal async generator + runDispatchAsync.
 // PURPLE: describe.each runs the same expectations against both the normal
-//         AsyncProcessFn variant AND a defineActor variant.  The defineActor
-//         variant fails — defineActor doesn't exist yet.
+//         AsyncProcessFn variant AND a defineActor variant.  defineActor
+//         didn't exist yet — variant B failed.
 // FINAL GREEN: Implement defineActor.  Both variants PASS.
 //
 // Run:  npx vitest run src/define-actor.test.ts
 
 import { describe, it, expect } from "vitest";
-import { spawnAsync, runDispatchAsync } from "./index.js";
+import { spawnAsync, runDispatchAsync, defineActor } from "./index.js";
 import type { AsyncProcessFn, Message, ProcessCtx } from "./index.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -20,7 +20,7 @@ import type { AsyncProcessFn, Message, ProcessCtx } from "./index.js";
 // ═══════════════════════════════════════════════════════════════════════════════
 
 type PokeM = { type: "POKE" };
-type CountState = { count: number };
+type CountState = { count: number; max: number };
 type CounterArgs = { max: number };
 type CounterOut = { type: "DONE"; count: number } | Message;
 
@@ -33,7 +33,7 @@ const counterFn_vA: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> =
     ctx: ProcessCtx<CounterArgs, CountState, PokeM, CounterOut>,
     args: CounterArgs,
   ) {
-    const state: CountState = { count: 0 };
+    const state: CountState = { count: 0, max: args.max };
     yield state;
 
     yield* runDispatchAsync(
@@ -41,27 +41,37 @@ const counterFn_vA: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> =
       async (msg) => {
         if (msg.type === "POKE") {
           state.count++;
-          if (state.count >= args.max) {
+          if (state.count >= state.max) {
             ctx.toParent({ type: "DONE", count: state.count });
           }
         }
         if (msg.type === "STOP") {
-          state.count = args.max;
+          state.count = state.max;
         }
       },
-      () => state.count >= args.max,
+      () => state.count >= state.max,
     );
   };
 
 // ═══════════════════════════════════════════════════════════════════════════════
-// Variant B (PURPLE): defineActor — doesn't exist yet
+// Variant B (FINAL GREEN): defineActor
 // ═══════════════════════════════════════════════════════════════════════════════
 
-// defineActor will be imported from the index once implemented.
-// For PURPLE phase: undefined — the test suite will fail for this variant.
+const counterDef_vB = defineActor<CounterArgs, CountState, CountState, PokeM, CounterOut>({
+  initialState(args) {
+    return { count: 0, max: args.max };
+  },
 
-// @ts-expect-error — PURPLE: defineActor not implemented yet
-const counterFn_vB: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> = undefined;
+  handlers: {
+    POKE() {
+      this.state.count++;
+      if (this.state.count >= this.state.max) {
+        this.emit({ type: "DONE", count: this.state.count });
+        this.exit("max reached");
+      }
+    },
+  },
+});
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // describe.each — run the same test suite against both variants
@@ -69,9 +79,8 @@ const counterFn_vB: AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut> =
 
 describe.each([
   { variant: "A: normal AsyncProcessFn", fn: () => counterFn_vA },
-  { variant: "B: defineActor (PURPLE)",  fn: () => counterFn_vB },
+  { variant: "B: defineActor",           fn: () => counterDef_vB.fn },
 ])("counter process — $variant", ({ fn }) => {
-  // Each test case gets a fresh counter.
   const getFn = fn as () => AsyncProcessFn<CounterArgs, CountState, PokeM, CounterOut>;
 
   it("starts with count 0", async () => {
@@ -80,7 +89,7 @@ describe.each([
     )({ max: 3 });
 
     await proc.ready();
-    expect(proc.state).toEqual({ count: 0 });
+    expect(proc.state).toEqual({ count: 0, max: 3 });
 
     proc.send({ type: "STOP" } as Message);
     await proc.wait();
@@ -95,7 +104,7 @@ describe.each([
     proc.send({ type: "POKE" });
     await new Promise(r => setTimeout(r, 50));
 
-    expect(proc.state).toEqual({ count: 1 });
+    expect(proc.state!.count).toBe(1);
 
     proc.send({ type: "STOP" } as Message);
     await proc.wait();
@@ -112,7 +121,7 @@ describe.each([
     proc.send({ type: "POKE" });
     await new Promise(r => setTimeout(r, 50));
 
-    expect(proc.state).toEqual({ count: 3 });
+    expect(proc.state!.count).toBe(3);
 
     proc.send({ type: "STOP" } as Message);
     await proc.wait();
@@ -129,7 +138,7 @@ describe.each([
     proc.send({ type: "POKE" }); // dropped — exit condition already met
 
     await proc.wait();
-    expect(proc.state?.count).toBe(2);
+    expect(proc.state!.count).toBe(2);
   });
 
   it("exposes process name and id", async () => {
