@@ -6,7 +6,7 @@
 // See docs/proposals/define-actor-proposal.md for the full design.
 
 import { runDispatchAsync } from "./process.async.js";
-import type { AsyncProcessFn, Message, ProcessCtx, ProcessFn } from "./types.js";
+import type { AsyncProcessFn, Message, ProcessCtx } from "./types.js";
 import type { AsyncProcess } from "./process.async.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -78,7 +78,7 @@ export interface ActorContext<
   $child: Record<string, AsyncProcess<unknown, unknown, Message, Message>>;
 
   fork<A, S, IM extends Message, OM extends Message>(
-    fn: AsyncProcessFn<A, S, IM, OM> | ProcessFn<A, S, IM, OM> | ActorDefinition<A, S, IM, OM>,
+    fn: AsyncProcessFn<A, S, IM, OM> | ActorDefinition<A, S, IM, OM>,
     name: string,
     args?: A,
   ): AsyncProcess<A, S, IM, OM>;
@@ -142,11 +142,9 @@ export function defineActor<
         $child: {},
         fork(childFn, name, childArgs) {
           // Unwrap ActorDefinition, pass to ctx.fork.
-          // asyncify handles both sync ProcessFn and async generators
-          // at runtime; the cast bridges the type gap.
           const resolved = typeof childFn === "function" ? childFn : childFn.fn;
-          const child = ctx.fork(resolved as AsyncProcessFn<any, any, any, any>, name)(childArgs);
-          self.$child[name] = child;
+          const child = ctx.fork(resolved, name)(childArgs as any);
+          self.$child[name] = child as unknown as AsyncProcess<unknown, unknown, Message, Message>;
           return child;
         },
         ctx,
