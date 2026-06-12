@@ -80,13 +80,19 @@ const counterDef_vB = defineActor<CounterArgs, CountState, CountState, CounterIn
 
 describe.each([
   { variant: "A: normal async generator", fn: () => counterFn_vA },
-  { variant: "B: defineActor",            fn: () => counterDef_vB.fn },
+  { variant: "B: defineActor", fn: () => counterDef_vB.fn },
 ])("counter process — $variant", ({ fn }) => {
-  const getFn = fn as () => AsyncProcessFn<CounterArgs, CountState, CounterIn, CounterOut>;
+  const getFn = fn as () => AsyncProcessFn<
+    CounterArgs,
+    CountState,
+    CounterIn,
+    CounterOut
+  >;
 
   it("starts with count 0", async () => {
     const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
-      getFn(), "counter",
+      getFn(),
+      "counter",
     )({ max: 3 });
 
     await proc.ready();
@@ -98,12 +104,13 @@ describe.each([
 
   it("increments count on POKE", async () => {
     const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
-      getFn(), "counter",
+      getFn(),
+      "counter",
     )({ max: 3 });
 
     await proc.ready();
     proc.send({ type: "POKE" });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
 
     expect(proc.state!.count).toBe(1);
 
@@ -113,14 +120,15 @@ describe.each([
 
   it("increments multiple times", async () => {
     const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
-      getFn(), "counter",
+      getFn(),
+      "counter",
     )({ max: 5 });
 
     await proc.ready();
     proc.send({ type: "POKE" });
     proc.send({ type: "POKE" });
     proc.send({ type: "POKE" });
-    await new Promise(r => setTimeout(r, 50));
+    await new Promise((r) => setTimeout(r, 50));
 
     expect(proc.state!.count).toBe(3);
 
@@ -130,7 +138,8 @@ describe.each([
 
   it("exits when count reaches max, ignoring further POKEs", async () => {
     const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
-      getFn(), "counter",
+      getFn(),
+      "counter",
     )({ max: 2 });
 
     await proc.ready();
@@ -144,7 +153,8 @@ describe.each([
 
   it("exposes process name and id", async () => {
     const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
-      getFn(), "my-counter",
+      getFn(),
+      "my-counter",
     )({ max: 1 });
 
     await proc.ready();
@@ -159,7 +169,8 @@ describe.each([
   it("emits DONE to parent with final count", async () => {
     const messages: CounterOut[] = [];
     const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
-      getFn(), "counter",
+      getFn(),
+      "counter",
       (msg) => messages.push(msg),
     )({ max: 1 });
 
@@ -167,8 +178,9 @@ describe.each([
     proc.send({ type: "POKE" });
     await proc.wait();
 
-    const doneMsg = messages.find(m => m.type === "DONE") as
-      { type: "DONE"; count: number } | undefined;
+    const doneMsg = messages.find((m) => m.type === "DONE") as
+      | { type: "DONE"; count: number }
+      | undefined;
     expect(doneMsg).toBeDefined();
     expect(doneMsg!.count).toBe(1);
   });

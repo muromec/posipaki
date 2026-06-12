@@ -19,13 +19,10 @@ export interface Message {
  * process name (same as `ctx.pname`).  These fields mirror what
  * `this.emit()` / `ctx.toParent()` stamp on normal messages, so
  * callers can identify the sender of any child message — application
- * or EXIT — by reading `msg.fromName` or `msg.fromId`.
- *
- * @deprecated Use `fromId` instead of `pid` — they carry the same
- *   symbol.  `pid` is retained for backward compatibility. */
+ * or EXIT — by reading `msg.fromName` or `msg.fromId`. */
 export type ExitMessage = {
   type: "EXIT";
-  /** @deprecated Use fromId instead. */
+  /** @deprecated Use {@link fromId} instead. */
   pid: symbol;
   fromName: string;
   fromId: symbol;
