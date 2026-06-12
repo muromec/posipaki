@@ -13,10 +13,19 @@ export interface Message {
   type: string;
 }
 
-/** Message emitted by a process to its parent when it terminates. */
+/** Message emitted by a process to its parent when it terminates.
+ *
+ * On EXIT, `fromId` and `pid` carry the same symbol value.
+ * `fromName` is the process name (same as `ctx.pname`).
+ * These fields mirror what `this.emit()` / `ctx.toParent()` stamp on
+ * normal messages, so callers can identify the sender of *any* child
+ * message — application or EXIT — by reading `msg.fromName` or
+ * `msg.fromId`. */
 export type ExitMessage = {
   type: "EXIT";
   pid: symbol;
+  fromName?: string;
+  fromId?: symbol;
 };
 
 // ---- ProcessFn (sync) -------------------------------------------------------
