@@ -22,7 +22,7 @@ import { defineMessages } from "./define-actor.js";
 // Shared types
 // ═══════════════════════════════════════════════════════════════════════════════
 
-type CounterIn = PokeM | { type: "STOP" };
+type CounterIn = PokeM | { type: "STOP" } | { type: "PING"; count: number };
 type CountState = { count: number; max: number };
 type CounterArgs = { max: number };
 type CounterOut = { type: "DONE"; count: number } | Message;
@@ -76,7 +76,10 @@ const counterDef_vB = defineActor({
   },
 
   handlers: {
-    POKE() {
+    PING(msg) {
+      msg.count;
+    },
+    POKE(msg) {
       this.increment();
       if (this.state.count >= this.state.max) {
         this.beDone();

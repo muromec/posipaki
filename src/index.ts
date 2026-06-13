@@ -32,4 +32,5 @@ export type {
   ActorContext,
   MethodOptions,
   HandlerOptions,
+  HandlerFn,
 } from "./actor-types.js";

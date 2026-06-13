@@ -15,6 +15,7 @@ import type {
   MethodOptions,
   ActorMessages,
   HandlerOptions,
+  HandlerFn,
 } from "./actor-types.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -162,12 +163,9 @@ export function defineActor<
 
           // ── Named handlers ──────────────────────────────────────────
           if (msg.type !== "STOP") {
-            const handler = (
-              config.handlers as Record<
-                string,
-                ((msg: InMsg) => void | Promise<void>) | undefined
-              >
-            )[msg.type];
+            const handler = config.handlers[
+              msg.type as keyof Handlers
+            ] as HandlerFn<InMsg>;
             if (handler) {
               await handler.call(self, msg);
             } else if (config.onUnhandled) {

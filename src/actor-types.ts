@@ -20,9 +20,12 @@ export type ActorMessages<M extends Message> = {
 export interface MethodOptions {
   [key: string]: Function;
 }
+export type HandlerFn<InMsg extends Message> = (
+  msg: InMsg,
+) => void | Promise<void>;
 export type HandlerOptions<InMsg extends Message> = Omit<
   {
-    [K in InMsg["type"]]: (msg: InMsg) => void | Promise<void>;
+    [K in InMsg["type"]]: HandlerFn<Extract<InMsg, { type: K }>>;
   },
   "STOP"
 >;
@@ -71,7 +74,7 @@ export interface ActorConfig<
       ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>
     >;
 
-  methods: Methods &
+  methods?: Methods &
     ThisType<
       ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>
     >;
