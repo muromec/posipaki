@@ -60,8 +60,8 @@ const counterFn_vA = async function* counterFn(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const counterDef_vB = defineActor({
-  initialState(args: CounterArgs): CountState {
-    return { count: 0, max: args.max };
+  initialState(args: CounterArgs, ctx): CountState {
+    return { count: 0, max: args.max, name: ctx.pname } as CountState;
   },
   outMessages: defineMessages<CounterOut>(),
   inMessages: defineMessages<CounterIn>(),

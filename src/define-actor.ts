@@ -56,7 +56,12 @@ export function defineActor<
       // Resolve internal state — literal or function of args.
       const rawState: InternalState =
         typeof config.initialState === "function"
-          ? (config.initialState as (args: Args) => InternalState)(args)
+          ? (
+              config.initialState as (
+                args: Args,
+                ictx: typeof ctx,
+              ) => InternalState
+            )(args, ctx)
           : config.initialState;
 
       // Apply expose if provided, otherwise identity.

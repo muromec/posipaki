@@ -50,7 +50,23 @@ export interface ActorConfig<
   Methods extends MethodOptions,
   Handlers extends HandlerOptions<InMsg>,
 > {
-  initialState: InternalState | ((this: void, args: Args) => InternalState);
+  initialState:
+    | InternalState
+    | ((
+        this: void,
+        args: Args,
+        // initial state is called before the actor
+        // context is created (not that it's really necessay)
+        // so we can only pass the process context here.
+        ctx: ActorContext<
+          Args,
+          InternalState,
+          InMsg,
+          OutMsg,
+          Methods,
+          Handlers
+        >["ctx"],
+      ) => InternalState);
   expose?: (internalState: InternalState) => ExposedState;
   outMessages?: ActorMessages<OutMsg>;
   inMessages?: ActorMessages<InMsg>;
