@@ -23,7 +23,7 @@ import { defineMessages } from "./define-actor.js";
 // ═══════════════════════════════════════════════════════════════════════════════
 
 type CounterIn = PokeM | { type: "STOP" } | { type: "PING"; count: number };
-type CountState = { count: number; max: number };
+type CountState = { count: number; max: number; name: string };
 type CounterArgs = { max: number };
 type CounterOut = { type: "DONE"; count: number } | Message;
 
@@ -35,7 +35,7 @@ const counterFn_vA = async function* counterFn(
   ctx: ProcessCtx<CounterArgs, CountState, CounterIn, CounterOut>,
   args: CounterArgs,
 ) {
-  const state: CountState = { count: 0, max: args.max };
+  const state: CountState = { count: 0, max: args.max, name: ctx.pname };
   yield state;
 
   yield* runDispatchAsync<CounterIn>(
@@ -110,7 +110,7 @@ describe.each([
     )({ max: 3 });
 
     await proc.ready();
-    expect(proc.state).toEqual({ count: 0, max: 3 });
+    expect(proc.state).toEqual({ count: 0, max: 3, name: "counter" });
 
     proc.send({ type: "STOP" } as CounterIn);
     await proc.wait();

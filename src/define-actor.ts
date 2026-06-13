@@ -158,10 +158,9 @@ export function defineActor<
             if (childName && self.$child[childName]) {
               // Recognized child — consume EXIT here.
               delete self.$child[childName];
-              if (config.onChildExit) {
-                await config.onChildExit.call(self, childName, exitMsg);
-              }
-              return;
+            }
+            if (config.onChildExit) {
+              await config.onChildExit.call(self, childName, exitMsg);
             }
             // Unrecognized EXIT — fall through to handlers/onUnhandled.
           }
