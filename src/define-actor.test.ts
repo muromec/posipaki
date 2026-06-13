@@ -16,6 +16,7 @@ import { spawnAsync, runDispatchAsync, defineActor } from "./index.js";
 import type { AsyncProcessFn, Message, ProcessCtx } from "./index.js";
 
 import type { PokeM } from "./test-helpers.js";
+import { defineMessages } from "./define-actor.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Shared types
@@ -58,17 +59,27 @@ const counterFn_vA = async function* counterFn(
 // Variant B (FINAL GREEN): defineActor
 // ═══════════════════════════════════════════════════════════════════════════════
 
-const counterDef_vB = defineActor<CounterArgs, CountState, CountState, CounterIn, CounterOut>({
-  initialState(args) {
+const counterDef_vB = defineActor({
+  initialState(args: CounterArgs): CountState {
     return { count: 0, max: args.max };
+  },
+  outMessages: defineMessages<CounterOut>(),
+  inMessages: defineMessages<CounterIn>(),
+  methods: {
+    increment() {
+      this.state.count++;
+    },
+    beDone() {
+      this.emit({ type: "DONE", count: this.state.count });
+      this.exit("max reached");
+    },
   },
 
   handlers: {
     POKE() {
-      this.state.count++;
+      this.increment();
       if (this.state.count >= this.state.max) {
-        this.emit({ type: "DONE", count: this.state.count });
-        this.exit("max reached");
+        this.beDone();
       }
     },
   },

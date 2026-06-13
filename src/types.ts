@@ -27,6 +27,9 @@ export type ExitMessage = {
   fromName: string;
   fromId: symbol;
 };
+export type StopMessage = {
+  type: "STOP";
+};
 
 // ---- ProcessFn (sync) -------------------------------------------------------
 
