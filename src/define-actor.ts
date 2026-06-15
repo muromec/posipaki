@@ -161,15 +161,14 @@ export function defineActor<
 
         // ── Built-in EXIT handling ──────────────────────────────────
         if (msg.type === "EXIT") {
-          const exitMsg = msg as unknown as ExitMessage;
-          const childName = exitMsg.fromName;
+          const childName = sender.fromName;
 
           if (childName && self.$child[childName]) {
             // Recognized child — consume EXIT here.
             delete self.$child[childName];
           }
           if (config.onChildExit) {
-            await config.onChildExit.call(self, childName, exitMsg);
+            await config.onChildExit.call(self, childName, msg as unknown as ExitMessage);
           }
           // Unrecognized EXIT — fall through to handlers/onUnhandled.
         }

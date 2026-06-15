@@ -13,7 +13,12 @@
 
 import { describe, it, expect } from "vitest";
 import { spawnAsync, runDispatchAsync, defineActor } from "./index.js";
-import type { AsyncProcessFn, Message, WithSender, ProcessCtx } from "./index.js";
+import type {
+  AsyncProcessFn,
+  Message,
+  WithSender,
+  ProcessCtx,
+} from "./index.js";
 
 import type { PokeM } from "./test-helpers.js";
 import { defineMessages } from "./define-actor.js";
@@ -40,8 +45,7 @@ const counterFn_vA = async function* counterFn(
 
   yield* runDispatchAsync<WithSender<CounterIn>>(
     ctx.pname,
-    async (maybe) => {
-      const [msg, _s] = maybe;
+    async ([msg]) => {
       if (msg.type === "POKE") {
         state.count++;
         if (state.count >= state.max) {
@@ -186,14 +190,16 @@ describe.each([
     const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
       getFn(),
       "counter",
-      (maybe) => { const [m, _s] = maybe as any; messages.push(m); },
+      ([msg]) => {
+        messages.push(msg);
+      },
     )({ max: 1 });
 
     await proc.ready();
     proc.send({ type: "POKE" });
     await proc.wait();
 
-    const doneMsg = messages.find((m: any) => m.type === "DONE") as
+    const doneMsg = messages.find((m) => m.type === "DONE") as
       | { type: "DONE"; count: number }
       | undefined;
     expect(doneMsg).toBeDefined();

@@ -358,11 +358,10 @@ export class AsyncProcess<
   /** Relays a child's message to this process. The message already carries
    *  sender provenance (stamped by the child's `ctx.toParent` wrapper). */
   private fromChild(msgAndSender: WithSender<InMessage>): void {
-    const [msg] = msgAndSender;
+    const [msg, sender] = msgAndSender;
     if (msg.type === "EXIT") {
-      this.children = this.children.filter(
-        (p) => p.id !== (msg as unknown as ExitMessage).pid,
-      );
+      // sender.fromId === child's id (set by child's ctx.toParent wrapper)
+      this.children = this.children.filter((p) => p.id !== sender.fromId);
     }
     this.send(msgAndSender);
   }
