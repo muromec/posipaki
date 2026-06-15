@@ -5,6 +5,7 @@
 // implementation module directly.
 
 import type {
+  SenderInfo,
   AsyncProcessFn,
   Message,
   ProcessCtx,
@@ -22,6 +23,7 @@ export interface MethodOptions {
 }
 export type HandlerFn<InMsg extends Message> = (
   msg: InMsg,
+  sender: SenderInfo,
 ) => void | Promise<void>;
 export type HandlerOptions<InMsg extends Message> = Omit<
   {
@@ -98,6 +100,7 @@ export interface ActorConfig<
   onUnhandled?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     msg: InMsg,
+    sender: SenderInfo,
   ) => void | Promise<void>;
 
   onChildExit?: (

@@ -6,7 +6,13 @@
 // See docs/proposals/define-actor-proposal.md for the full design.
 
 import { runDispatchAsync } from "./process.async.js";
-import type { AsyncProcessFn, Message, InternalMessage, ExitMessage } from "./types.js";
+import type {
+  SenderInfo,
+  AsyncProcessFn,
+  Message,
+  InternalMessage,
+  ExitMessage,
+} from "./types.js";
 import type { AsyncProcess } from "./process.async.js";
 import type {
   ActorDefinition,
@@ -163,13 +169,18 @@ export function defineActor<
 
           // ── Named handlers ──────────────────────────────────────────
           if (msg.type !== "STOP") {
+            const { fromName, fromId, ...cleanMsg } = msg as unknown as InternalMessage;
+            const sender: SenderInfo = {
+              fromName: fromName ?? "unknown",
+              fromId: fromId ?? Symbol("unknown"),
+            };
             const handler = config.handlers[
-              msg.type as keyof Handlers
+              cleanMsg.type as keyof Handlers
             ] as HandlerFn<InMsg>;
             if (handler) {
-              await handler.call(self, msg);
+              await handler.call(self, cleanMsg as InMsg, sender);
             } else if (config.onUnhandled) {
-              await config.onUnhandled.call(self, msg);
+              await config.onUnhandled.call(self, cleanMsg as InMsg, sender);
             }
             // No onUnhandled: silently drop.
           }
