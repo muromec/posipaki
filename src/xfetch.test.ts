@@ -404,7 +404,7 @@ describe("xfetch", () => {
     await proc.ready();
     await vi.runAllTimersAsync();
 
-    expect(bus).toHaveBeenCalledWith({ type: "ERROR" });
+    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "ERROR" }));
     expect(proc.state).toMatchObject({ code: "failed" });
     expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }));
   });
@@ -427,7 +427,7 @@ describe("xfetch", () => {
     await proc.ready();
     await vi.runAllTimersAsync();
 
-    expect(bus).toHaveBeenCalledWith({ type: "ABORTED" });
+    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "ABORTED" }));
     expect(proc.state).toMatchObject({ code: "aborted" });
     expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }));
   });

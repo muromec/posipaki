@@ -2,6 +2,7 @@ import { defer, makeWaiter, debugLog } from "./util.js";
 import type { DeferredCall, Waiter } from "./util.js";
 import type {
   Message,
+  InternalMessage,
   ExitMessage,
   ProcessCtx,
   AsyncProcessFn,
@@ -20,6 +21,19 @@ type AsyncProcessGenerator<ProcessState, InMessage> = AsyncGenerator<
 >;
 
 type NotifyFn = () => void;
+
+// ---- sendFrom ---------------------------------------------------------------
+
+/** Stamp a plain message with sender provenance.  Only the framework
+ *  calls this — application code never sees it. */
+export function sendFrom<
+  M extends Message,
+  S extends { pname: string; id: symbol },
+>(msg: M, sender: S): M & InternalMessage {
+  (msg as any).fromName = sender.pname;
+  (msg as any).fromId = sender.id;
+  return msg as M & InternalMessage;
+}
 
 // ---- runDispatchAsync -------------------------------------------------------
 
@@ -111,13 +125,19 @@ export class AsyncProcess<
    * state; for async generators this happens in a microtask.
    */
   start(arg0: Args) {
+    const self = { pname: this.pname, id: this.id };
+
     const ctx: ProcessCtx<Args, State, InMessage, OutMessage> = {
       pname: this.pname,
-        id: this.id,
+      id: this.id,
       fork: this.fork.bind(this),
       forkSync: this.forkSync.bind(this),
-      send: this.send.bind(this),
-      toParent: this.toParent,
+      send: (msg) => {
+        this.send(sendFrom(msg, self) as InMessage);
+      },
+      toParent: (msg) => {
+        this.toParent(sendFrom(msg, self) as OutMessage);
+      },
     };
 
     this.current = this._watchExit(ctx, arg0);
@@ -147,11 +167,10 @@ export class AsyncProcess<
       yield* this.pgenerator(ctx, arg0);
     } finally {
       this.toAllChildren({ type: "STOP" } as Message);
-      this.toParent({
+      // ctx.toParent wrapper stamps fromName/fromId automatically
+      ctx.toParent({
         type: "EXIT",
         pid: this.id,
-        fromName: this.pname,
-        fromId: this.id,
       } as unknown as OutMessage);
     }
   }
@@ -336,6 +355,8 @@ export class AsyncProcess<
         (p) => p.id !== (msg as unknown as ExitMessage).pid,
       );
     }
+    // msg already carries fromName/fromId — stamped by the child's
+    // ctx.toParent wrapper before it reached fromChild.
     this.send(msg);
   }
 }

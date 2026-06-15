@@ -8,14 +8,15 @@
 
 import { Process, spawn } from "./process";
 import { runDispatch } from "./util";
-import { AsyncProcess, spawnAsync, runDispatchAsync } from "./process.async";
+import { AsyncProcess, spawnAsync, runDispatchAsync, sendFrom } from "./process.async";
 import { asyncify } from "./adapters";
 
 export { Process, spawn, runDispatch };
-export { AsyncProcess, spawnAsync, runDispatchAsync, asyncify };
+export { AsyncProcess, spawnAsync, runDispatchAsync, asyncify, sendFrom };
 
 export type {
   Message,
+  InternalMessage,
   ExitMessage,
   StopMessage,
   ProcessFn,
@@ -23,9 +24,11 @@ export type {
   AsyncProcessFn,
   PipeState,
   SupervisorState,
+  SenderOrigin,
 } from "./types";
 
 export { defineActor, defineMessages } from "./define-actor.js";
+export type { SenderInfo } from "./types.js";
 export type {
   ActorDefinition,
   ActorConfig,

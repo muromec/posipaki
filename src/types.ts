@@ -13,20 +13,27 @@ export interface Message {
   type: string;
 }
 
+/** Message with guaranteed sender provenance.
+ *
+ * `fromName` and `fromId` are stamped by the framework when a message
+ * passes through `ctx.toParent()` or `ctx.send()`.  Messages arriving
+ * via `proc.send()` from outside the process tree may not carry them. */
+export interface InternalMessage extends Message {
+  fromName: string;
+  fromId: symbol;
+}
+
 /** Message emitted by a process to its parent when it terminates.
  *
  * `fromId` and `pid` carry the same symbol value.  `fromName` is the
  * process name (same as `ctx.pname`).  These fields mirror what
- * `this.emit()` / `ctx.toParent()` stamp on normal messages, so
- * callers can identify the sender of any child message — application
- * or EXIT — by reading `msg.fromName` or `msg.fromId`. */
-export type ExitMessage = {
+ * the framework stamps on every `ctx.toParent()` / `ctx.send()` call. */
+export type ExitMessage = InternalMessage & {
   type: "EXIT";
   /** @deprecated Use {@link fromId} instead. */
   pid: symbol;
-  fromName: string;
-  fromId: symbol;
 };
+
 export type StopMessage = {
   type: "STOP";
 };
@@ -54,6 +61,14 @@ export type AsyncProcessFn<
   ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
 ) => AsyncGenerator<State | null, void, InMessage>;
+
+// ---- Sender ----------------------------------------------------------------
+
+/** Origin of a message — either a process context or the literal "root"
+ *  (used by the system harness to inject messages from outside). */
+export type SenderOrigin =
+  | ProcessCtx<unknown, unknown, Message, Message>
+  | "root";
 
 // ---- ProcessCtx -------------------------------------------------------------
 
@@ -104,4 +119,14 @@ export interface PipeState<Params, Result> {
 export interface SupervisorState {
   processes: any[]; // Process<any,any,any,any>[]
   phase: "wait" | "running" | "stopping";
+}
+
+// ---- SenderInfo --------------------------------------------------------------
+
+/** Sender identity extracted from an {@link InternalMessage} by
+ *  the `defineActor` dispatch loop.  `fromName` is the process name,
+ *  `fromId` its symbol. */
+export interface SenderInfo {
+  fromName: string;
+  fromId: symbol;
 }
