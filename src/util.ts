@@ -55,9 +55,6 @@ function watchExit<
       proc.toAllChildren({ type: "STOP" });
       proc.toParent({
         type: "EXIT",
-        pid: proc.id,
-        fromName: proc.pname,
-        fromId: proc.id,
       } as OM);
     }
   };

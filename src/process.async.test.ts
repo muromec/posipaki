@@ -39,8 +39,8 @@ describe("AsyncProcess", () => {
     };
 
     const proc = spawnAsync(fn, "counter")(null);
-    proc.send({ type: "POKE" });
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
 
     await proc.wait();
     expect(proc.state?.count).toBe(2);
@@ -64,7 +64,7 @@ describe("AsyncProcess", () => {
     };
 
     const proc = spawnAsync(fn, "timer")(null);
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
 
     await proc.wait();
     expect(proc.state).toEqual({ fired: true });
@@ -90,7 +90,7 @@ describe("AsyncProcess", () => {
 
     const proc = spawnAsync(fn, "counter")(null);
     proc.subscribe(callback);
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
 
     await proc.wait();
     expect(callback).toHaveBeenCalledTimes(1);
@@ -111,7 +111,7 @@ describe("AsyncProcess", () => {
     await proc.wait();
 
     expect(bus).toHaveBeenCalledWith([
-      expect.objectContaining({ type: "EXIT", pid: proc.id }), expect.any(Object),
+      expect.objectContaining({ type: "EXIT" }), expect.any(Object),
     ]);
   });
 
@@ -134,8 +134,8 @@ describe("AsyncProcess", () => {
     }
 
     const proc = spawnAsync(asyncify(syncFn), "wrapped")(null);
-    proc.send({ type: "POKE" });
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
 
     await proc.wait();
     expect(proc.state).toEqual({ count: 2 });
@@ -158,7 +158,7 @@ describe("AsyncProcess", () => {
     }
 
     const proc = spawnAsync(asyncify(syncFn), "single")(null);
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
 
     await proc.wait();
     expect(proc.state).toEqual({ count: 1 });
@@ -184,8 +184,8 @@ describe("AsyncProcess", () => {
 
     const proc = spawnAsync(fn, "pausable")(null);
     proc.pause();
-    proc.send({ type: "POKE" });
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
 
     await vi.waitFor(() => expect(proc.state).toEqual({ hits: 0 }), {
       timeout: 100,
@@ -223,9 +223,9 @@ describe("AsyncProcess", () => {
     };
 
     const proc = spawnAsync(fn, "concurrent")(null);
-    proc.send({ type: "POKE" });
-    proc.send({ type: "POKE" });
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
 
     await proc.wait();
     expect(proc.state).toEqual({ count: 3 });
@@ -245,7 +245,7 @@ describe("AsyncProcess", () => {
     };
 
     const proc = spawnAsync(fn, "exploder")(null);
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
 
     await expect(proc.wait()).rejects.toThrow("boom");
   });
@@ -284,9 +284,9 @@ describe("AsyncProcess", () => {
     };
 
     const proc = spawnAsync(fn, "order-test")(null);
-    proc.send({ type: "START" });
-    proc.send({ type: "LONG" });
-    proc.send({ type: "SHORT" });
+    proc.send({ type: "START" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "LONG" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "SHORT" }, { fromName: "test", fromId: Symbol("test") });
 
     await proc.wait();
     expect(proc.state?.trace).toBe("START-LONG-SHORT");

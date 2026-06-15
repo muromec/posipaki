@@ -73,7 +73,7 @@ function pipe<Params, Result>(
           return;
         }
 
-        if (msg.type === "EXIT" && (msg as ExitMessage).pid === task.id) {
+        if (msg.type === "EXIT" && _sender.fromId === task.id) {
           if (hasNext()) {
             state.params = {
               ...state.params!,

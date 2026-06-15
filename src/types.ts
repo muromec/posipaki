@@ -33,13 +33,10 @@ export type WithoutSender<T extends WithSender<any>> = T[0];
 
 // ---- ExitMessage -------------------------------------------------------------
 
-/** Message emitted by a process to its parent when it terminates. */
+/** Message emitted by a process to its parent when it terminates.
+ *  The sender's identity is carried in the {@link SenderInfo} tuple. */
 export type ExitMessage = {
   type: "EXIT";
-  /** @deprecated Use `fromId` from the sender tuple instead. */
-  pid: symbol;
-  fromName: string;
-  fromId: symbol;
 };
 
 export type StopMessage = {
@@ -108,7 +105,7 @@ export type ForkSync<
 export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   pname: string;
   id: symbol;
-  send: (msg: IM) => void;
+  sendSelf: (msg: IM) => void;
   toParent: ProcessMessageCb<OM>;
 } & Pick<AsyncProcess<Args, State, IM, OM>, "fork" | "forkSync">;
 

@@ -36,7 +36,7 @@ describe("Process", () => {
   it("updates state after tick()", async () => {
     const proc = spawn<Nil, SimpleStore, ChangeM>(p2, "p2")(null);
     await proc.ready();
-    proc.send({ type: "CHANGE", data: "s2" });
+    proc.send({ type: "CHANGE", data: "s2" }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
     expect(proc.state).toEqual({ state: "s2" });
   });
@@ -46,7 +46,7 @@ describe("Process", () => {
     const proc = spawn<Nil, SimpleStore, ChangeM>(p2, "p2")(null);
     await proc.ready();
     proc.subscribe(cb);
-    proc.send({ type: "CHANGE", data: "s2" });
+    proc.send({ type: "CHANGE", data: "s2" }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
     expect(cb).toHaveBeenCalledTimes(1);
   });
@@ -62,7 +62,7 @@ describe("Process", () => {
     await proc.ready();
     const res = proc.wait();
     expect(res).toBeInstanceOf(Promise);
-    proc.send({ type: "CHANGE", data: "s2" });
+    proc.send({ type: "CHANGE", data: "s2" }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
     await expect(res).resolves.toBe(undefined);
   });
@@ -84,7 +84,7 @@ describe("Process", () => {
       bus,
     )(null);
     await proc.ready();
-    proc.send({ type: "TRIGGER" } as Message);
+    proc.send({ type: "TRIGGER" } as Message, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
     expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "PONG", pseq: 0 }), expect.any(Object)]);
     expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "EXIT" }), expect.any(Object)]);
@@ -113,12 +113,12 @@ describe("Process", () => {
     )(null);
     await proc.ready();
     for (let i = 0; i < 5; i++) {
-      proc.send({ type: "PING", pseq: i });
+      proc.send({ type: "PING", pseq: i }, { fromName: "test", fromId: Symbol("test") });
       await proc.tick();
       expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "PONG", pseq: i }), expect.any(Object)]);
     }
     expect(bus).toHaveBeenCalledWith([
-      expect.objectContaining({ type: "EXIT", pid: proc.id }), expect.any(Object),
+      expect.objectContaining({ type: "EXIT" }), expect.any(Object),
     ]);
     expect(bus).toHaveBeenCalledTimes(6);
   });
@@ -131,13 +131,13 @@ describe("Process", () => {
       bus,
     )(null);
     await proc.ready();
-    proc.send({ type: "PING", pseq: 0 });
+    proc.send({ type: "PING", pseq: 0 }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
     expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "PONG", pseq: 0 }), expect.any(Object)]);
-    proc.send({ type: "PING", pseq: 2 });
+    proc.send({ type: "PING", pseq: 2 }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
     expect(bus).toHaveBeenCalledWith([
-      expect.objectContaining({ type: "EXIT", pid: proc.id }), expect.any(Object),
+      expect.objectContaining({ type: "EXIT" }), expect.any(Object),
     ]);
     expect(bus).toHaveBeenCalledTimes(2);
   });
@@ -154,23 +154,23 @@ describe("Process", () => {
     const cb2 = () => s2(proc.state ? proc.state.seq : null);
     expect(proc.isListenedTo).toBe(false);
     const u1 = proc.subscribe(cb1);
-    proc.send({ type: "PING", pseq: 0 });
+    proc.send({ type: "PING", pseq: 0 }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
     expect(s1).toHaveBeenCalledWith(1);
     expect(s2).not.toHaveBeenCalled();
     expect(proc.isListenedTo).toBe(true);
     const u2 = proc.subscribe(cb2);
-    proc.send({ type: "PING", pseq: 1 });
+    proc.send({ type: "PING", pseq: 1 }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
     expect(s1).toHaveBeenCalledWith(2);
     expect(s2).toHaveBeenCalledWith(2);
     u2();
-    proc.send({ type: "PING", pseq: 2 });
+    proc.send({ type: "PING", pseq: 2 }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
     expect(s1).toHaveBeenCalledWith(3);
     expect(s2).toHaveBeenCalledTimes(1);
     u1();
-    proc.send({ type: "PING", pseq: 3 });
+    proc.send({ type: "PING", pseq: 3 }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
     expect(s1).toHaveBeenCalledTimes(3);
     expect(s2).toHaveBeenCalledTimes(1);
@@ -184,9 +184,9 @@ describe("Process", () => {
     )(null);
     await proc.ready();
     proc.pause();
-    proc.send({ type: "PING", pseq: 0 });
-    proc.send({ type: "PING", pseq: 1 });
-    proc.send({ type: "PING", pseq: 2 });
+    proc.send({ type: "PING", pseq: 0 }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "PING", pseq: 1 }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "PING", pseq: 2 }, { fromName: "test", fromId: Symbol("test") });
     expect(proc.state).toEqual({ seq: 0 });
     proc.resume();
     await proc.tick();

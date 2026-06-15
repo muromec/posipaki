@@ -117,7 +117,7 @@ describe.each([
     await proc.ready();
     expect(proc.state).toEqual({ count: 0, max: 3, name: "counter" });
 
-    proc.send({ type: "STOP" } as CounterIn);
+    proc.send({ type: "STOP" } as CounterIn, { fromName: "test", fromId: Symbol("test") });
     await proc.wait();
   });
 
@@ -128,12 +128,12 @@ describe.each([
     )({ max: 3 });
 
     await proc.ready();
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
     await new Promise((r) => setTimeout(r, 50));
 
     expect(proc.state!.count).toBe(1);
 
-    proc.send({ type: "STOP" } as CounterIn);
+    proc.send({ type: "STOP" } as CounterIn, { fromName: "test", fromId: Symbol("test") });
     await proc.wait();
   });
 
@@ -144,14 +144,14 @@ describe.each([
     )({ max: 5 });
 
     await proc.ready();
-    proc.send({ type: "POKE" });
-    proc.send({ type: "POKE" });
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
     await new Promise((r) => setTimeout(r, 50));
 
     expect(proc.state!.count).toBe(3);
 
-    proc.send({ type: "STOP" } as CounterIn);
+    proc.send({ type: "STOP" } as CounterIn, { fromName: "test", fromId: Symbol("test") });
     await proc.wait();
   });
 
@@ -162,9 +162,9 @@ describe.each([
     )({ max: 2 });
 
     await proc.ready();
-    proc.send({ type: "POKE" });
-    proc.send({ type: "POKE" });
-    proc.send({ type: "POKE" }); // dropped — exit condition already met
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") }); // dropped — exit condition already met
 
     await proc.wait();
     expect(proc.state!.count).toBe(2);
@@ -181,7 +181,7 @@ describe.each([
     expect(typeof proc.id).toBe("symbol");
     expect(proc.id.toString()).toBe("Symbol(my-counter)");
 
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
     await proc.wait();
   });
 
@@ -196,7 +196,7 @@ describe.each([
     )({ max: 1 });
 
     await proc.ready();
-    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
     await proc.wait();
 
     const doneMsg = messages.find((m) => m.type === "DONE") as

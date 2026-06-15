@@ -46,7 +46,7 @@ describe("watchExit", () => {
     gen.next({ type: "PING", pseq: 99 }); // mismatch → generator exits
 
     expect(childCalls).toEqual([{ type: "STOP" }]);
-    expect(parentCalls).toContainEqual({ type: "EXIT", pid: proc.id, fromName: "test", fromId: proc.id });
+    expect(parentCalls).toContainEqual({ type: "EXIT" });
   });
 
   it("does not send STOP or EXIT if the generator never completes", () => {

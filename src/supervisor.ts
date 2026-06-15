@@ -66,7 +66,7 @@ function* supervise(
           state.phase = "stopping";
           break;
         case "EXIT":
-          state.processes = state.processes.filter((p) => p.id !== msg.pid);
+          state.processes = state.processes.filter((p) => p.id !== _sender.fromId);
           break;
         case "OK":
           toParent(msg);
@@ -90,7 +90,7 @@ function attach<Args extends any[]>(
   pname: string,
 ): (...args: Args) => void {
   return (...args) => {
-    supervisor.send({ type: "RUN", fn, args, pname } as SupMsg);
+    supervisor.send({ type: "RUN", fn, args, pname } as SupMsg, { fromName: "external", fromId: Symbol("external") });
   };
 }
 

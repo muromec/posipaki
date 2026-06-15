@@ -20,16 +20,6 @@ type AsyncProcessGenerator<ProcessState, InMessage extends Message> =
 
 type NotifyFn = () => void;
 
-// ---- sendFrom ---------------------------------------------------------------
-
-/** Stamp a plain message with sender provenance. */
-export function sendFrom<M extends Message>(
-  msg: M,
-  from: { pname: string; id: symbol },
-): WithSender<M> {
-  return [msg, { fromName: from.pname, fromId: from.id }];
-}
-
 // ---- runDispatchAsync -------------------------------------------------------
 
 type AsyncReducer<M> = (msg: M) => Promise<void>;
@@ -129,8 +119,8 @@ export class AsyncProcess<
       id: this.id,
       fork: this.fork.bind(this),
       forkSync: this.forkSync.bind(this),
-      send: (msg) => {
-        this.send(msg);
+      sendSelf: (msg) => {
+        this.send([msg, selfCtx]);
       },
       toParent: (msg) => {
         this.toParent([msg, selfCtx] as WithSender<OutMessage>);
@@ -150,7 +140,7 @@ export class AsyncProcess<
       // enters its dispatch loop.
       const advance: WithSender<InMessage> = [
         { type: "__ADVANCE__" } as InMessage,
-        { fromName: "__internal__", fromId: Symbol("__internal__") },
+        { fromName: "__internal__", fromId: Symbol("__internal__") } as SenderInfo,
       ];
       this._eatResult(this.current!.next(advance));
     });
@@ -167,7 +157,7 @@ export class AsyncProcess<
     } finally {
       this.toAllChildren({ type: "STOP" });
       // ctx.toParent stamps sender info into a WithSender tuple
-      ctx.toParent({ type: "EXIT", pid: this.id } as unknown as OutMessage);
+      ctx.toParent({ type: "EXIT" } as unknown as OutMessage);
     }
   }
 
@@ -265,15 +255,15 @@ export class AsyncProcess<
     this.children.forEach((p) => p.send([msg, stamp] as WithSender<Message>));
   }
 
-  /** Enqueue a plain message — stamp with this process's identity. */
-  send(msg: InMessage): void;
-  /** Enqueue a pre-stamped message (e.g. from sendFrom or fromChild). */
+  /** Stamp and enqueue a message from a named sender (external API). */
+  send(msg: InMessage, from: SenderInfo): void;
+  /** Enqueue a pre-stamped message (internal: fromChild, toAllChildren). */
   send(msgAndSender: WithSender<InMessage>): void;
-  send(msgOrStamped: InMessage | WithSender<InMessage>): void {
-    if (Array.isArray(msgOrStamped)) {
-      this.buffer.push(msgOrStamped);
+  send(msgOrTuple: InMessage | WithSender<InMessage>, from?: SenderInfo): void {
+    if (from !== undefined) {
+      this.buffer.push([msgOrTuple as InMessage, from]);
     } else {
-      this.buffer.push([msgOrStamped, { fromName: this.pname, fromId: this.id }]);
+      this.buffer.push(msgOrTuple as WithSender<InMessage>);
     }
     this._scheduleTick();
   }

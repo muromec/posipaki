@@ -75,7 +75,7 @@ function* xfetch<Type>(
   {
     pname,
     toParent,
-    send,
+    sendSelf,
   }: ProcessCtx<
     FetchArgs<Type>,
     FetchState<Type>,
@@ -95,7 +95,7 @@ function* xfetch<Type>(
 
   const controller = new AbortController();
   const signal = controller.signal;
-  const toSelf = send;
+  const toSelf = sendSelf;
 
   (async function doRequest() {
     try {

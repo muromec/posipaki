@@ -54,8 +54,8 @@ export function defineActor<
     Handlers
   >,
 ): ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers> {
-  // Internal generator receives WithSender<InMsg> so fromName/fromId are
-  // directly accessible in the dispatch loop with zero casts.
+  // Internal generator receives WithSender<InMsg> so sender identity
+  // is directly accessible in the dispatch loop with zero casts.
   const fn = async function* (
     ctx: ProcessCtx<Args, ExposedState, InMsg, OutMsg>,
     args: Args,
@@ -129,7 +129,7 @@ export function defineActor<
     }
 
     // Dispatch loop..
-    yield* runDispatchAsync<WithSender<InMsg>>(
+    yield* runDispatchAsync<WithSender<InMsg | ExitMessage>>(
       ctx.pname,
       async (stamped) => {
         const [msg, sender] = stamped;
@@ -168,7 +168,7 @@ export function defineActor<
             delete self.$child[childName];
           }
           if (config.onChildExit) {
-            await config.onChildExit.call(self, childName, msg as unknown as ExitMessage);
+            await config.onChildExit.call(self, childName, msg as ExitMessage);
           }
           // Unrecognized EXIT — fall through to handlers/onUnhandled.
         }
@@ -199,7 +199,7 @@ export function defineActor<
 
   return {
     fn: fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
-    config: config as unknown as ActorConfig<
+    config: config as ActorConfig<
       Args,
       InternalState,
       ExposedState,

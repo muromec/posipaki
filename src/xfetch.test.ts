@@ -462,7 +462,7 @@ describe("xfetch", () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
 
     // Send STOP — should trigger AbortController.abort()
-    proc.send({ type: "STOP" } as FetchMessage<null>);
+    proc.send({ type: "STOP" } as FetchMessage<null>, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
 
     // The AbortController aborts, but since our mock never rejects,

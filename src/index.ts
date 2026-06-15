@@ -8,11 +8,11 @@
 
 import { Process, spawn } from "./process";
 import { runDispatch } from "./util";
-import { AsyncProcess, spawnAsync, runDispatchAsync, sendFrom } from "./process.async";
+import { AsyncProcess, spawnAsync, runDispatchAsync } from "./process.async";
 import { asyncify } from "./adapters";
 
 export { Process, spawn, runDispatch };
-export { AsyncProcess, spawnAsync, runDispatchAsync, asyncify, sendFrom };
+export { AsyncProcess, spawnAsync, runDispatchAsync, asyncify };
 
 export type {
   Message,
