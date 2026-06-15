@@ -40,6 +40,8 @@ const counter = defineActor({
 const proc = counter.spawn(null);
 await proc.ready();
 proc.send({ type: "POKE" });
+```
+
 
 A process can do everything a promise, a stream, or a store can do —
 but it can also fork children, pause/resume, and exit on its own terms.
