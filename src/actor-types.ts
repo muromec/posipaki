@@ -41,6 +41,14 @@ export interface ActorDefinition<
 > {
   fn: AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>;
   config: ActorConfig<Args, any, ExposedState, InMsg, OutMsg, {}, Handlers>;
+  /** Spawn this actor as a standalone process. */
+  spawn(args: Args): AsyncProcess<Args, ExposedState, InMsg, OutMsg>;
+  /** Spawn this actor as a child of the calling process. */
+  spawnAsChild(
+    ctx: ProcessCtx<any, any, any, any>,
+    name: string,
+    args: Args,
+  ): AsyncProcess<Args, ExposedState, InMsg, OutMsg>;
 }
 
 export interface ActorConfig<

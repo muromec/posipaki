@@ -5,7 +5,7 @@
 //
 // See docs/proposals/define-actor-proposal.md for the full design.
 
-import { runDispatchAsync } from "./process.async.js";
+import { runDispatchAsync, spawnAsync } from "./process.async.js";
 import type {
   SenderInfo,
   WithSender,
@@ -199,7 +199,7 @@ export function defineActor<
 
   return {
     fn: fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
-    config: config as ActorConfig<
+    config: config as unknown as ActorConfig<
       Args,
       InternalState,
       ExposedState,
@@ -208,5 +208,21 @@ export function defineActor<
       {},
       Handlers
     >,
+    spawn(args: Args) {
+      return spawnAsync(
+        fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
+        "actor",
+      )(args);
+    },
+    spawnAsChild(
+      ctx: ProcessCtx<any, any, any, any>,
+      name: string,
+      args: Args,
+    ) {
+      return ctx.fork(
+        fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
+        name,
+      )(args);
+    },
   };
 }

@@ -36,7 +36,10 @@ const counter = defineActor({
     },
   },
 });
-```
+
+const proc = counter.spawn(null);
+await proc.ready();
+proc.send({ type: "POKE" });
 
 A process can do everything a promise, a stream, or a store can do —
 but it can also fork children, pause/resume, and exit on its own terms.
@@ -58,10 +61,10 @@ const counter = defineActor({
   },
 });
 
-const proc = spawnAsync(counter.fn, "counter")(null);
+const proc = counter.spawn(null);
 await proc.ready();           // state is available
 proc.send({ type: "POKE" });  // delivers [msg, sender] to the generator
-// proc.state.count === 1     // the can be wrapped in reactive() of computed!
+// proc.state.count === 1
 ```
 
 For full control, drop to generators:
