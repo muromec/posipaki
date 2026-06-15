@@ -90,6 +90,29 @@ proc.send({ type: "POKE" });
 await proc.wait();
 ```
 
+
+## Okay, but what do I use it for?
+
+To call the `/chat_complete` endpoint and emit effects (tool calls)
+that the pure function (LLM) produces.
+
+Use it on the frontend for things like file upload progress or anything
+that has to be more interactive than a promise but not static enough
+to afford to be a store with the lifetime tied to the app.
+
+You can also use it to define components on the server side that have life
+time bounded by incoming request or some kind of a transient state.
+
+## How are the messages processed?
+
+Actors are loops iterating over the messages you send to their queue (inbox).
+Get the new message, process it, maybe emit something, wait for the next message.
+
+This means when you send three messages to a process -- they will be processed serially
+and their results will not produce a race. You can also ask the process to exit
+and it will not produce any messages once it does. This also cascades to their children.
+
+
 ## Features
 
 - **Processes** — sync or async, same API
