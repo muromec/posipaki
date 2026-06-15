@@ -29,6 +29,8 @@ function* runDispatch<M>(
 }
 
 /**
+* @deprecated Use AsyncProcess._watchExit instead.
+ *
  * Wrap a process generator so that on completion it sends STOP to
  * all children and EXIT to the parent. Useful for custom process
  * wrappers that need lifecycle management without extending

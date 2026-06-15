@@ -5,6 +5,7 @@ import type { Message, WithSender, ExitMessage, ProcessFn } from "./types.js";
 export type { Message, ProcessFn, ProcessCtx } from "./types.js";
 export { runDispatch } from "./util.js";
 
+/** @deprecated Use {@link spawnAsync} instead. */
 export function spawn<
   A,
   S,
@@ -18,6 +19,8 @@ export function spawn<
   return (a: A) => new Process(fn, pname, tp).start(a) as Process<A, S, IM, OM>;
 }
 
+/** @deprecated Use {@link AsyncProcess} instead. Sync processes are
+ *  wrapped via asyncify internally; spawnAsync handles both. */
 class Process<
   A,
   S,
