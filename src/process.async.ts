@@ -2,7 +2,8 @@ import { defer, makeWaiter, debugLog } from "./util.js";
 import type { DeferredCall, Waiter } from "./util.js";
 import type {
   Message,
-  InternalMessage,
+  WithSender,
+  SenderInfo,
   ExitMessage,
   ProcessCtx,
   AsyncProcessFn,
@@ -13,26 +14,20 @@ import { asyncify } from "./adapters.js";
 
 // ---- types ------------------------------------------------------------------
 
-/** An async iterator over process state. */
-type AsyncProcessGenerator<ProcessState, InMessage> = AsyncGenerator<
-  ProcessState | null,
-  void,
-  InMessage
->;
+/** An async iterator over process state. Receives `WithSender<InMessage>`. */
+type AsyncProcessGenerator<ProcessState, InMessage extends Message> =
+  AsyncGenerator<ProcessState | null, void, WithSender<InMessage>>;
 
 type NotifyFn = () => void;
 
 // ---- sendFrom ---------------------------------------------------------------
 
-/** Stamp a plain message with sender provenance.  Only the framework
- *  calls this — application code never sees it. */
-export function sendFrom<
-  M extends Message,
-  S extends { pname: string; id: symbol },
->(msg: M, sender: S): M & InternalMessage {
-  (msg as any).fromName = sender.pname;
-  (msg as any).fromId = sender.id;
-  return msg as M & InternalMessage;
+/** Stamp a plain message with sender provenance. */
+export function sendFrom<M extends Message>(
+  msg: M,
+  from: { pname: string; id: symbol },
+): WithSender<M> {
+  return [msg, { fromName: from.pname, fromId: from.id }];
 }
 
 // ---- runDispatchAsync -------------------------------------------------------
@@ -81,12 +76,14 @@ export class AsyncProcess<
 > {
   pgenerator: AsyncProcessFn<Args, State, InMessage, OutMessage>;
   pname: string;
-  toParent: ProcessMessageCb<OutMessage>;
+  /** Called for every message sent via `ctx.toParent`. Receives `WithSender<OutMessage>`. */
+  toParent: ProcessMessageCb<WithSender<OutMessage>>;
   id: symbol;
   state: State | null;
 
   private current: AsyncProcessGenerator<State, InMessage> | null = null;
-  private buffer: Array<InMessage> = [];
+  /** Every buffered message carries sender provenance. */
+  private buffer: Array<WithSender<InMessage>> = [];
   private nextTick: DeferredCall | null = null;
   private children: Array<AsyncProcess<unknown, unknown, Message, Message>> =
     [];
@@ -101,11 +98,11 @@ export class AsyncProcess<
   constructor(
     fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
     pname: string,
-    toParent: ProcessMessageCb<OutMessage> | undefined,
+    toParent: ProcessMessageCb<WithSender<OutMessage>> | undefined,
   ) {
     this.pgenerator = fn;
     this.pname = pname;
-    this.toParent = toParent || (noop as ProcessMessageCb<OutMessage>);
+    this.toParent = toParent || (noop as ProcessMessageCb<WithSender<OutMessage>>);
     this.id = Symbol(pname);
     this.state = null;
     this.exitWaiter = makeWaiter();
@@ -125,7 +122,7 @@ export class AsyncProcess<
    * state; for async generators this happens in a microtask.
    */
   start(arg0: Args) {
-    const self = { pname: this.pname, id: this.id };
+    const selfCtx: SenderInfo = { fromName: this.pname, fromId: this.id };
 
     const ctx: ProcessCtx<Args, State, InMessage, OutMessage> = {
       pname: this.pname,
@@ -133,10 +130,10 @@ export class AsyncProcess<
       fork: this.fork.bind(this),
       forkSync: this.forkSync.bind(this),
       send: (msg) => {
-        this.send(sendFrom(msg, self) as InMessage);
+        this.send(msg);
       },
       toParent: (msg) => {
-        this.toParent(sendFrom(msg, self) as OutMessage);
+        this.toParent([msg, selfCtx] as WithSender<OutMessage>);
       },
     };
 
@@ -150,10 +147,12 @@ export class AsyncProcess<
       }
       // Advance past the initial yield so the _watchExit generator
       // runs its finally block (EXIT/STOP) and the inner generator
-      // enters its dispatch loop. The second .next() sends no
-      // message — it just consumes the _watchExit wrapper's own
-      // yield, not the user's generator.
-      this._eatResult(this.current!.next({ type: "__ADVANCE__" } as any));
+      // enters its dispatch loop.
+      const advance: WithSender<InMessage> = [
+        { type: "__ADVANCE__" } as InMessage,
+        { fromName: "__internal__", fromId: Symbol("__internal__") },
+      ];
+      this._eatResult(this.current!.next(advance));
     });
     return this;
   }
@@ -166,12 +165,9 @@ export class AsyncProcess<
     try {
       yield* this.pgenerator(ctx, arg0);
     } finally {
-      this.toAllChildren({ type: "STOP" } as Message);
-      // ctx.toParent wrapper stamps fromName/fromId automatically
-      ctx.toParent({
-        type: "EXIT",
-        pid: this.id,
-      } as unknown as OutMessage);
+      this.toAllChildren({ type: "STOP" });
+      // ctx.toParent stamps sender info into a WithSender tuple
+      ctx.toParent({ type: "EXIT", pid: this.id } as unknown as OutMessage);
     }
   }
 
@@ -187,7 +183,9 @@ export class AsyncProcess<
       const child = new AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM>(
         fn,
         pname,
-        this.fromChild.bind(this) as unknown as ProcessMessageCb<ChildOM>,
+        this.fromChild.bind(this) as unknown as ProcessMessageCb<
+          WithSender<ChildOM>
+        >,
       );
       this.children.push(
         child as unknown as AsyncProcess<unknown, unknown, Message, Message>,
@@ -218,10 +216,10 @@ export class AsyncProcess<
 
     this._tickInProgress = true;
     try {
-      let msg: InMessage | undefined;
+      let maybe: WithSender<InMessage> | undefined;
       let ret: IteratorResult<State | null, void> | null = null;
-      while ((msg = this.buffer.shift()) !== undefined) {
-        ret = await this._safeNext(msg);
+      while ((maybe = this.buffer.shift()) !== undefined) {
+        ret = await this._safeNext(maybe);
         if (!ret || ret.done) break;
       }
       this.notify();
@@ -236,10 +234,10 @@ export class AsyncProcess<
 
   /** Call `.next()` and redirect unhandled rejections. */
   private async _safeNext(
-    msg: InMessage,
+    maybe: WithSender<InMessage>,
   ): Promise<IteratorResult<State | null, void> | null> {
     try {
-      return await this.current!.next(msg);
+      return await this.current!.next(maybe);
     } catch (e) {
       this._exitReject?.(e);
       this._exitReject = null;
@@ -263,12 +261,20 @@ export class AsyncProcess<
 
   /** Broadcast a message to all children. */
   toAllChildren(msg: Message): void {
-    this.children.forEach((p) => p.send(msg));
+    const stamp: SenderInfo = { fromName: this.pname, fromId: this.id };
+    this.children.forEach((p) => p.send([msg, stamp] as WithSender<Message>));
   }
 
-  /** Enqueue a message. Processing is async (microtask). */
-  send(msg: InMessage): void {
-    this.buffer.push(msg);
+  /** Enqueue a plain message — stamp with this process's identity. */
+  send(msg: InMessage): void;
+  /** Enqueue a pre-stamped message (e.g. from sendFrom or fromChild). */
+  send(maybe: WithSender<InMessage>): void;
+  send(msg: InMessage | WithSender<InMessage>): void {
+    if (Array.isArray(msg)) {
+      this.buffer.push(msg);
+    } else {
+      this.buffer.push([msg, { fromName: this.pname, fromId: this.id }]);
+    }
     this._scheduleTick();
   }
 
@@ -349,15 +355,16 @@ export class AsyncProcess<
 
   // ---- child messages -------------------------------------------------------
 
-  private fromChild(msg: InMessage): void {
+  /** Relays a child's message to this process. The message already carries
+   *  sender provenance (stamped by the child's `ctx.toParent` wrapper). */
+  private fromChild(maybe: WithSender<InMessage>): void {
+    const [msg] = maybe;
     if (msg.type === "EXIT") {
       this.children = this.children.filter(
         (p) => p.id !== (msg as unknown as ExitMessage).pid,
       );
     }
-    // msg already carries fromName/fromId — stamped by the child's
-    // ctx.toParent wrapper before it reached fromChild.
-    this.send(msg);
+    this.send(maybe);
   }
 }
 
@@ -375,7 +382,7 @@ export function spawnAsync<
 >(
   fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
   pname: string,
-  toParent?: ProcessMessageCb<OutMessage>,
+  toParent?: ProcessMessageCb<WithSender<OutMessage>>,
 ): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage> {
   return (args: Args) => {
     const proc = new AsyncProcess<Args, State, InMessage, OutMessage>(

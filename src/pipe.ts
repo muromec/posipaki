@@ -2,7 +2,7 @@ import { runDispatch } from "./util.js";
 import type { ExitMessage } from "./util.js";
 import type { ProcessFn, ProcessCtx } from "./process.js";
 import type { AsyncProcess } from "./process.async.js";
-import type { Message } from "./types.js";
+import type { Message, WithSender, SenderInfo } from "./types.js";
 
 /**
  * State yielded by the pipe process. `params` starts as a copy of the
@@ -62,9 +62,11 @@ function pipe<Params, Result>(
     spawnNext();
     state.running = hasNext();
 
-    yield* runDispatch<Message | ExitMessage>(
+    yield* runDispatch<WithSender<Message | ExitMessage>>(
       ctx.pname,
-      (msg) => {
+      (maybe) => {
+        const [msg, _sender] = maybe;
+
         if (msg.type === "STOP") {
           state.params = null;
           state.running = false;

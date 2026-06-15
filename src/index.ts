@@ -16,7 +16,8 @@ export { AsyncProcess, spawnAsync, runDispatchAsync, asyncify, sendFrom };
 
 export type {
   Message,
-  InternalMessage,
+  WithSender,
+  WithoutSender,
   ExitMessage,
   StopMessage,
   ProcessFn,
@@ -25,10 +26,10 @@ export type {
   PipeState,
   SupervisorState,
   SenderOrigin,
+  SenderInfo,
 } from "./types";
 
 export { defineActor, defineMessages } from "./define-actor.js";
-export type { SenderInfo } from "./types.js";
 export type {
   ActorDefinition,
   ActorConfig,

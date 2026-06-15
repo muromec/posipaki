@@ -8,10 +8,11 @@
 import { runDispatchAsync } from "./process.async.js";
 import type {
   SenderInfo,
+  WithSender,
   AsyncProcessFn,
   Message,
-  InternalMessage,
   ExitMessage,
+  ProcessCtx,
 } from "./types.js";
 import type { AsyncProcess } from "./process.async.js";
 import type {
@@ -53,151 +54,152 @@ export function defineActor<
     Handlers
   >,
 ): ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers> {
-  const fn: AsyncProcessFn<Args, ExposedState, InMsg, OutMsg> =
-    async function* (ctx, args) {
-      let done = false;
-      let exitReason: unknown;
-      let stopRequested = false;
+  // Internal generator receives WithSender<InMsg> so fromName/fromId are
+  // directly accessible in the dispatch loop with zero casts.
+  const fn = async function* (
+    ctx: ProcessCtx<Args, ExposedState, InMsg, OutMsg>,
+    args: Args,
+  ): AsyncGenerator<ExposedState | null, void, WithSender<InMsg>> {
+    let done = false;
+    let exitReason: unknown;
+    let stopRequested = false;
 
-      // Resolve internal state — literal or function of args.
-      const rawState: InternalState =
-        typeof config.initialState === "function"
-          ? (
-              config.initialState as (
-                args: Args,
-                ictx: typeof ctx,
-              ) => InternalState
-            )(args, ctx)
-          : config.initialState;
+    // Resolve internal state — literal or function of args.
+    const rawState: InternalState =
+      typeof config.initialState === "function"
+        ? (
+            config.initialState as (
+              args: Args,
+              ictx: typeof ctx,
+            ) => InternalState
+          )(args, ctx)
+        : config.initialState;
 
-      // Apply expose if provided, otherwise identity.
-      const exposedState: ExposedState = config.expose
-        ? config.expose(rawState)
-        : (rawState as unknown as ExposedState);
+    // Apply expose if provided, otherwise identity.
+    const exposedState: ExposedState = config.expose
+      ? config.expose(rawState)
+      : (rawState as unknown as ExposedState);
 
-      // Build the actor context.
-      const self: ActorContext<
-        Args,
-        InternalState,
-        InMsg,
-        OutMsg,
-        Methods,
-        Handlers
-      > = {
-        ...((config.methods || {}) as Methods),
-        state: rawState,
-        name: ctx.pname,
-        id: ctx.id,
-        emit(msg) {
-          ctx.toParent(msg as OutMsg);
-        },
-        agreeToStop() {
-          exitReason = "stopped";
-          done = true;
-        },
-        exit(reason) {
-          exitReason = reason;
-          done = true;
-        },
-        $child: {},
-        fork(childFn, name, childArgs) {
-          // Unwrap ActorDefinition, pass to ctx.fork.
-          const resolved = typeof childFn === "function" ? childFn : childFn.fn;
-          const child = ctx.fork(resolved, name)(childArgs!);
-          self.$child[name] = child as unknown as AsyncProcess<
-            unknown,
-            unknown,
-            Message,
-            Message
-          >;
-          return child;
-        },
-        ctx,
-      };
-
-      // Yield the exposed state — external consumers see this.
-      yield exposedState;
-
-      // Call onStart with args.
-      if (config.onStart) {
-        await config.onStart.call(self, args);
-      }
-
-      // Dispatch loop.
-      yield* runDispatchAsync(
-        ctx.pname,
-        async (msg: InMsg) => {
-          // ── Built-in STOP handling ──────────────────────────────────
-          if (msg.type === "STOP") {
-            if (config.onStopRequested) {
-              await config.onStopRequested.call(self);
-              if (!done) {
-                stopRequested = true;
-              }
-            } else {
-              // Default: agree immediately.
-              exitReason = "stopped";
-              done = true;
-            }
-            return;
-          }
-
-          // ── Re-offer deferred STOP ──────────────────────────────────
-          if (stopRequested && !done) {
-            if (config.onStopRequested) {
-              await config.onStopRequested.call(self);
-              if (!done) {
-                stopRequested = true;
-              }
-            }
-          }
-
-          // ── Built-in EXIT handling ──────────────────────────────────
-          if (msg.type === "EXIT") {
-            const exitMsg = msg as unknown as ExitMessage;
-            const childName = exitMsg.fromName;
-
-            if (childName && self.$child[childName]) {
-              // Recognized child — consume EXIT here.
-              delete self.$child[childName];
-            }
-            if (config.onChildExit) {
-              await config.onChildExit.call(self, childName, exitMsg);
-            }
-            // Unrecognized EXIT — fall through to handlers/onUnhandled.
-          }
-
-          // ── Named handlers ──────────────────────────────────────────
-          if (msg.type !== "STOP") {
-            const { fromName, fromId, ...cleanMsg } = msg as unknown as InternalMessage;
-            const sender: SenderInfo = {
-              fromName: fromName ?? "unknown",
-              fromId: fromId ?? Symbol("unknown"),
-            };
-            const handler = config.handlers[
-              cleanMsg.type as keyof Handlers
-            ] as HandlerFn<InMsg>;
-            if (handler) {
-              await handler.call(self, cleanMsg as InMsg, sender);
-            } else if (config.onUnhandled) {
-              await config.onUnhandled.call(self, cleanMsg as InMsg, sender);
-            }
-            // No onUnhandled: silently drop.
-          }
-
-          if (done) return;
-        },
-        () => done,
-      );
-
-      // Call onEnd.
-      if (config.onEnd) {
-        await config.onEnd.call(self, exitReason ?? "done");
-      }
+    // Build the actor context.
+    const self: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers
+    > = {
+      ...((config.methods || {}) as Methods),
+      state: rawState,
+      name: ctx.pname,
+      id: ctx.id,
+      emit(msg) {
+        ctx.toParent(msg);
+      },
+      agreeToStop() {
+        exitReason = "stopped";
+        done = true;
+      },
+      exit(reason) {
+        exitReason = reason;
+        done = true;
+      },
+      $child: {},
+      fork(childFn, name, childArgs) {
+        // Unwrap ActorDefinition, pass to ctx.fork.
+        const resolved = typeof childFn === "function" ? childFn : childFn.fn;
+        const child = ctx.fork(resolved, name)(childArgs!);
+        self.$child[name] = child as unknown as AsyncProcess<
+          unknown,
+          unknown,
+          Message,
+          Message
+        >;
+        return child;
+      },
+      ctx,
     };
 
+    // Yield the exposed state — external consumers see this.
+    yield exposedState;
+
+    // Call onStart with args.
+    if (config.onStart) {
+      await config.onStart.call(self, args);
+    }
+
+    // Dispatch loop..
+    yield* runDispatchAsync<WithSender<InMsg>>(
+      ctx.pname,
+      async (maybe) => {
+        const [msg, sender] = maybe;
+
+        // ── Built-in STOP handling ──────────────────────────────────
+        if (msg.type === "STOP") {
+          if (config.onStopRequested) {
+            await config.onStopRequested.call(self);
+            if (!done) {
+              stopRequested = true;
+            }
+          } else {
+            // Default: agree immediately.
+            exitReason = "stopped";
+            done = true;
+          }
+          return;
+        }
+
+        // ── Re-offer deferred STOP ──────────────────────────────────
+        if (stopRequested && !done) {
+          if (config.onStopRequested) {
+            await config.onStopRequested.call(self);
+            if (!done) {
+              stopRequested = true;
+            }
+          }
+        }
+
+        // ── Built-in EXIT handling ──────────────────────────────────
+        if (msg.type === "EXIT") {
+          const exitMsg = msg as unknown as ExitMessage;
+          const childName = exitMsg.fromName;
+
+          if (childName && self.$child[childName]) {
+            // Recognized child — consume EXIT here.
+            delete self.$child[childName];
+          }
+          if (config.onChildExit) {
+            await config.onChildExit.call(self, childName, exitMsg);
+          }
+          // Unrecognized EXIT — fall through to handlers/onUnhandled.
+        }
+
+        // ── Named handlers ──────────────────────────────────────────
+        if (msg.type !== "STOP") {
+          const handler = config.handlers[
+            msg.type as keyof Handlers
+          ] as HandlerFn<InMsg>;
+          if (handler) {
+            await handler.call(self, msg as InMsg, sender);
+          } else if (config.onUnhandled) {
+            await config.onUnhandled.call(self, msg as InMsg, sender);
+          }
+          // No onUnhandled: silently drop.
+        }
+
+        if (done) return;
+      },
+      () => done,
+    );
+
+    // Call onEnd.
+    if (config.onEnd) {
+      await config.onEnd.call(self, exitReason ?? "done");
+    }
+  };
+
   return {
-    fn,
+    fn: fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
     config: config as unknown as ActorConfig<
       Args,
       InternalState,

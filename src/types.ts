@@ -13,25 +13,33 @@ export interface Message {
   type: string;
 }
 
-/** Message with guaranteed sender provenance.
- *
- * `fromName` and `fromId` are stamped by the framework when a message
- * passes through `ctx.toParent()` or `ctx.send()`.  Messages arriving
- * via `proc.send()` from outside the process tree may not carry them. */
-export interface InternalMessage extends Message {
+// ---- SenderInfo --------------------------------------------------------------
+
+/** Sender identity.  `fromName` is the process name, `fromId` its symbol. */
+export interface SenderInfo {
   fromName: string;
   fromId: symbol;
 }
 
-/** Message emitted by a process to its parent when it terminates.
- *
- * `fromId` and `pid` carry the same symbol value.  `fromName` is the
- * process name (same as `ctx.pname`).  These fields mirror what
- * the framework stamps on every `ctx.toParent()` / `ctx.send()` call. */
-export type ExitMessage = InternalMessage & {
+// ---- WithSender / WithoutSender -----------------------------------------------
+
+/** A message paired with its sender.  This is the currency inside the
+ *  framework — every message in the buffer and every value the generator
+ *  receives is `WithSender<M>`. */
+export type WithSender<M extends Message> = [M, SenderInfo];
+
+/** Extract the message type from a stamped tuple. */
+export type WithoutSender<T extends WithSender<any>> = T[0];
+
+// ---- ExitMessage -------------------------------------------------------------
+
+/** Message emitted by a process to its parent when it terminates. */
+export type ExitMessage = {
   type: "EXIT";
-  /** @deprecated Use {@link fromId} instead. */
+  /** @deprecated Use `fromId` from the sender tuple instead. */
   pid: symbol;
+  fromName: string;
+  fromId: symbol;
 };
 
 export type StopMessage = {
@@ -48,7 +56,7 @@ export type ProcessFn<
 > = (
   ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
-) => Generator<State | null, void, InMessage>;
+) => Generator<State | null, void, WithSender<InMessage>>;
 
 // ---- ProcessFn (async) ------------------------------------------------------
 
@@ -60,7 +68,7 @@ export type AsyncProcessFn<
 > = (
   ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
-) => AsyncGenerator<State | null, void, InMessage>;
+) => AsyncGenerator<State | null, void, WithSender<InMessage>>;
 
 // ---- Sender ----------------------------------------------------------------
 
@@ -119,14 +127,4 @@ export interface PipeState<Params, Result> {
 export interface SupervisorState {
   processes: any[]; // Process<any,any,any,any>[]
   phase: "wait" | "running" | "stopping";
-}
-
-// ---- SenderInfo --------------------------------------------------------------
-
-/** Sender identity extracted from an {@link InternalMessage} by
- *  the `defineActor` dispatch loop.  `fromName` is the process name,
- *  `fromId` its symbol. */
-export interface SenderInfo {
-  fromName: string;
-  fromId: symbol;
 }

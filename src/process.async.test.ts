@@ -1,7 +1,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { runDispatch } from "./index";
 import { spawnAsync, asyncify, runDispatchAsync } from "./index";
-import type { ProcessCtx, Message } from "./index";
+import type { ProcessCtx, Message, WithSender } from "./index";
 
 import type { ExitMessage } from "./util";
 
@@ -28,9 +28,10 @@ describe("AsyncProcess", () => {
       const state: CountStore = { count: 0 };
       yield state;
 
-      yield* runDispatchAsync<Message | PokeM>(
+      yield* runDispatchAsync<WithSender<Message | PokeM>>(
         pname,
-        async (msg: any) => {
+        async (maybe) => {
+          const [msg, _s] = maybe;
           if (msg.type === "POKE") state.count++;
         },
         () => state.count >= 2,
@@ -52,7 +53,7 @@ describe("AsyncProcess", () => {
       const state = { fired: false };
       yield state;
 
-      yield* runDispatchAsync<Message | PokeM>(
+      yield* runDispatchAsync<WithSender<Message | PokeM>>(
         pname,
         async () => {
           await new Promise((r) => setTimeout(r, 10));
@@ -78,7 +79,7 @@ describe("AsyncProcess", () => {
       const state: CountStore = { count: 0 };
       yield state;
 
-      yield* runDispatchAsync<Message | PokeM>(
+      yield* runDispatchAsync<WithSender<Message | PokeM>>(
         pname,
         async () => {
           state.count++;
@@ -109,9 +110,9 @@ describe("AsyncProcess", () => {
     const proc = spawnAsync(fn, "exiter", bus)(null);
     await proc.wait();
 
-    expect(bus).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "EXIT", pid: proc.id }),
-    );
+    expect(bus).toHaveBeenCalledWith([
+      expect.objectContaining({ type: "EXIT", pid: proc.id }), expect.any(Object),
+    ]);
   });
 
   // ---- asyncify: wrap a sync generator for async spawn ----------------------
@@ -124,7 +125,8 @@ describe("AsyncProcess", () => {
       yield state;
       yield* runDispatch(
         pname,
-        (msg: any) => {
+        (maybe: any) => {
+          const [msg, _s] = maybe;
           if (msg.type === "POKE") state.count++;
         },
         () => state.count >= 2,
@@ -147,7 +149,8 @@ describe("AsyncProcess", () => {
       yield state;
       yield* runDispatch(
         pname,
-        (msg: any) => {
+        (maybe: any) => {
+          const [msg, _s] = maybe;
           if (msg.type === "POKE") state.count++;
         },
         () => state.count >= 1,
@@ -170,7 +173,7 @@ describe("AsyncProcess", () => {
       const state = { hits: 0 };
       yield state;
 
-      yield* runDispatchAsync<Message | PokeM>(
+      yield* runDispatchAsync<WithSender<Message | PokeM>>(
         pname,
         async () => {
           state.hits++;
@@ -206,7 +209,7 @@ describe("AsyncProcess", () => {
       const state = { count: 0 };
       yield state;
 
-      yield* runDispatchAsync<Message | PokeM>(
+      yield* runDispatchAsync<WithSender<Message | PokeM>>(
         pname,
         async () => {
           concurrent++;
@@ -236,7 +239,7 @@ describe("AsyncProcess", () => {
       { pname }: ProcessCtx<null, null, PokeM, Message>,
     ) {
       yield null;
-      yield* runDispatchAsync<Message>(pname, async () => {
+      yield* runDispatchAsync<WithSender<Message>>(pname, async () => {
         throw new Error("boom");
       });
     };
@@ -261,9 +264,10 @@ describe("AsyncProcess", () => {
       const state = { trace: "" };
       yield state;
 
-      yield* runDispatchAsync<Message | OrderMsg>(
+      yield* runDispatchAsync<WithSender<Message | OrderMsg>>(
         pname,
-        async (msg) => {
+        async (maybe) => {
+          const [msg, _s] = maybe;
           if (msg.type === "START") {
             state.trace += "START";
           }

@@ -1,5 +1,5 @@
 import { runDispatch } from "./util.js";
-import type { ExitMessage, ProcessCtx } from "./types.js";
+import type { ExitMessage, WithSender, ProcessCtx } from "./types.js";
 import type { Process } from "./process.js";
 
 // ---- types ------------------------------------------------------------------
@@ -83,7 +83,7 @@ function* xfetch<Type>(
     FetchMessage<Type>
   >,
   { method = "GET", url, body, headers: callerHeaders }: FetchArgs<Type>,
-): Generator<FetchState<Type> | null, void, FetchMessage<Type>> {
+): Generator<FetchState<Type> | null, void, WithSender<FetchMessage<Type>>> {
   const state: FetchState<Type> = {
     code: "pending",
     data: null,
@@ -134,9 +134,10 @@ function* xfetch<Type>(
   const isDone = (): boolean =>
     !(state.code === "pending" || state.code === "loading");
 
-  yield* runDispatch<FetchMessage<Type>>(
+  yield* runDispatch<WithSender<FetchMessage<Type>>>(
     pname,
-    (msg: FetchMessage<Type>) => {
+    (maybe: WithSender<FetchMessage<Type>>) => {
+      const [msg, _sender] = maybe;
       if (msg.type === "STOP") {
         controller.abort();
       }

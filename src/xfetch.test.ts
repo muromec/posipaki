@@ -62,11 +62,11 @@ describe("xfetch", () => {
     expect(fetchCall[0]).toBe("https://example.com/api/items");
     expect(fetchCall[1]?.method).toBe("GET");
 
-    expect(bus).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "OK", data }),
-    );
+    expect(bus).toHaveBeenCalledWith([
+      expect.objectContaining({ type: "OK", data }), expect.any(Object),
+    ]);
     expect(proc.state).toMatchObject({ code: "ok", data });
-    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }));
+    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "EXIT" }), expect.any(Object)]);
   });
 
   it("returns OK with text for non-JSON content-type", async () => {
@@ -91,12 +91,12 @@ describe("xfetch", () => {
     await proc.ready();
     await vi.runAllTimersAsync();
 
-    expect(bus).toHaveBeenCalledWith(
+    expect(bus).toHaveBeenCalledWith([
       expect.objectContaining({
         type: "OK",
         text: JSON.stringify(text),
-      }),
-    );
+      }), expect.any(Object),
+    ]);
     expect(proc.state).toMatchObject({
       code: "ok",
       text: JSON.stringify(text),
@@ -137,9 +137,9 @@ describe("xfetch", () => {
     const reqHeaders = fetchCall[1]?.headers as Headers;
     expect(reqHeaders.get("content-type")).toBe("application/json");
 
-    expect(bus).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "OK", data: responseData }),
-    );
+    expect(bus).toHaveBeenCalledWith([
+      expect.objectContaining({ type: "OK", data: responseData }), expect.any(Object),
+    ]);
     expect(proc.state).toMatchObject({ code: "ok", data: responseData });
   });
 
@@ -172,7 +172,7 @@ describe("xfetch", () => {
     await proc.ready();
     await vi.runAllTimersAsync();
 
-    expect(bus).toHaveBeenCalledWith(
+    expect(bus).toHaveBeenCalledWith([
       expect.objectContaining({
         type: "OK",
         data: responseData,
@@ -180,8 +180,8 @@ describe("xfetch", () => {
         responseHeaders: expect.objectContaining({
           "x-ratelimit-remaining": "42",
         }),
-      }),
-    );
+      }), expect.any(Object),
+    ]);
   });
 
   it("exposes status and responseHeaders in FetchState", async () => {
@@ -241,14 +241,14 @@ describe("xfetch", () => {
     await proc.ready();
     await vi.runAllTimersAsync();
 
-    expect(bus).toHaveBeenCalledWith(
+    expect(bus).toHaveBeenCalledWith([
       expect.objectContaining({
         type: "OK",
         text: JSON.stringify("Not Found"),
         status: 404,
         responseHeaders: expect.any(Object),
-      }),
-    );
+      }), expect.any(Object),
+    ]);
     expect(proc.state).toMatchObject({ code: "ok", status: 404 });
   });
 
@@ -404,9 +404,9 @@ describe("xfetch", () => {
     await proc.ready();
     await vi.runAllTimersAsync();
 
-    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "ERROR" }));
+    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "ERROR" }), expect.any(Object)]);
     expect(proc.state).toMatchObject({ code: "failed" });
-    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }));
+    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "EXIT" }), expect.any(Object)]);
   });
 
   it("handles AbortError and transitions to aborted", async () => {
@@ -427,9 +427,9 @@ describe("xfetch", () => {
     await proc.ready();
     await vi.runAllTimersAsync();
 
-    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "ABORTED" }));
+    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "ABORTED" }), expect.any(Object)]);
     expect(proc.state).toMatchObject({ code: "aborted" });
-    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }));
+    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "EXIT" }), expect.any(Object)]);
   });
 
   // -- ABORT via STOP --------------------------------------------------------
@@ -515,12 +515,12 @@ describe("xfetch", () => {
     await vi.runAllTimersAsync();
 
     expect(proc.state).toMatchObject({ code: "ok", data: { done: true } });
-    expect(bus).toHaveBeenCalledWith(
+    expect(bus).toHaveBeenCalledWith([
       expect.objectContaining({
         type: "OK",
         data: { done: true },
-      }),
-    );
+      }), expect.any(Object),
+    ]);
   });
 
   // -- wait() ----------------------------------------------------------------

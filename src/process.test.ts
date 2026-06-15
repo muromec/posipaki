@@ -1,6 +1,6 @@
 import { describe, it, expect, vi } from "vitest";
 import { spawn } from "./index";
-import type { ProcessCtx, Message } from "./types";
+import type { ProcessCtx, Message, WithSender } from "./types";
 import type { PongM, PingM } from "./test-helpers.js";
 import type { ExitMessage } from "./util";
 
@@ -25,10 +25,11 @@ describe("Process", () => {
     expect(proc.id.toString()).toEqual("Symbol(p1)");
   });
 
-  function* p2() {
+  function* p2(): Generator<SimpleStore | null, void, WithSender<ChangeM>> {
     const state = { state: "p1" };
     yield state;
-    const msg: ChangeM = yield null;
+    const [raw, _s] = yield null;
+    const msg = raw as ChangeM;
     state.state = msg.data;
   }
 
@@ -66,12 +67,12 @@ describe("Process", () => {
     await expect(res).resolves.toBe(undefined);
   });
 
-  function* p3(ctx: ProcessCtx<unknown, null, Message, ExitMessage | PongM>) {
+  function* p3(ctx: ProcessCtx<unknown, null, Message, ExitMessage | PongM>): Generator<null, void, WithSender<Message>> {
     yield null;
-    const msg: Message = yield null;
-    ctx.toParent({ type: "PONG", pseq: 0 });
+    const [msg, _s] = yield null;
+    ctx.toParent({ type: "PONG", pseq: 0 } as any);
     if (msg.type === "TRIGGER") {
-      ctx.toParent({ type: "PONG", pseq: 0 });
+      ctx.toParent({ type: "PONG", pseq: 0 } as any);
     }
   }
 
@@ -85,17 +86,18 @@ describe("Process", () => {
     await proc.ready();
     proc.send({ type: "TRIGGER" } as Message);
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: 0 }));
-    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }));
+    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "PONG", pseq: 0 }), expect.any(Object)]);
+    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "EXIT" }), expect.any(Object)]);
   });
 
   type CountStore = { seq: number };
 
-  function* p4(ctx: ProcessCtx<unknown, { seq: number }, PingM, ExitMessage | PongM>) {
+  function* p4(ctx: ProcessCtx<unknown, { seq: number }, PingM, ExitMessage | PongM>): Generator<{ seq: number } | null, void, WithSender<PingM>> {
     const state = { seq: 0 };
     yield state;
     while (state.seq < 5) {
-      const msg: PingM = yield null;
+      const [raw, _s] = yield null;
+      const msg = raw as PingM;
       if (msg.pseq !== state.seq) break;
       ctx.toParent({ type: "PONG", pseq: state.seq });
       state.seq += 1;
@@ -113,11 +115,11 @@ describe("Process", () => {
     for (let i = 0; i < 5; i++) {
       proc.send({ type: "PING", pseq: i });
       await proc.tick();
-      expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: i }));
+      expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "PONG", pseq: i }), expect.any(Object)]);
     }
-    expect(bus).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "EXIT", pid: proc.id }),
-    );
+    expect(bus).toHaveBeenCalledWith([
+      expect.objectContaining({ type: "EXIT", pid: proc.id }), expect.any(Object),
+    ]);
     expect(bus).toHaveBeenCalledTimes(6);
   });
 
@@ -131,12 +133,12 @@ describe("Process", () => {
     await proc.ready();
     proc.send({ type: "PING", pseq: 0 });
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: 0 }));
+    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "PONG", pseq: 0 }), expect.any(Object)]);
     proc.send({ type: "PING", pseq: 2 });
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "EXIT", pid: proc.id }),
-    );
+    expect(bus).toHaveBeenCalledWith([
+      expect.objectContaining({ type: "EXIT", pid: proc.id }), expect.any(Object),
+    ]);
     expect(bus).toHaveBeenCalledTimes(2);
   });
 

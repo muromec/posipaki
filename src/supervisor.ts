@@ -1,5 +1,6 @@
 import { runDispatch } from "./util.js";
 import type { Process, ProcessFn, ProcessCtx } from "./process.js";
+import type { WithSender } from "./types.js";
 import type { ExitMessage } from "./util.js";
 
 // ---- messages ---------------------------------------------------------------
@@ -47,13 +48,14 @@ function* supervise(
   { pname, toParent, fork }: ProcessCtx<null, SupervisorState, SupMsg, SupMsg>,
   wrap: (s: SupervisorState) => SupervisorState = (a) => a,
   debugLevel = false,
-): Generator<SupervisorState | null, void, SupMsg> {
+): Generator<SupervisorState | null, void, WithSender<SupMsg>> {
   const state = wrap({ processes: [], phase: "wait" });
   yield state;
 
-  yield* runDispatch<SupMsg>(
+  yield* runDispatch<WithSender<SupMsg>>(
     pname,
-    (msg) => {
+    (maybe) => {
+      const [msg, _sender] = maybe;
       switch (msg.type) {
         case "RUN":
           (fork as (...a: any[]) => any)(msg.fn, msg.pname)(...msg.args);
