@@ -131,8 +131,8 @@ export function defineActor<
     // Dispatch loop..
     yield* runDispatchAsync<WithSender<InMsg>>(
       ctx.pname,
-      async (maybe) => {
-        const [msg, sender] = maybe;
+      async (stamped) => {
+        const [msg, sender] = stamped;
 
         // ── Built-in STOP handling ──────────────────────────────────
         if (msg.type === "STOP") {

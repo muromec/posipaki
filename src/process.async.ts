@@ -216,10 +216,10 @@ export class AsyncProcess<
 
     this._tickInProgress = true;
     try {
-      let maybe: WithSender<InMessage> | undefined;
+      let msgAndSender: WithSender<InMessage> | undefined;
       let ret: IteratorResult<State | null, void> | null = null;
-      while ((maybe = this.buffer.shift()) !== undefined) {
-        ret = await this._safeNext(maybe);
+      while ((msgAndSender = this.buffer.shift()) !== undefined) {
+        ret = await this._safeNext(msgAndSender);
         if (!ret || ret.done) break;
       }
       this.notify();
@@ -234,10 +234,10 @@ export class AsyncProcess<
 
   /** Call `.next()` and redirect unhandled rejections. */
   private async _safeNext(
-    maybe: WithSender<InMessage>,
+    msgAndSender: WithSender<InMessage>,
   ): Promise<IteratorResult<State | null, void> | null> {
     try {
-      return await this.current!.next(maybe);
+      return await this.current!.next(msgAndSender);
     } catch (e) {
       this._exitReject?.(e);
       this._exitReject = null;
@@ -268,12 +268,12 @@ export class AsyncProcess<
   /** Enqueue a plain message — stamp with this process's identity. */
   send(msg: InMessage): void;
   /** Enqueue a pre-stamped message (e.g. from sendFrom or fromChild). */
-  send(maybe: WithSender<InMessage>): void;
-  send(msg: InMessage | WithSender<InMessage>): void {
-    if (Array.isArray(msg)) {
-      this.buffer.push(msg);
+  send(msgAndSender: WithSender<InMessage>): void;
+  send(msgOrStamped: InMessage | WithSender<InMessage>): void {
+    if (Array.isArray(msgOrStamped)) {
+      this.buffer.push(msgOrStamped);
     } else {
-      this.buffer.push([msg, { fromName: this.pname, fromId: this.id }]);
+      this.buffer.push([msgOrStamped, { fromName: this.pname, fromId: this.id }]);
     }
     this._scheduleTick();
   }
@@ -357,14 +357,14 @@ export class AsyncProcess<
 
   /** Relays a child's message to this process. The message already carries
    *  sender provenance (stamped by the child's `ctx.toParent` wrapper). */
-  private fromChild(maybe: WithSender<InMessage>): void {
-    const [msg] = maybe;
+  private fromChild(msgAndSender: WithSender<InMessage>): void {
+    const [msg] = msgAndSender;
     if (msg.type === "EXIT") {
       this.children = this.children.filter(
         (p) => p.id !== (msg as unknown as ExitMessage).pid,
       );
     }
-    this.send(maybe);
+    this.send(msgAndSender);
   }
 }
 
