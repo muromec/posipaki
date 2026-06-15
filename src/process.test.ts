@@ -85,7 +85,7 @@ describe("Process", () => {
     await proc.ready();
     proc.send({ type: "TRIGGER" } as Message);
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith({ type: "PONG", pseq: 0 });
+    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: 0 }));
     expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }));
   });
 
@@ -113,7 +113,7 @@ describe("Process", () => {
     for (let i = 0; i < 5; i++) {
       proc.send({ type: "PING", pseq: i });
       await proc.tick();
-      expect(bus).toHaveBeenCalledWith({ type: "PONG", pseq: i });
+      expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: i }));
     }
     expect(bus).toHaveBeenCalledWith(
       expect.objectContaining({ type: "EXIT", pid: proc.id }),
@@ -131,7 +131,7 @@ describe("Process", () => {
     await proc.ready();
     proc.send({ type: "PING", pseq: 0 });
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith({ type: "PONG", pseq: 0 });
+    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: 0 }));
     proc.send({ type: "PING", pseq: 2 });
     await proc.tick();
     expect(bus).toHaveBeenCalledWith(

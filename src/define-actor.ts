@@ -6,7 +6,7 @@
 // See docs/proposals/define-actor-proposal.md for the full design.
 
 import { runDispatchAsync } from "./process.async.js";
-import type { AsyncProcessFn, Message, ExitMessage } from "./types.js";
+import type { AsyncProcessFn, Message, InternalMessage, ExitMessage } from "./types.js";
 import type { AsyncProcess } from "./process.async.js";
 import type {
   ActorDefinition,
@@ -83,11 +83,7 @@ export function defineActor<
         name: ctx.pname,
         id: ctx.id,
         emit(msg) {
-          ctx.toParent({
-            ...msg,
-            fromName: ctx.pname,
-            fromId: ctx.id,
-          } as OutMsg);
+          ctx.toParent(msg as OutMsg);
         },
         agreeToStop() {
           exitReason = "stopped";
