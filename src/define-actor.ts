@@ -124,21 +124,33 @@ export function defineActor<
       fork(childFn, name, childArgs) {
         // Unwrap ActorDefinition, derive name.
         const resolved = typeof childFn === "function" ? childFn : childFn.fn;
+        const childDef: ActorDefinition<any,any,any,any,any> | null =
+          typeof childFn === "object" ? childFn : null;
         const childName = name
-          ?? (typeof childFn === "object" && childFn.name ? childFn.name : undefined);
+          ?? (childDef?.name ? childDef.name : undefined);
 
-        // Resolve child plugins: merge parent chain with child config.
-        const parentPlugs: ActorPlugin[] = [];
-        const childDef = typeof childFn === "object" ? childFn : null;
-        if (childDef?.plugins) {
-          // Child has explicit plugin list — use it directly.
-        } else if (config.plugins) {
-          // Inherit parent plugins.
-          const plugs = typeof config.plugins === "function"
-            ? config.plugins([])
-            : config.plugins;
-          for (const p of plugs) parentPlugs.push(p);
+        // ── plugin inheritance ───────────────────────────────────────
+        // Resolve parent's installed plugins.
+        const parentPlugs: ActorPlugin[] = config.plugins
+          ? (typeof config.plugins === "function" ? config.plugins([]) : config.plugins)
+          : [];
+
+        // Merge with child's raw config.
+        const childRaw = (childDef as any)?._pluginsRaw;
+        let childPlugs: ActorPlugin[];
+        if (!childRaw) {
+          // No child config → inherit all parent plugins.
+          childPlugs = [...parentPlugs];
+        } else if (Array.isArray(childRaw)) {
+          // Array → use exactly these (no inheritance).
+          childPlugs = [...childRaw];
+        } else {
+          // Function → transform parent chain.
+          childPlugs = childRaw(parentPlugs);
         }
+
+        // Stash resolved list on the child's config before fork.
+        (resolved as any).__resolvedPlugins = childPlugs;
 
         const child = ctx.fork(resolved, childName)(childArgs!);
         // Store under the resolved name for $child lookup and EXIT matching.
@@ -165,16 +177,32 @@ export function defineActor<
       if (h.onError)    _hooks.onError.push((err: unknown) => h.onError!.call(self, err));
     }
 
+    // ── wire hook registration onto ctx (for plugin install) ──────
+    (ctx as any).onMessage = (fn: any) => { _hooks.onMessage.push(fn); };
+    (ctx as any).onEmit = (fn: any) => { _hooks.onEmit.push(fn); };
+    (ctx as any).onChildExit = (fn: any) => { _hooks.onChildExit.push(fn); };
+    (ctx as any).onStart = (fn: any) => { _hooks.onStart.push(fn); };
+    (ctx as any).onStopRequested = (fn: any) => { _hooks.onStopRequested.push(fn); };
+    (ctx as any).onError = (fn: any) => { _hooks.onError.push(fn); };
+
     // ── install plugins ──────────────────────────────────────────────
-    if (config.plugins) {
-      const plugs = typeof config.plugins === "function"
-        ? config.plugins([])   // root actor: no parent plugins
-        : config.plugins;
-      for (const p of plugs) {
-        try { await p.install(ctx as any); } catch (e) {
-          // Plugin install failure is not fatal — log and continue.
-          console.error(`[${ctx.pname}] plugin "${p.name}" install failed:`, e);
-        }
+    // On child actors, __resolvedPlugins is set by the parent's fork().
+    // On root actors, use config.plugins directly.
+    const resolvedPlugs = (fn as any).__resolvedPlugins
+      ?? (config.plugins
+          ? (typeof config.plugins === "function" ? config.plugins([]) : config.plugins)
+          : []);
+
+    for (const p of resolvedPlugs) {
+      let _err: unknown = null;
+      try {
+        await p.install(ctx as any);
+      } catch (e) {
+        _err = e;
+      }
+      // Also catch sync throws from non-async install functions.
+      if (_err) {
+        console.error(`[${ctx.pname}] plugin "${p.name}" install failed:`, _err);
       }
     }
 
@@ -304,9 +332,7 @@ export function defineActor<
   return {
     fn: fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
     name: config.name,
-    plugins: config.plugins
-      ? (typeof config.plugins === "function" ? config.plugins([]) : config.plugins)
-      : undefined,
+    _pluginsRaw: config.plugins,
     config: config as unknown as ActorConfig<
       Args,
       InternalState,

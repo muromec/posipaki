@@ -43,8 +43,8 @@ export interface ActorDefinition<
   config: ActorConfig<Args, any, ExposedState, InMsg, OutMsg, {}, Handlers>;
   /** Preferred process name (from config.name). */
   name?: string;
-  /** Resolved plugin list (after inheritance). */
-  plugins?: ActorPlugin[];
+  /** Raw plugin config (array or transform). Resolved at fork time. @internal */
+  _pluginsRaw?: ActorPlugin[] | PluginTransform;
   /** Spawn this actor as a standalone process. */
   spawn(args: Args): AsyncProcess<Args, ExposedState, InMsg, OutMsg>;
   /** Spawn this actor as a child of the calling process. */
@@ -170,7 +170,7 @@ export type ActorContext<
   OutMsg extends Message,
   Methods extends MethodOptions,
   Handlers extends HandlerOptions<InMsg>,
-> = Methods & {
+> = Methods & ActorDecorated & {
   state: InternalState;
   name: string;
   id: symbol;

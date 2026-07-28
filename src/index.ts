@@ -38,3 +38,20 @@ export type {
   HandlerOptions,
   HandlerFn,
 } from "./actor-types.js";
+
+// ── hooks ─────────────────────────────────────────────────────────────────
+
+export { stopPropagation, HookRegistry } from "./hooks.js";
+export type {
+  HookResult,
+  OnStartHook,
+  OnMessageHook,
+  OnEmitHook,
+  OnChildExitHook,
+  OnStopRequestedHook,
+  OnEndHook,
+  OnErrorHook,
+  ActorPlugin,
+  ActorDecorated,
+  PluginTransform,
+} from "./hooks.js";

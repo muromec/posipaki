@@ -28,6 +28,22 @@
     "./xfetch": {
       "types": "./dist/xfetch.d.ts",
       "default": "./dist/xfetch.js"
+    },
+    "./plugins/debug-logger": {
+      "types": "./dist/plugins/debug-logger.d.ts",
+      "default": "./dist/plugins/debug-logger.js"
+    },
+    "./plugins/timeout-guard": {
+      "types": "./dist/plugins/timeout-guard.d.ts",
+      "default": "./dist/plugins/timeout-guard.js"
+    },
+    "./plugins/rbac": {
+      "types": "./dist/plugins/rbac.d.ts",
+      "default": "./dist/plugins/rbac.js"
+    },
+    "./hooks": {
+      "types": "./dist/hooks.d.ts",
+      "default": "./dist/hooks.js"
     }
   }
 }

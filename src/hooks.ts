@@ -52,3 +52,19 @@ export interface ActorPlugin {
 
 /** Transform parent plugins into child plugins. */
 export type PluginTransform = (parentPlugins: ActorPlugin[]) => ActorPlugin[];
+
+// ── type augmentation (Fastify-style) ────────────────────────────────────
+
+/**
+ * Interface that plugins can augment via declaration merging.
+ * Plugins ship a .d.ts that adds properties to this interface,
+ * making them available on `this` in handlers and methods.
+ *
+ * Example (in a plugin's .d.ts):
+ *   declare module 'posipaki' {
+ *     interface ActorDecorated {
+ *       log: Logger;
+ *     }
+ *   }
+ */
+export interface ActorDecorated {}
