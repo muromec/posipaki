@@ -121,6 +121,8 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   onError?: (fn: (err: unknown) => void) => void;
   /** Register an onEnd hook. Fires before the process exits. */
   onEnd?: (fn: (reason: unknown) => void | Promise<void>) => void;
+  /** Register a decorated property. Throws if key conflicts. */
+  decorate?: (key: string, value: unknown) => void;
 } & Pick<AsyncProcess<Args, State, IM, OM>, "fork" | "forkSync">;
 
 // ---- Pipe -------------------------------------------------------------------

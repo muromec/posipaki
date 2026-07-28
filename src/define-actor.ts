@@ -180,7 +180,8 @@ export function defineActor<
     };
 
 
-    // ── wire hook registration onto ctx (for plugin install) ──────
+    // ── wire hook registration + decorate onto ctx (for plugin install) ─
+    const decorated = new Map<string, unknown>();
     const ctxAny = ctx as Record<string, unknown>;
     ctxAny.onMessage = (fn: OnMessageHook<InMsg>) => { _hooks.onMessage.push(fn); };
     ctxAny.onEmit = (fn: OnEmitHook<OutMsg>) => { _hooks.onEmit.push(fn); };
@@ -189,6 +190,11 @@ export function defineActor<
     ctxAny.onStopRequested = (fn: OnStopRequestedHook) => { _hooks.onStopRequested.push(fn); };
     ctxAny.onError = (fn: OnErrorHook) => { _hooks.onError.push(fn); };
     ctxAny.onEnd = (fn: OnEndHook) => { _hooks.onEnd.push(fn); };
+    ctxAny.decorate = (key: string, value: unknown) => {
+      if (key in self) throw new Error(`decorate: key "${key}" conflicts with built-in`);
+      if (decorated.has(key)) throw new Error(`decorate: key "${key}" already decorated`);
+      decorated.set(key, value);
+    };
 
     // ── install plugins ──────────────────────────────────────────────
     // On child actors, __resolvedPlugins is set by the parent's fork().
@@ -221,6 +227,11 @@ export function defineActor<
       if (h.onStopRequested) _hooks.onStopRequested.push(() => h.onStopRequested!.call(self));
       if (h.onEnd)      _hooks.onEnd.push((reason) => h.onEnd!.call(self, reason));
       if (h.onError)    _hooks.onError.push((err) => h.onError!.call(self, err));
+    }
+
+    // ── merge decorated properties onto self ───────────────────────
+    for (const [key, value] of decorated) {
+      (self as Record<string, unknown>)[key] = value;
     }
 
     // Yield the exposed state — external consumers see this.
