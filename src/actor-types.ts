@@ -53,6 +53,42 @@ export interface ActorDefinition<
   ): AsyncProcess<Args, ExposedState, InMsg, OutMsg>;
 }
 
+export interface ActorHooksConfig<
+  Args,
+  InternalState,
+  ExposedState,
+  InMsg extends Message,
+  OutMsg extends Message,
+  Methods extends MethodOptions,
+  Handlers extends HandlerOptions<InMsg>,
+> {
+  onStart?: OnStartHook<ExposedState>;
+  onMessage?: (
+    this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
+    msg: InMsg,
+    sender: SenderInfo,
+  ) => HookResult | Promise<HookResult>;
+  onEmit?: (
+    this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
+    msg: OutMsg,
+  ) => void;
+  onChildExit?: (
+    this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
+    name: string,
+  ) => void | Promise<void>;
+  onStopRequested?: (
+    this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
+  ) => void | Promise<void>;
+  onEnd?: (
+    this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
+    reason: unknown,
+  ) => void | Promise<void>;
+  onError?: (
+    this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
+    err: unknown,
+  ) => void;
+}
+
 export interface ActorConfig<
   Args,
   InternalState,
@@ -82,6 +118,7 @@ export interface ActorConfig<
   expose?: (internalState: InternalState) => ExposedState;
   /** Preferred process name.  Used by ctx.fork() when no explicit name is given. */
   name?: string;
+  hooks?: ActorHooksConfig<Args, InternalState, InMsg, OutMsg, Methods, Handlers>;
   outMessages?: ActorMessages<OutMsg>;
   inMessages?: ActorMessages<InMsg>;
 

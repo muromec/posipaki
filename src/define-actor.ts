@@ -24,6 +24,8 @@ import type {
   HandlerOptions,
   HandlerFn,
 } from "./actor-types.js";
+import { HookRegistry, stopPropagation, STOP_SENTINEL } from "./hooks.js";
+import type { HookResult, OnMessageHook, OnEmitHook, OnChildExitHook, OnStartHook, OnStopRequestedHook, OnEndHook, OnErrorHook } from "./hooks.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Implementation
@@ -80,6 +82,9 @@ export function defineActor<
       ? config.expose(rawState)
       : (rawState as unknown as ExposedState);
 
+    // ── hooks ──────────────────────────────────────────────────────────
+    const _hooks = new HookRegistry<any, any, any>();
+
     // Build the actor context.
     const self: ActorContext<
       Args,
@@ -94,6 +99,10 @@ export function defineActor<
       name: ctx.pname,
       id: ctx.id,
       emit(msg) {
+        // Fire onEmit hooks before the actual emit.
+        for (const fn of _hooks.onEmit) {
+          try { fn(msg); } catch (e) { /* error goes to onError */ }
+        }
         ctx.toParent(msg);
       },
       agreeToStop() {
@@ -105,6 +114,12 @@ export function defineActor<
         done = true;
       },
       $child: {},
+      // ── hook registration ─────────────────────────────────────
+      onMessage: (fn: OnMessageHook<any>) => { _hooks.onMessage.push(fn); },
+      onEmit: (fn: OnEmitHook<any>) => { _hooks.onEmit.push(fn); },
+      onChildExit: (fn: OnChildExitHook) => { _hooks.onChildExit.push(fn); },
+      onStopRequested: (fn: OnStopRequestedHook) => { _hooks.onStopRequested.push(fn); },
+      onError: (fn: OnErrorHook) => { _hooks.onError.push(fn); },
       fork(childFn, name, childArgs) {
         // Unwrap ActorDefinition, derive name.
         const resolved = typeof childFn === "function" ? childFn : childFn.fn;
@@ -123,12 +138,29 @@ export function defineActor<
       ctx,
     };
 
+    // ── register config.hooks (after self is built so call/this works) ─
+    if (config.hooks) {
+      const h = config.hooks;
+      if (h.onStart)    _hooks.onStart.push((state: any) => h.onStart!.call(self, state));
+      if (h.onMessage)  _hooks.onMessage.push((msg: any, sender: any) => h.onMessage!.call(self, msg, sender));
+      if (h.onEmit)     _hooks.onEmit.push((msg: any) => h.onEmit!.call(self, msg));
+      if (h.onChildExit) _hooks.onChildExit.push((name: string) => h.onChildExit!.call(self, name));
+      if (h.onStopRequested) _hooks.onStopRequested.push(() => h.onStopRequested!.call(self));
+      if (h.onEnd)      _hooks.onEnd.push((reason: unknown) => h.onEnd!.call(self, reason));
+      if (h.onError)    _hooks.onError.push((err: unknown) => h.onError!.call(self, err));
+    }
+
     // Yield the exposed state — external consumers see this.
     yield exposedState;
 
     // Call onStart with args.
     if (config.onStart) {
       await config.onStart.call(self, args);
+    }
+
+    // Fire hooks.onStart after the actor's own onStart.
+    for (const fn of _hooks.onStart) {
+      try { await fn(exposedState); } catch (e) { /* error handled by onStart body */ }
     }
 
     // Dispatch loop..
@@ -139,6 +171,9 @@ export function defineActor<
 
         // ── Built-in STOP handling ──────────────────────────────────
         if (msg.type === "STOP") {
+          for (const fn of _hooks.onStopRequested) {
+            try { await fn(); } catch {}
+          }
           if (config.onStopRequested) {
             await config.onStopRequested.call(self);
             if (!done) {
@@ -170,21 +205,54 @@ export function defineActor<
             // Recognized child — consume EXIT here.
             delete self.$child[childName];
           }
+          for (const fn of _hooks.onChildExit) {
+            try { await fn(childName); } catch {}
+          }
           if (config.onChildExit) {
             await config.onChildExit.call(self, childName, msg as ExitMessage);
           }
           // Unrecognized EXIT — fall through to handlers/onUnhandled.
         }
 
+        // ── onMessage hooks ────────────────────────────────────────
+        let hookStopped = false;
+        if (msg.type !== "STOP" && msg.type !== "EXIT") {
+          for (const fn of _hooks.onMessage) {
+            try {
+              const result: HookResult = await fn(msg, sender);
+              if (result === STOP_SENTINEL) { hookStopped = true; break; }
+            } catch (e) {
+              // Error in hook: fire onError hooks, then continue.
+              for (const errFn of _hooks.onError) {
+                try { errFn(e); } catch {}
+              }
+            }
+          }
+        }
+
         // ── Named handlers ──────────────────────────────────────────
-        if (msg.type !== "STOP") {
+        if (msg.type !== "STOP" && !hookStopped) {
           const handler = config.handlers[
             msg.type as keyof Handlers
           ] as HandlerFn<InMsg>;
           if (handler) {
-            await handler.call(self, msg as InMsg, sender);
+            try {
+              await handler.call(self, msg as InMsg, sender);
+            } catch (e) {
+              for (const fn of _hooks.onError) {
+                try { fn(e); } catch {}
+              }
+              throw e; // rethrow to trigger exit
+            }
           } else if (config.onUnhandled) {
-            await config.onUnhandled.call(self, msg as InMsg, sender);
+            try {
+              await config.onUnhandled.call(self, msg as InMsg, sender);
+            } catch (e) {
+              for (const fn of _hooks.onError) {
+                try { fn(e); } catch {}
+              }
+              throw e; // rethrow to trigger exit
+            }
           }
           // No onUnhandled: silently drop.
         }
@@ -193,6 +261,11 @@ export function defineActor<
       },
       () => done,
     );
+
+    // Fire hooks.onEnd before the actor's onEnd.
+    for (const fn of _hooks.onEnd) {
+      try { await fn(exitReason ?? "done"); } catch {}
+    }
 
     // Call onEnd.
     if (config.onEnd) {
