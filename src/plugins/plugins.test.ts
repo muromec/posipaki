@@ -742,3 +742,80 @@ describe('full lifecycle coverage', () => {
     await proc.wait().catch(() => {});
   });
 });
+
+// ── onError: plugins + actor ordering ────────────────────────────────────
+
+describe('onError: plugins + actor ordering', () => {
+  it('two plugins + actor onError all fire in registration order', async () => {
+    const errors: string[] = [];
+
+    const plug1: ActorPlugin = {
+      name: 'err1',
+      install(ctx: any) { ctx.onError?.((e: unknown) => errors.push(`plug1:${(e as Error).message}`)); },
+    };
+    const plug2: ActorPlugin = {
+      name: 'err2',
+      install(ctx: any) { ctx.onError?.((e: unknown) => errors.push(`plug2:${(e as Error).message}`)); },
+    };
+
+    const Actor = defineActor({
+      name: 'a',
+      inMessages: Pin, outMessages: Pout,
+      initialState: () => ({ x: 0 }),
+      plugins: [plug1, plug2],
+      hooks: {
+        onError(this: any, e: unknown) { errors.push(`actor-hook:${(e as Error).message}`); },
+      },
+      handlers: {
+        POKE() { throw new Error('KABOOM'); },
+      },
+    });
+
+    const proc = Actor.spawn({});
+    await proc.ready();
+    proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait().catch(() => {});
+
+    expect(errors).toEqual([
+      'plug1:KABOOM',
+      'plug2:KABOOM',
+      'actor-hook:KABOOM',
+    ]);
+  });
+
+  it('error in first onError does not prevent second from firing', async () => {
+    const fired: string[] = [];
+
+    const plug1: ActorPlugin = {
+      name: 'faulty',
+      install(ctx: any) {
+        ctx.onError?.(() => { fired.push('plug1'); throw new Error('inner error'); });
+      },
+    };
+    const plug2: ActorPlugin = {
+      name: 'reliable',
+      install(ctx: any) { ctx.onError?.(() => fired.push('plug2')); },
+    };
+
+    const Actor = defineActor({
+      name: 'a',
+      inMessages: Pin, outMessages: Pout,
+      initialState: () => ({ x: 0 }),
+      plugins: [plug1, plug2],
+      hooks: {
+        onError() { fired.push('actor-hook'); },
+      },
+      handlers: {
+        POKE() { throw new Error('BOOM'); },
+      },
+    });
+
+    const proc = Actor.spawn({});
+    await proc.ready();
+    proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait().catch(() => {});
+
+    // All three onError hooks should fire, even though plug1 throws.
+    expect(fired).toEqual(['plug1', 'plug2', 'actor-hook']);
+  });
+});
