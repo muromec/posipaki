@@ -130,23 +130,18 @@ describe('tree prefixing', () => {
     await proc.wait().catch(() => {});
   });
 
-  it('raw generator with ctx.fork needs explicit name', () => {
+  it('raw generator with ctx.fork uses exact name (no prefix)', () => {
     const rawFn: AsyncProcessFn<null, { x: number }, PokeMsg, PokeMsg> =
       async function* () { yield { x: 1 }; };
 
     const root = spawnAsync(rawFn, 'root')(null);
     expect(root.pname).toBe('root');
 
-    // Fork with explicit name
+    // Low-level fork uses exact name — no tree prefix.
     const child = root.fork(rawFn, 'worker')(null);
-    expect(child.pname).toBe('root:worker');
-
-    // Fork without name falls back to child-N
-    const child2 = root.fork(rawFn)();
-    expect(child2.pname).toBe('root:child-1');
+    expect(child.pname).toBe('worker');
 
     child.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    child2.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     root.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
   });
 

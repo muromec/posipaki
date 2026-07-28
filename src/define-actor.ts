@@ -141,7 +141,8 @@ export function defineActor<
         const childDef: ActorDefinition<unknown, unknown, Message, Message, HandlerOptions<Message>> | null =
           typeof childFn === "object" ? childFn : null;
         const childName = name
-          ?? (childDef?.name ? childDef.name : undefined);
+          ?? childDef?.name
+          ?? `child-${Object.keys(self.$child).length}`;
 
         // ── plugin inheritance ───────────────────────────────────────
         // Resolve parent's installed plugins.
@@ -153,20 +154,19 @@ export function defineActor<
         const childRaw: ActorPlugin[] | PluginTransform | undefined = (childDef as { _pluginsRaw?: ActorPlugin[] | PluginTransform })?._pluginsRaw;
         let childPlugs: ActorPlugin[];
         if (!childRaw) {
-          // No child config → inherit all parent plugins.
           childPlugs = [...parentPlugs];
         } else if (Array.isArray(childRaw)) {
-          // Array → use exactly these (no inheritance).
           childPlugs = [...childRaw];
         } else {
-          // Function → transform parent chain.
           childPlugs = childRaw(parentPlugs);
         }
 
         // Stash resolved list on the child's config before fork.
         stashPlugins(resolved, childPlugs);
 
-        const child = ctx.fork(resolved, childName)(childArgs!);
+        // Build tree-prefixed name: parent:child
+        const treeName = `${ctx.pname}:${childName}`;
+        const child = ctx.fork(resolved, treeName)(childArgs!);
         // Store under the resolved name for $child lookup and EXIT matching.
         self.$child[child.pname] = child as unknown as AsyncProcess<
           unknown,
@@ -372,7 +372,7 @@ export function defineActor<
     ) {
       return ctx.fork(
         fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
-        name ?? config.name,
+        name ?? config.name ?? 'child',
       )(args);
     },
   };

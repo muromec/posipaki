@@ -165,20 +165,14 @@ export class AsyncProcess<
 
   fork<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends Message>(
     fn: AsyncProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
-    pname?: string,
+    pname: string,
   ): (
     args: ChildArgs,
   ) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM> {
     return (args: ChildArgs) => {
-      // Resolve child name: explicit > fn.config.name > fallback
-      // Access config.name from an ActorDefinition if present.
-      const fnWithConfig = fn as { config?: { name?: string } };
-      const fnConfig = fnWithConfig.config;
-      const baseName = pname ?? fnConfig?.name ?? `child-${this.children.length}`;
-      const childName = `${this.pname}:${baseName}`;
       const child = new AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM>(
         fn,
-        childName,
+        pname,
         this.fromChild.bind(this) as unknown as ProcessMessageCb<
           WithSender<ChildOM>
         >,
@@ -198,7 +192,7 @@ export class AsyncProcess<
     ChildOM extends Message,
   >(
     fn: ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
-    pname?: string,
+    pname: string,
   ): (
     args: ChildArgs,
   ) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM> {
