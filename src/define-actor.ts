@@ -106,10 +106,13 @@ export function defineActor<
       },
       $child: {},
       fork(childFn, name, childArgs) {
-        // Unwrap ActorDefinition, pass to ctx.fork.
+        // Unwrap ActorDefinition, derive name.
         const resolved = typeof childFn === "function" ? childFn : childFn.fn;
-        const child = ctx.fork(resolved, name)(childArgs!);
-        self.$child[name] = child as unknown as AsyncProcess<
+        const childName = name
+          ?? (typeof childFn === "object" && childFn.name ? childFn.name : undefined);
+        const child = ctx.fork(resolved, childName)(childArgs!);
+        // Store under the resolved name for $child lookup and EXIT matching.
+        self.$child[child.pname] = child as unknown as AsyncProcess<
           unknown,
           unknown,
           Message,
@@ -199,6 +202,7 @@ export function defineActor<
 
   return {
     fn: fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
+    name: config.name,
     config: config as unknown as ActorConfig<
       Args,
       InternalState,
@@ -211,17 +215,17 @@ export function defineActor<
     spawn(args: Args) {
       return spawnAsync(
         fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
-        "actor",
+        config.name ?? "actor",
       )(args);
     },
     spawnAsChild(
       ctx: ProcessCtx<any, any, any, any>,
-      name: string,
+      name?: string,
       args: Args,
     ) {
       return ctx.fork(
         fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
-        name,
+        name ?? config.name,
       )(args);
     },
   };

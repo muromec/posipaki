@@ -41,6 +41,8 @@ export interface ActorDefinition<
 > {
   fn: AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>;
   config: ActorConfig<Args, any, ExposedState, InMsg, OutMsg, {}, Handlers>;
+  /** Preferred process name (from config.name). */
+  name?: string;
   /** Spawn this actor as a standalone process. */
   spawn(args: Args): AsyncProcess<Args, ExposedState, InMsg, OutMsg>;
   /** Spawn this actor as a child of the calling process. */
@@ -78,6 +80,8 @@ export interface ActorConfig<
         >["ctx"],
       ) => InternalState);
   expose?: (internalState: InternalState) => ExposedState;
+  /** Preferred process name.  Used by ctx.fork() when no explicit name is given. */
+  name?: string;
   outMessages?: ActorMessages<OutMsg>;
   inMessages?: ActorMessages<InMsg>;
 
@@ -144,7 +148,7 @@ export type ActorContext<
     H extends HandlerOptions<IM>,
   >(
     fn: AsyncProcessFn<A, S, IM, OM> | ActorDefinition<A, S, IM, OM, H>,
-    name: string,
+    name?: string,
     args?: A,
   ): AsyncProcess<A, S, IM, OM>;
 

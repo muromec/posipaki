@@ -88,7 +88,7 @@ export type Fork<
   ChildOM extends Message,
 > = (
   fn: AsyncProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
-  pname: string,
+  pname?: string,
 ) => (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM>;
 
 export type ForkSync<
@@ -98,7 +98,7 @@ export type ForkSync<
   ChildOM extends Message,
 > = (
   fn: ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
-  pname: string,
+  pname?: string,
 ) => (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM>;
 
 /** Context injected into every running process. */
