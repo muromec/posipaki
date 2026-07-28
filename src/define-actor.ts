@@ -350,8 +350,8 @@ export function defineActor<
     },
     spawnAsChild(
       ctx: ProcessCtx<any, any, any, any>,
-      name?: string,
       args: Args,
+      name?: string,
     ) {
       return ctx.fork(
         fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,

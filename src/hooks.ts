@@ -4,7 +4,7 @@
 // Hooks are additive — multiple callbacks can register for the same hook
 // point, and they fire in registration order.
 
-import type { Message, SenderInfo } from './types.js';
+import type { Message, SenderInfo, ProcessCtx } from './types.js';
 
 // ── stop propagation sentinel ────────────────────────────────────────────
 
@@ -41,8 +41,6 @@ export class HookRegistry<State, InMsg extends Message, OutMsg extends Message> 
 
 // ── plugin types ─────────────────────────────────────────────────────────
 
-import type { ProcessCtx } from './types.js';
-import type { Message } from './types.js';
 
 /** A reusable unit of actor behaviour, installed at fork time. */
 export interface ActorPlugin {

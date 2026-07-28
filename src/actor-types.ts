@@ -50,8 +50,8 @@ export interface ActorDefinition<
   /** Spawn this actor as a child of the calling process. */
   spawnAsChild(
     ctx: ProcessCtx<any, any, any, any>,
-    name: string,
     args: Args,
+    name?: string,
   ): AsyncProcess<Args, ExposedState, InMsg, OutMsg>;
 }
 
