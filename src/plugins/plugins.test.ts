@@ -499,3 +499,246 @@ describe('plugins — adversarial', () => {
     await proc.wait().catch(() => {});
   });
 });
+
+// ── hook ordering: plugins + actor hooks ─────────────────────────────────
+
+describe('hook ordering: plugins + actor hooks', () => {
+  it('two plugins + actor onMessage all fire in registration order', async () => {
+    const order: string[] = [];
+
+    const plug1: ActorPlugin = {
+      name: 'first',
+      install(ctx: any) { ctx.onMessage?.(() => order.push('plug1')); },
+    };
+    const plug2: ActorPlugin = {
+      name: 'second',
+      install(ctx: any) { ctx.onMessage?.(() => order.push('plug2')); },
+    };
+
+    const Actor = defineActor({
+      name: 'a',
+      inMessages: Pin, outMessages: Pout,
+      initialState: () => ({ x: 0 }),
+      plugins: [plug1, plug2],
+      hooks: {
+        onMessage() { order.push('actor-hook'); },
+      },
+      handlers: { POKE() {} },
+    });
+
+    const proc = Actor.spawn({});
+    await proc.ready();
+    proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(order).toEqual(['plug1', 'plug2', 'actor-hook']);
+
+    proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait();
+  });
+
+  it('plugin onMessage short-circuits before actor hook', async () => {
+    const order: string[] = [];
+
+    const plug: ActorPlugin = {
+      name: 'blocker',
+      install(ctx: any) {
+        ctx.onMessage?.(() => { order.push('plug'); return stopPropagation(); });
+      },
+    };
+
+    const Actor = defineActor({
+      name: 'a',
+      inMessages: Pin, outMessages: Pout,
+      initialState: () => ({ x: 0 }),
+      plugins: [plug],
+      hooks: {
+        onMessage() { order.push('actor-hook'); },
+      },
+      handlers: { POKE() {} },
+    });
+
+    const proc = Actor.spawn({});
+    await proc.ready();
+    proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(order).toEqual(['plug']);  // actor hook NOT called
+
+    proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait();
+  });
+});
+
+// ── full lifecycle: all seven hooks fire ──────────────────────────────────
+
+describe('full lifecycle coverage', () => {
+  it('all seven hooks fire across actor start → message → stop → end', async () => {
+    const fired: string[] = [];
+
+    const trace = (name: string) => () => { fired.push(name); };
+
+    const Actor = defineActor({
+      name: 'a',
+      inMessages: Pin, outMessages: Pout,
+      initialState: () => ({ x: 0 }),
+      hooks: {
+        onStart: trace('hooks.onStart'),
+        onMessage: trace('hooks.onMessage'),
+        onStopRequested: trace('hooks.onStopRequested'),
+        onEnd: trace('hooks.onEnd'),
+      },
+      handlers: {
+        POKE(this: any) {
+          fired.push('handler:POKE');
+          this.emit({ type: 'PONG', n: 42 });
+        },
+      },
+    });
+
+    const proc = Actor.spawn({});
+    await proc.ready();
+
+    // onStart should have fired
+    expect(fired).toContain('hooks.onStart');
+
+    // Send a message — onMessage + handler:POKE should fire
+    proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
+    await new Promise(r => setTimeout(r, 50));
+    expect(fired).toContain('hooks.onMessage');
+    expect(fired).toContain('handler:POKE');
+
+    // Stop — onStopRequested should fire
+    proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait();
+    expect(fired).toContain('hooks.onStopRequested');
+    expect(fired).toContain('hooks.onEnd');
+  });
+
+  it('plugin onEnd fires before actor onEnd', async () => {
+    const order: string[] = [];
+
+    const plug: ActorPlugin = {
+      name: 'e',
+      install(ctx: any) { ctx.onEnd?.(() => order.push('plug')); },
+    };
+
+    const Actor = defineActor({
+      name: 'a',
+      inMessages: Pin, outMessages: Pout,
+      initialState: () => ({ x: 0 }),
+      plugins: [plug],
+      hooks: {
+        onEnd() { order.push('actor-hook'); },
+      },
+      handlers: {},
+    });
+
+    const proc = Actor.spawn({});
+    await proc.ready();
+    proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait();
+
+    // Plugin onEnd fires before actor hooks.onEnd
+    expect(order[0]).toBe('plug');
+    expect(order[1]).toBe('actor-hook');
+  });
+
+  it('plugin onStopRequested fires before actor onStopRequested', async () => {
+    const order: string[] = [];
+
+    const plug: ActorPlugin = {
+      name: 's',
+      install(ctx: any) { ctx.onStopRequested?.(() => order.push('plug')); },
+    };
+
+    const Actor = defineActor({
+      name: 'a',
+      inMessages: Pin, outMessages: Pout,
+      initialState: () => ({ x: 0 }),
+      plugins: [plug],
+      hooks: {
+        onStopRequested() { order.push('actor-hook'); },
+      },
+      handlers: {},
+    });
+
+    const proc = Actor.spawn({});
+    await proc.ready();
+    proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait();
+
+    expect(order).toEqual(['plug', 'actor-hook']);
+  });
+
+  it('plugin onEmit fires before actor onEmit', async () => {
+    const order: string[] = [];
+
+    const plug: ActorPlugin = {
+      name: 'e',
+      install(ctx: any) { ctx.onEmit?.(() => order.push('plug')); },
+    };
+
+    const Actor = defineActor({
+      name: 'a',
+      inMessages: Pin, outMessages: Pout,
+      initialState: () => ({ x: 0 }),
+      plugins: [plug],
+      hooks: {
+        onEmit() { order.push('actor-hook'); },
+      },
+      handlers: {
+        POKE(this: any) { this.emit({ type: 'PONG', n: 1 }); },
+      },
+    });
+
+    const proc = Actor.spawn({});
+    await proc.ready();
+    proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
+    await new Promise(r => setTimeout(r, 50));
+
+    expect(order).toEqual(['plug', 'actor-hook']);
+
+    proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait();
+  });
+
+  it('plugin onChildExit fires before actor onChildExit', async () => {
+    const order: string[] = [];
+
+    const plug: ActorPlugin = {
+      name: 'ce',
+      install(ctx: any) { ctx.onChildExit?.((name: string) => order.push(`plug:${name}`)); },
+    };
+
+    const Child = defineActor({
+      name: 'child',
+      inMessages: Pin, outMessages: Pout,
+      initialState: () => ({ x: 0 }),
+      onStart(this: any) { this.exit(); },
+      handlers: {},
+    });
+
+    const Parent = defineActor({
+      name: 'parent',
+      inMessages: Pin, outMessages: Pout,
+      initialState: () => ({ x: 0 }),
+      plugins: [plug],
+      hooks: {
+        onChildExit(this: any, name: string) { order.push(`actor-hook:${name}`); },
+      },
+      onStart(this: any) { this.fork(Child, undefined, {}); },
+      handlers: { POKE() {}, PONG() {} },
+    });
+
+    const proc = Parent.spawn({});
+    await proc.ready();
+    await new Promise(r => setTimeout(r, 200));
+
+    expect(order[0]).toMatch(/^plug:/);
+    expect(order[1]).toMatch(/^actor-hook:/);
+
+    proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait().catch(() => {});
+  });
+});

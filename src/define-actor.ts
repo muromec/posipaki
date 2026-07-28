@@ -57,6 +57,20 @@ export function defineActor<
     Handlers
   >,
 ): ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers> {
+  // ── internal helpers ──────────────────────────────────────────────
+
+  /** Extract __resolvedPlugins from an async process function
+   *  (set by the parent's fork() for plugin inheritance). */
+  const getResolvedPlugins = (f: unknown): ActorPlugin[] | undefined => {
+    const withPlugins = f as { __resolvedPlugins?: ActorPlugin[] };
+    return withPlugins.__resolvedPlugins;
+  };
+
+  /** Stash resolved plugins on a function for the child to read. */
+  const stashPlugins = (f: unknown, plugs: ActorPlugin[]): void => {
+    (f as { __resolvedPlugins?: ActorPlugin[] }).__resolvedPlugins = plugs;
+  };
+
   // Internal generator receives WithSender<InMsg> so sender identity
   // is directly accessible in the dispatch loop with zero casts.
   const fn = async function* (
@@ -102,7 +116,7 @@ export function defineActor<
       emit(msg) {
         // Fire onEmit hooks before the actual emit.
         for (const fn of _hooks.onEmit) {
-          try { fn(msg); } catch (e) { /* error goes to onError */ }
+          try { fn(msg); } catch { /* ignore — errors bubble through onError */ }
         }
         ctx.toParent(msg);
       },
@@ -124,7 +138,7 @@ export function defineActor<
       fork(childFn, name, childArgs) {
         // Unwrap ActorDefinition, derive name.
         const resolved = typeof childFn === "function" ? childFn : childFn.fn;
-        const childDef: ActorDefinition<any,any,any,any,any> | null =
+        const childDef: ActorDefinition<unknown, unknown, Message, Message, HandlerOptions<Message>> | null =
           typeof childFn === "object" ? childFn : null;
         const childName = name
           ?? (childDef?.name ? childDef.name : undefined);
@@ -136,7 +150,7 @@ export function defineActor<
           : [];
 
         // Merge with child's raw config.
-        const childRaw = (childDef as any)?._pluginsRaw;
+        const childRaw: ActorPlugin[] | PluginTransform | undefined = (childDef as { _pluginsRaw?: ActorPlugin[] | PluginTransform })?._pluginsRaw;
         let childPlugs: ActorPlugin[];
         if (!childRaw) {
           // No child config → inherit all parent plugins.
@@ -150,7 +164,7 @@ export function defineActor<
         }
 
         // Stash resolved list on the child's config before fork.
-        (resolved as any).__resolvedPlugins = childPlugs;
+        stashPlugins(resolved, childPlugs);
 
         const child = ctx.fork(resolved, childName)(childArgs!);
         // Store under the resolved name for $child lookup and EXIT matching.
@@ -165,30 +179,21 @@ export function defineActor<
       ctx,
     };
 
-    // ── register config.hooks (after self is built so call/this works) ─
-    if (config.hooks) {
-      const h = config.hooks;
-      if (h.onStart)    _hooks.onStart.push((state: any) => h.onStart!.call(self, state));
-      if (h.onMessage)  _hooks.onMessage.push((msg: any, sender: any) => h.onMessage!.call(self, msg, sender));
-      if (h.onEmit)     _hooks.onEmit.push((msg: any) => h.onEmit!.call(self, msg));
-      if (h.onChildExit) _hooks.onChildExit.push((name: string) => h.onChildExit!.call(self, name));
-      if (h.onStopRequested) _hooks.onStopRequested.push(() => h.onStopRequested!.call(self));
-      if (h.onEnd)      _hooks.onEnd.push((reason: unknown) => h.onEnd!.call(self, reason));
-      if (h.onError)    _hooks.onError.push((err: unknown) => h.onError!.call(self, err));
-    }
 
     // ── wire hook registration onto ctx (for plugin install) ──────
-    (ctx as any).onMessage = (fn: any) => { _hooks.onMessage.push(fn); };
-    (ctx as any).onEmit = (fn: any) => { _hooks.onEmit.push(fn); };
-    (ctx as any).onChildExit = (fn: any) => { _hooks.onChildExit.push(fn); };
-    (ctx as any).onStart = (fn: any) => { _hooks.onStart.push(fn); };
-    (ctx as any).onStopRequested = (fn: any) => { _hooks.onStopRequested.push(fn); };
-    (ctx as any).onError = (fn: any) => { _hooks.onError.push(fn); };
+    const ctxAny = ctx as Record<string, unknown>;
+    ctxAny.onMessage = (fn: OnMessageHook<InMsg>) => { _hooks.onMessage.push(fn); };
+    ctxAny.onEmit = (fn: OnEmitHook<OutMsg>) => { _hooks.onEmit.push(fn); };
+    ctxAny.onChildExit = (fn: OnChildExitHook) => { _hooks.onChildExit.push(fn); };
+    ctxAny.onStart = (fn: OnStartHook<ExposedState>) => { _hooks.onStart.push(fn); };
+    ctxAny.onStopRequested = (fn: OnStopRequestedHook) => { _hooks.onStopRequested.push(fn); };
+    ctxAny.onError = (fn: OnErrorHook) => { _hooks.onError.push(fn); };
+    ctxAny.onEnd = (fn: OnEndHook) => { _hooks.onEnd.push(fn); };
 
     // ── install plugins ──────────────────────────────────────────────
     // On child actors, __resolvedPlugins is set by the parent's fork().
     // On root actors, use config.plugins directly.
-    const resolvedPlugs = (fn as any).__resolvedPlugins
+    const resolvedPlugs = getResolvedPlugins(fn)
       ?? (config.plugins
           ? (typeof config.plugins === "function" ? config.plugins([]) : config.plugins)
           : []);
@@ -196,7 +201,7 @@ export function defineActor<
     for (const p of resolvedPlugs) {
       let _err: unknown = null;
       try {
-        await p.install(ctx as any);
+        await p.install(ctx);
       } catch (e) {
         _err = e;
       }
@@ -204,6 +209,18 @@ export function defineActor<
       if (_err) {
         console.error(`[${ctx.pname}] plugin "${p.name}" install failed:`, _err);
       }
+    }
+
+    // ── register config.hooks (after plugins, so plugins fire first) ─
+    if (config.hooks) {
+      const h = config.hooks;
+      if (h.onStart)    _hooks.onStart.push((state) => h.onStart!.call(self, state));
+      if (h.onMessage)  _hooks.onMessage.push((msg, sender) => h.onMessage!.call(self, msg, sender));
+      if (h.onEmit)     _hooks.onEmit.push((msg) => h.onEmit!.call(self, msg));
+      if (h.onChildExit) _hooks.onChildExit.push((name) => h.onChildExit!.call(self, name));
+      if (h.onStopRequested) _hooks.onStopRequested.push(() => h.onStopRequested!.call(self));
+      if (h.onEnd)      _hooks.onEnd.push((reason) => h.onEnd!.call(self, reason));
+      if (h.onError)    _hooks.onError.push((err) => h.onError!.call(self, err));
     }
 
     // Yield the exposed state — external consumers see this.

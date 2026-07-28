@@ -43,9 +43,13 @@ export class HookRegistry<State, InMsg extends Message, OutMsg extends Message> 
 
 
 /** A reusable unit of actor behaviour, installed at fork time. */
-export interface ActorPlugin {
+export interface ActorPlugin<
+  InMsg extends Message = Message,
+  OutMsg extends Message = Message,
+  State = unknown,
+> {
   name: string;
-  install(ctx: ProcessCtx<any, any, any, any>): void | Promise<void>;
+  install(ctx: ProcessCtx<unknown, State, InMsg, OutMsg>): void | Promise<void>;
 }
 
 /** Transform parent plugins into child plugins. */

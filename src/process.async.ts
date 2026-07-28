@@ -171,7 +171,9 @@ export class AsyncProcess<
   ) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM> {
     return (args: ChildArgs) => {
       // Resolve child name: explicit > fn.config.name > fallback
-      const fnConfig = (fn as any).config as { name?: string } | undefined;
+      // Access config.name from an ActorDefinition if present.
+      const fnWithConfig = fn as { config?: { name?: string } };
+      const fnConfig = fnWithConfig.config;
       const baseName = pname ?? fnConfig?.name ?? `child-${this.children.length}`;
       const childName = `${this.pname}:${baseName}`;
       const child = new AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM>(
