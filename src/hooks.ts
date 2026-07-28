@@ -38,3 +38,17 @@ export class HookRegistry<State, InMsg extends Message, OutMsg extends Message> 
   onEnd: Array<OnEndHook> = [];
   onError: Array<OnErrorHook> = [];
 }
+
+// ── plugin types ─────────────────────────────────────────────────────────
+
+import type { ProcessCtx } from './types.js';
+import type { Message } from './types.js';
+
+/** A reusable unit of actor behaviour, installed at fork time. */
+export interface ActorPlugin {
+  name: string;
+  install(ctx: ProcessCtx<any, any, any, any>): void | Promise<void>;
+}
+
+/** Transform parent plugins into child plugins. */
+export type PluginTransform = (parentPlugins: ActorPlugin[]) => ActorPlugin[];

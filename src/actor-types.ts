@@ -43,6 +43,8 @@ export interface ActorDefinition<
   config: ActorConfig<Args, any, ExposedState, InMsg, OutMsg, {}, Handlers>;
   /** Preferred process name (from config.name). */
   name?: string;
+  /** Resolved plugin list (after inheritance). */
+  plugins?: ActorPlugin[];
   /** Spawn this actor as a standalone process. */
   spawn(args: Args): AsyncProcess<Args, ExposedState, InMsg, OutMsg>;
   /** Spawn this actor as a child of the calling process. */
@@ -119,6 +121,8 @@ export interface ActorConfig<
   /** Preferred process name.  Used by ctx.fork() when no explicit name is given. */
   name?: string;
   hooks?: ActorHooksConfig<Args, InternalState, InMsg, OutMsg, Methods, Handlers>;
+  /** Plugins installed at fork time. Array = replace, function = transform parent chain. */
+  plugins?: ActorPlugin[] | PluginTransform;
   outMessages?: ActorMessages<OutMsg>;
   inMessages?: ActorMessages<InMsg>;
 

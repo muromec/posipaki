@@ -25,6 +25,7 @@ import type {
   HandlerFn,
 } from "./actor-types.js";
 import { HookRegistry, stopPropagation, STOP_SENTINEL } from "./hooks.js";
+import type { ActorPlugin, PluginTransform } from "./hooks.js";
 import type { HookResult, OnMessageHook, OnEmitHook, OnChildExitHook, OnStartHook, OnStopRequestedHook, OnEndHook, OnErrorHook } from "./hooks.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -125,6 +126,20 @@ export function defineActor<
         const resolved = typeof childFn === "function" ? childFn : childFn.fn;
         const childName = name
           ?? (typeof childFn === "object" && childFn.name ? childFn.name : undefined);
+
+        // Resolve child plugins: merge parent chain with child config.
+        const parentPlugs: ActorPlugin[] = [];
+        const childDef = typeof childFn === "object" ? childFn : null;
+        if (childDef?.plugins) {
+          // Child has explicit plugin list — use it directly.
+        } else if (config.plugins) {
+          // Inherit parent plugins.
+          const plugs = typeof config.plugins === "function"
+            ? config.plugins([])
+            : config.plugins;
+          for (const p of plugs) parentPlugs.push(p);
+        }
+
         const child = ctx.fork(resolved, childName)(childArgs!);
         // Store under the resolved name for $child lookup and EXIT matching.
         self.$child[child.pname] = child as unknown as AsyncProcess<
@@ -148,6 +163,19 @@ export function defineActor<
       if (h.onStopRequested) _hooks.onStopRequested.push(() => h.onStopRequested!.call(self));
       if (h.onEnd)      _hooks.onEnd.push((reason: unknown) => h.onEnd!.call(self, reason));
       if (h.onError)    _hooks.onError.push((err: unknown) => h.onError!.call(self, err));
+    }
+
+    // ── install plugins ──────────────────────────────────────────────
+    if (config.plugins) {
+      const plugs = typeof config.plugins === "function"
+        ? config.plugins([])   // root actor: no parent plugins
+        : config.plugins;
+      for (const p of plugs) {
+        try { await p.install(ctx as any); } catch (e) {
+          // Plugin install failure is not fatal — log and continue.
+          console.error(`[${ctx.pname}] plugin "${p.name}" install failed:`, e);
+        }
+      }
     }
 
     // Yield the exposed state — external consumers see this.
@@ -276,6 +304,9 @@ export function defineActor<
   return {
     fn: fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
     name: config.name,
+    plugins: config.plugins
+      ? (typeof config.plugins === "function" ? config.plugins([]) : config.plugins)
+      : undefined,
     config: config as unknown as ActorConfig<
       Args,
       InternalState,
