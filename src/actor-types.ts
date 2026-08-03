@@ -127,7 +127,7 @@ export interface ActorConfig<
   expose?: (internalState: InternalState) => ExposedState;
   /** Preferred process name.  Used by ctx.fork() when no explicit name is given. */
   name?: string;
-  hooks?: ActorHooksConfig<Args, InternalState, InMsg, OutMsg, Methods, Handlers>;
+  hooks?: ActorHooksConfig<Args, InternalState, ExposedState, InMsg, OutMsg, Methods, Handlers>;
   /** Plugins installed at fork time. Array = replace, function = transform parent chain. */
   plugins?: ActorPlugin[] | PluginTransform;
   outMessages?: ActorMessages<OutMsg>;

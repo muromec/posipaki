@@ -115,7 +115,7 @@ function* xfetch<Type>(
       const status = res.status;
       const responseHeaders = headersToRecord(res.headers);
       if (isJsonHelper(res)) {
-        const data = await res.json();
+        const data = await res.json() as Type;
         toSelf({ type: "OK", data, status, responseHeaders });
       } else {
         const text = await res.text();
