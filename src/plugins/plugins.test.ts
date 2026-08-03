@@ -45,6 +45,7 @@ describe('plugin basic', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug],
       handlers: { POKE() {} },
@@ -62,6 +63,7 @@ describe('plugin basic', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [sp],
       handlers: {
@@ -99,6 +101,7 @@ describe('plugin basic', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ count: 42 }),
       plugins: [{
         name: 'test',
@@ -113,6 +116,7 @@ describe('plugin basic', () => {
     const Actor2 = defineActor({
       name: 'b',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ count: 99 }),
       hooks: {
         onStart(this: any) { this.state.count++; },
@@ -151,6 +155,7 @@ describe('plugin inheritance', () => {
     const Child = defineActor({
       name: 'child',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       // No plugins — inherits from parent
       handlers: { POKE() {} },
@@ -159,6 +164,7 @@ describe('plugin inheritance', () => {
     const Parent = defineActor({
       name: 'parent',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [inheritCheck],
       onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
@@ -194,6 +200,7 @@ describe('plugin inheritance', () => {
     const Child = defineActor({
       name: 'child',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug], // empty array blocks parent inheritance (replaced by child-only)
       handlers: { POKE() {} },
@@ -202,6 +209,7 @@ describe('plugin inheritance', () => {
     const Parent = defineActor({
       name: 'parent',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [parentSpy],
       onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
@@ -235,6 +243,7 @@ describe('plugin inheritance', () => {
     const Child = defineActor({
       name: 'child',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: (parents) => [...parents, extraPlg],
       handlers: { POKE() {} },
@@ -243,6 +252,7 @@ describe('plugin inheritance', () => {
     const Parent = defineActor({
       name: 'parent',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [parentSpy],
       onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
@@ -280,14 +290,16 @@ describe('plugin hook propagation', () => {
     const Child = defineActor({
       name: 'child',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       onStart(this: any) { this.exit(); },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [parentPlg],
       onStart(this: any) { this.fork(Child, undefined, {}); },
@@ -316,6 +328,7 @@ describe('plugin hook propagation', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plg],
       handlers: {
@@ -342,6 +355,7 @@ describe('rbac plugin', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [rbac({ allow: ['safe_tool'] })],
       handlers: {
@@ -372,6 +386,7 @@ describe('rbac plugin', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [rbac({ allow: ['safe_tool'] })],
       handlers: {
@@ -409,6 +424,7 @@ describe('plugins — adversarial', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [badPlug],
       handlers: { POKE() {} },
@@ -437,6 +453,7 @@ describe('plugins — adversarial', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [make('A'), make('B'), make('C')],
       handlers: { POKE() {} },
@@ -460,6 +477,7 @@ describe('plugins — adversarial', () => {
     const Grandchild = defineActor({
       name: 'gc',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       handlers: { POKE() { gcSeen = true; } },
     });
@@ -467,6 +485,7 @@ describe('plugins — adversarial', () => {
     const Child = defineActor({
       name: 'child',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ gc: null as any }),
       onStart(this: any) { this.state.gc = this.fork(Grandchild, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
@@ -475,6 +494,7 @@ describe('plugins — adversarial', () => {
     const Root = defineActor({
       name: 'root',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [rootSpy],
       onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
@@ -518,6 +538,7 @@ describe('hook ordering: plugins + actor hooks', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug1, plug2],
       hooks: {
@@ -550,6 +571,7 @@ describe('hook ordering: plugins + actor hooks', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug],
       hooks: {
@@ -581,6 +603,7 @@ describe('full lifecycle coverage', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       hooks: {
         onStart: trace('hooks.onStart'),
@@ -626,12 +649,13 @@ describe('full lifecycle coverage', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug],
       hooks: {
         onEnd() { order.push('actor-hook'); },
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Actor.spawn({});
@@ -655,12 +679,13 @@ describe('full lifecycle coverage', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug],
       hooks: {
         onStopRequested() { order.push('actor-hook'); },
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Actor.spawn({});
@@ -682,6 +707,7 @@ describe('full lifecycle coverage', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug],
       hooks: {
@@ -714,14 +740,16 @@ describe('full lifecycle coverage', () => {
     const Child = defineActor({
       name: 'child',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       onStart(this: any) { this.exit(); },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug],
       hooks: {
@@ -761,6 +789,7 @@ describe('onError: plugins + actor ordering', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug1, plug2],
       hooks: {
@@ -800,6 +829,7 @@ describe('onError: plugins + actor ordering', () => {
     const Actor = defineActor({
       name: 'a',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug1, plug2],
       hooks: {
@@ -834,6 +864,7 @@ describe('decorate', () => {
     const Actor = defineActor({
       name: 'd',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug],
       handlers: {
@@ -885,6 +916,7 @@ describe('decorate', () => {
     const Actor = defineActor({
       name: 'd',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug],
       handlers: { POKE() {} },
@@ -919,6 +951,7 @@ describe('decorate', () => {
     const Actor = defineActor({
       name: 'd',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug1, plug2],
       handlers: { POKE() {} },
@@ -942,6 +975,7 @@ describe('decorate', () => {
     const Child = defineActor({
       name: 'child',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: '' }),
       // No plugins — inherits from parent
       handlers: {
@@ -952,6 +986,7 @@ describe('decorate', () => {
     const Parent = defineActor({
       name: 'parent',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [plug],
       onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
@@ -986,6 +1021,7 @@ describe('decorate', () => {
     const Child = defineActor({
       name: 'child',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: '' }),
       plugins: [childPlug],
       handlers: {
@@ -996,6 +1032,7 @@ describe('decorate', () => {
     const Parent = defineActor({
       name: 'parent',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [parentPlug],
       onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
@@ -1028,6 +1065,7 @@ describe('decorate', () => {
     const Actor = defineActor({
       name: 'd',
       inMessages: Pin, outMessages: Pout,
+      expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [plug],
       hooks: {

@@ -5,7 +5,7 @@
 
 import { describe, it, expect, vi } from 'vitest';
 import { defineActor, defineMessages } from './define-actor.js';
-import { stopPropagation } from './hooks.js';
+import { stopPropagation, type HookResult, type OnMessageHook } from './hooks.js';
 import type { Message, SenderInfo } from './types.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -29,6 +29,7 @@ describe('hooks.onMessage', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       hooks: {
         onMessage(this: any, msg) {
@@ -60,6 +61,7 @@ describe('hooks.onMessage', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       hooks: {
         onMessage(this: any, _msg, sender) {
@@ -92,6 +94,7 @@ describe('stopPropagation', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       hooks: {
         onMessage() {
@@ -125,6 +128,7 @@ describe('hooks.onEmit', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       hooks: {
         onEmit(this: any, msg) {
@@ -154,21 +158,25 @@ describe('hooks.onEmit', () => {
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       onStart(this: any) {
         // Emit PONG as soon as the child starts — the parent should receive it.
         this.emit({ type: 'PONG', value: 1 });
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: BroadIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ pongs: 0 }),
       onStart(this: any) { this.fork(Child, undefined, {}); },
       handlers: {
+        POKE() {},
+
         PONG(this: any) { this.state.pongs++; },
       },
     });
@@ -194,15 +202,17 @@ describe('hooks.onChildExit', () => {
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       onStart(this: any) { this.exit(); },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: BroadIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ exits: [] as string[] }),
       hooks: {
         onChildExit(this: any, name) {
@@ -232,15 +242,17 @@ describe('hooks.onChildExit', () => {
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       onStart(this: any) { this.exit(); },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: BroadIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ exits: 0 }),
       hooks: {
         onChildExit(this: any) { this.state.exits++; },
@@ -270,12 +282,13 @@ describe('hooks.onStart / onEnd', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ order: [] as string[] }),
       hooks: {
         onStart(this: any) { this.state.order.push('hook'); },
       },
       onStart(this: any) { this.state.order.push('method'); },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Actor.spawn({});
@@ -294,12 +307,13 @@ describe('hooks.onStart / onEnd', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       hooks: {
         onEnd() { order.push('hook'); },
       },
       onEnd() { order.push('method'); },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Actor.spawn({});
@@ -321,12 +335,13 @@ describe('hooks.onStopRequested', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       hooks: {
         onStopRequested() { order.push('hook'); },
       },
       onStopRequested() { order.push('method'); this.agreeToStop(); },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Actor.spawn({});
@@ -348,6 +363,7 @@ describe('hooks.onError', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       hooks: {
         onError(this: any, err) {
@@ -378,6 +394,7 @@ describe('hooks — adversarial', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       hooks: {
         onError() { throw new Error('error in error handler'); },
@@ -401,6 +418,7 @@ describe('hooks — adversarial', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       hooks: {
         onMessage() { throw new Error('hook error'); },
@@ -428,12 +446,13 @@ describe('hooks — adversarial', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
       hooks: {
-        async onMessage() {
+        onMessage: (async () => {
           await new Promise(r => setTimeout(r, 10));
           return stopPropagation();
-        },
+        }) as OnMessageHook<PokeMsg>,
       },
       handlers: {
         POKE() { handlerRan = true; },

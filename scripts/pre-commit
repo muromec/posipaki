@@ -1,0 +1,2 @@
+#!/bin/sh
+exec bash scripts/validate.sh

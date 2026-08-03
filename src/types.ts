@@ -53,7 +53,7 @@ export type ProcessFn<
 > = (
   ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
-) => Generator<State | null, void, WithSender<InMessage>>;
+) => Generator<State | null, void, WithSender<InMessage | StopMessage>>;
 
 // ---- ProcessFn (async) ------------------------------------------------------
 
@@ -65,7 +65,7 @@ export type AsyncProcessFn<
 > = (
   ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
-) => AsyncGenerator<State | null, void, WithSender<InMessage>>;
+) => AsyncGenerator<State | null, void, WithSender<InMessage | StopMessage>>;
 
 // ---- Sender ----------------------------------------------------------------
 
@@ -105,7 +105,7 @@ export type ForkSync<
 export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   pname: string;
   id: symbol;
-  sendSelf: (msg: IM) => void;
+  sendSelf: (msg: IM | StopMessage) => void;
   toParent: ProcessMessageCb<OM>;
   /** Register an onMessage hook. Return stopPropagation() to short-circuit. */
   onMessage?: (fn: (msg: IM, sender: SenderInfo) => void | Promise<void> | symbol) => void;

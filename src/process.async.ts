@@ -5,6 +5,7 @@ import type {
   WithSender,
   SenderInfo,
   ExitMessage,
+  StopMessage,
   ProcessCtx,
   AsyncProcessFn,
   ProcessFn,
@@ -14,9 +15,9 @@ import { asyncify } from "./adapters.js";
 
 // ---- types ------------------------------------------------------------------
 
-/** An async iterator over process state. Receives `WithSender<InMessage>`. */
+/** An async iterator over process state. Receives `WithSender<InMessage | StopMessage>`. */
 type AsyncProcessGenerator<ProcessState, InMessage extends Message> =
-  AsyncGenerator<ProcessState | null, void, WithSender<InMessage>>;
+  AsyncGenerator<ProcessState | null, void, WithSender<InMessage | StopMessage>>;
 
 type NotifyFn = () => void;
 
@@ -73,7 +74,7 @@ export class AsyncProcess<
 
   private current: AsyncProcessGenerator<State, InMessage> | null = null;
   /** Every buffered message carries sender provenance. */
-  private buffer: Array<WithSender<InMessage>> = [];
+  private buffer: Array<WithSender<InMessage | StopMessage>> = [];
   private nextTick: DeferredCall | null = null;
   private children: Array<AsyncProcess<unknown, unknown, Message, Message>> =
     [];
@@ -138,7 +139,7 @@ export class AsyncProcess<
       // Advance past the initial yield so the _watchExit generator
       // runs its finally block (EXIT/STOP) and the inner generator
       // enters its dispatch loop.
-      const advance: WithSender<InMessage> = [
+      const advance: WithSender<InMessage | StopMessage> = [
         { type: "__ADVANCE__" } as InMessage,
         { fromName: "__internal__", fromId: Symbol("__internal__") } as SenderInfo,
       ];
@@ -206,7 +207,7 @@ export class AsyncProcess<
 
     this._tickInProgress = true;
     try {
-      let msgAndSender: WithSender<InMessage> | undefined;
+      let msgAndSender: WithSender<InMessage | StopMessage> | undefined;
       let ret: IteratorResult<State | null, void> | null = null;
       while ((msgAndSender = this.buffer.shift()) !== undefined) {
         ret = await this._safeNext(msgAndSender);
@@ -224,7 +225,7 @@ export class AsyncProcess<
 
   /** Call `.next()` and redirect unhandled rejections. */
   private async _safeNext(
-    msgAndSender: WithSender<InMessage>,
+    msgAndSender: WithSender<InMessage | StopMessage>,
   ): Promise<IteratorResult<State | null, void> | null> {
     try {
       return await this.current!.next(msgAndSender);
@@ -256,14 +257,14 @@ export class AsyncProcess<
   }
 
   /** Stamp and enqueue a message from a named sender (external API). */
-  send(msg: InMessage, from: SenderInfo): void;
+  send(msg: InMessage | StopMessage, from: SenderInfo): void;
   /** Enqueue a pre-stamped message (internal: fromChild, toAllChildren). */
-  send(msgAndSender: WithSender<InMessage>): void;
-  send(msgOrTuple: InMessage | WithSender<InMessage>, from?: SenderInfo): void {
+  send(msgAndSender: WithSender<InMessage | StopMessage>): void;
+  send(msgOrTuple: InMessage | StopMessage | WithSender<InMessage | StopMessage>, from?: SenderInfo): void {
     if (from !== undefined) {
-      this.buffer.push([msgOrTuple as InMessage, from]);
+      this.buffer.push([msgOrTuple as InMessage | StopMessage, from]);
     } else {
-      this.buffer.push(msgOrTuple as WithSender<InMessage>);
+      this.buffer.push(msgOrTuple as WithSender<InMessage | StopMessage>);
     }
     this._scheduleTick();
   }
@@ -347,7 +348,7 @@ export class AsyncProcess<
 
   /** Relays a child's message to this process. The message already carries
    *  sender provenance (stamped by the child's `ctx.toParent` wrapper). */
-  private fromChild(msgAndSender: WithSender<InMessage>): void {
+  private fromChild(msgAndSender: WithSender<InMessage | StopMessage>): void {
     const [msg, sender] = msgAndSender;
     if (msg.type === "EXIT") {
       // sender.fromId === child's id (set by child's ctx.toParent wrapper)

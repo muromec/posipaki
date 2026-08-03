@@ -1,0 +1,18 @@
+{
+  "rules": {
+    "no-underscore-dangle": "off",
+    "consistent-function-scoping": "off",
+    "no-unused-vars": "error",
+    "no-unused-expressions": "error",
+    "no-shadow": "error"
+  },
+  "overrides": [
+    {
+      "files": ["**/*.test.ts"],
+      "rules": {
+        "no-shadow": "off",
+        "no-unused-vars": "off"
+      }
+    }
+  ]
+}

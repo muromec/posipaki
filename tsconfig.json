@@ -12,11 +12,13 @@
     "lib": [
       "ES2018",
       "DOM"
+    ],
+    "types": [
+      "node"
     ]
   },
   "include": [
     "src"
   ],
-  "exclude": [
-  ]
+  "exclude": []
 }

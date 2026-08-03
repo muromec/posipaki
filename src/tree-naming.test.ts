@@ -22,8 +22,9 @@ describe('defineActor name propagation', () => {
       name: 'my-actor',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     expect(Actor.name).toBe('my-actor');
@@ -34,8 +35,9 @@ describe('defineActor name propagation', () => {
     const Actor = defineActor({
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     expect(Actor.name).toBeUndefined();
@@ -47,8 +49,9 @@ describe('defineActor name propagation', () => {
       name: 'root-actor',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Actor.spawn({});
@@ -60,8 +63,9 @@ describe('defineActor name propagation', () => {
     const Actor = defineActor({
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Actor.spawn({});
@@ -78,20 +82,22 @@ describe('tree prefixing', () => {
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ childPname: '' }),
       onStart(this: any) {
         const child = this.fork(Child, 'my-child', {});
         this.state.childPname = child.pname;
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Parent.spawn({});
@@ -106,21 +112,23 @@ describe('tree prefixing', () => {
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ childPname: '' }),
       onStart(this: any) {
         // No name — should pick up 'child' from the definition
         const child = this.fork(Child, undefined, {});
         this.state.childPname = child.pname;
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Parent.spawn({});
@@ -150,31 +158,34 @@ describe('tree prefixing', () => {
       name: 'grandchild',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Child = defineActor({
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ gc: null as any }),
       onStart(this: any) {
         // self.fork with name from definition
         this.state.gc = this.fork(Grandchild, undefined, {});
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       onStart(this: any) {
         this.state.c = this.fork(Child, undefined, {});
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Parent.spawn({});
@@ -201,20 +212,22 @@ describe('tree prefixing', () => {
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ childPname: '' }),
       onStart(this: any) {
         const child = this.fork(Child, 'override', {});
         this.state.childPname = child.pname;
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Parent.spawn({});
@@ -233,14 +246,16 @@ describe('tree naming — adversarial', () => {
       name: 'worker',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ w1: '', w2: '' }),
       onStart(this: any) {
         const c1 = this.fork(Worker, 'w1', {});
@@ -248,7 +263,7 @@ describe('tree naming — adversarial', () => {
         this.state.w1 = c1.pname;
         this.state.w2 = c2.pname;
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Parent.spawn({});
@@ -266,8 +281,9 @@ describe('tree naming — adversarial', () => {
       name: 'leaf',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
     defs.push(current);
 
@@ -277,11 +293,12 @@ describe('tree naming — adversarial', () => {
         name: `level-${i}`,
         inMessages: PokeIn,
         outMessages: PokeOut,
-        initialState: () => ({ c: null as any }),
+        expose: (s: any) => s,
+      initialState: () => ({ c: null as any }),
         onStart(this: any) {
           this.state.c = this.fork(child, undefined, {});
         },
-        handlers: {},
+        handlers: { POKE() {} },
       });
       defs.push(current);
     }
@@ -290,11 +307,12 @@ describe('tree naming — adversarial', () => {
       name: 'root',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       onStart(this: any) {
         this.state.c = this.fork(current, undefined, {});
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Root.spawn({});
@@ -312,14 +330,16 @@ describe('tree naming — adversarial', () => {
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ count: 0 }),
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
       name: 'parent',
       inMessages: PokeIn,
       outMessages: PokeOut,
+      expose: (s: any) => s,
       initialState: () => ({ exitCount: 0 }),
       onStart(this: any) {
         this.fork(Child, undefined, {});
@@ -328,7 +348,7 @@ describe('tree naming — adversarial', () => {
         this.state.exitCount++;
         expect(name).toBe('parent:child');
       },
-      handlers: {},
+      handlers: { POKE() {} },
     });
 
     const proc = Parent.spawn({});

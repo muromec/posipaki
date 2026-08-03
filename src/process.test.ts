@@ -78,7 +78,7 @@ describe("Process", () => {
 
   it("emits to parent and sends EXIT", async () => {
     const bus = vi.fn();
-    const proc = spawn<Nil, SimpleStore, Message, ExitMessage | PongM>(
+    const proc = spawn(
       p3,
       "p3",
       bus,

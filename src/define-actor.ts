@@ -109,8 +109,8 @@ export function defineActor<
       Methods,
       Handlers
     > = {
+      ctx: ctx as ProcessCtx<Args, InternalState, InMsg, OutMsg>,
       ...((config.methods || {}) as Methods),
-      log: undefined as any,
       state: rawState,
       name: ctx.pname,
       id: ctx.id,
@@ -139,7 +139,7 @@ export function defineActor<
       fork(childFn, name, childArgs) {
         // Unwrap ActorDefinition, derive name.
         const resolved = typeof childFn === "function" ? childFn : childFn.fn;
-        const childDef: ActorDefinition<unknown, unknown, Message, Message, HandlerOptions<Message>> | null =
+        const childDef =
           typeof childFn === "object" ? childFn : null;
         const childName = name
           ?? childDef?.name
@@ -177,7 +177,7 @@ export function defineActor<
         >;
         return child;
       },
-      ctx,
+      
     };
 
 
@@ -208,7 +208,7 @@ export function defineActor<
     for (const p of resolvedPlugs) {
       let _err: unknown = null;
       try {
-        await p.install(ctx);
+        await p.install(ctx as ProcessCtx<unknown, unknown, Message, Message>);
       } catch (e) {
         _err = e;
       }
