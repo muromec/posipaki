@@ -2,8 +2,8 @@
   "type": "module",
   "name": "posipaki",
   "version": "0.13.0",
-  "main": "./src/index.ts",
-  "types": "./src/index.ts",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "files": [
     "dist"
   ],
@@ -22,12 +22,12 @@
   },
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
     },
     "./xfetch": {
-      "types": "./src/xfetch.ts",
-      "default": "./src/xfetch.ts"
+      "types": "./dist/xfetch.d.ts",
+      "default": "./dist/xfetch.js"
     },
     "./plugins/debug-logger": {
       "types": "./dist/plugins/debug-logger.d.ts",
@@ -42,8 +42,8 @@
       "default": "./dist/plugins/rbac.js"
     },
     "./hooks": {
-      "types": "./src/hooks.ts",
-      "default": "./src/hooks.ts"
+      "types": "./dist/hooks.d.ts",
+      "default": "./dist/hooks.js"
     }
   }
 }

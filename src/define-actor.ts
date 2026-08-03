@@ -110,6 +110,7 @@ export function defineActor<
       Handlers
     > = {
       ...((config.methods || {}) as Methods),
+      log: undefined as any,
       state: rawState,
       name: ctx.pname,
       id: ctx.id,
