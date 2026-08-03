@@ -12,6 +12,13 @@ import type {
   ExitMessage,
   StopMessage,
 } from "./types.js";
+import type {
+  ActorPlugin,
+  PluginTransform,
+  OnStartHook,
+  HookResult,
+  ActorDecorated,
+} from "./hooks.js";
 import type { AsyncProcess } from "./process.async.js";
 
 // Internal marker do not use
