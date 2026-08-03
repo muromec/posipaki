@@ -513,6 +513,8 @@ describe("xfetch", () => {
       ),
     );
     await vi.runAllTimersAsync();
+    expect(fetchMock).toHaveBeenCalled();
+    await vi.runAllTimersAsync();
 
     expect(proc.state).toMatchObject({ code: "ok", data: { done: true } });
     expect(bus).toHaveBeenCalledWith([
