@@ -566,3 +566,25 @@ synthesized on both sides from the init handshake.
 - [Parent Identity on ProcessCtx](parent-identity-on-ctx.md) — `parentId`
   and `parentName` must be available on `ctx` for the child-side
   reconstruction to work.
+
+### Process handoff
+
+If the parent hands the child off to a different internal process C, the
+host changes `fromName` on outgoing messages from `parentName` to C's name.
+The child detects the mismatch:
+
+```ts
+if (sender.fromName === ctx.parentName) {
+  sender.fromId = ctx.parentId;          // stable — it's the original parent
+} else {
+  sender.fromId = Symbol();              // fresh each time — "someone else"
+}
+```
+
+This is a deliberate tradeoff: the child can detect that the sender changed
+(`fromId` no longer matches `parentId`), but the new sender has no stable
+identity — each message from C gets a fresh anonymous symbol.
+
+For the common case (no handoff), `fromName` always matches, `fromId` is
+always stable, and the child's `sender.fromId === ctx.parentId` comparison
+works exactly as in-process.
