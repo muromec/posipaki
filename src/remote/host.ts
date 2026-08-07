@@ -7,16 +7,9 @@ import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { unlink } from "node:fs/promises";
 import { FifoTransport } from "./fifo.js";
-import {
-  encodeInit,
-  encodeMsg,
-  decode,
-  isProto,
-  isState,
-  isMsg,
-  isExit,
-} from "./protocol.js";
+import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
 import type { Message } from "../types.js";
 
 export interface SpawnOptions {
@@ -27,9 +20,9 @@ export interface SpawnOptions {
 export interface RemoteProxy {
   state: unknown;
   ready(): Promise<void>;
-  send(msg: Message, sender?: { fromName: string; fromId?: symbol }): void;
+  send(msg: Message): void;
   wait(): Promise<{ code: number | null; state: unknown }>;
-  onMessage(handler: (msg: Message, sender: { fromName: string; fromId: symbol }) => void): void;
+  onMessage(handler: (msg: Message) => void): void;
 }
 
 export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
@@ -50,12 +43,12 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
     transport.onMessage((line) => resolve(line));
   });
   const protoMsg = decode(protoLine);
-  if (!isProto(protoMsg) || protoMsg.$proto !== "ndjson.v1") {
+  if (!isProto(protoMsg) || protoMsg.$proto !== PROTO_VERSION) {
     throw new Error(`unsupported protocol: ${protoLine.slice(0, 50)}`);
   }
 
   // Send $init
-  await transport.send(encodeInit(opts.args));
+  await transport.send(encode("$init", opts.args));
   
   // Wait for first $state → ready
   let currentState: unknown = null;
@@ -71,7 +64,7 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
   await readyPromise;
   
   // Message handlers
-  const msgHandlers: Array<(msg: Message, sender: { fromName: string; fromId: symbol }) => void> = [];
+  let msgHandler: ((msg: Message) => void) | null = null;
   let exitResolver: ((value: { code: number | null; state: unknown }) => void) | null = null;
   const exitPromise = new Promise<{ code: number | null; state: unknown }>((resolve) => {
     exitResolver = resolve;
@@ -83,27 +76,23 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
     if (isState(msg)) {
       currentState = msg.$state;
     } else if (isMsg(msg)) {
-      const { fromName, fromIdName: _fromIdName, body } = msg.$msg;
-      const sender = { fromName, fromId: Symbol() };
-      const fullMsg = body as Message;
-      for (const h of msgHandlers) {
-        h(fullMsg, sender);
-      }
+      msgHandler?.(msg.$msg.body as Message);
     } else if (isExit(msg)) {
       if (exitResolver) {
         exitResolver({ code: msg.$exit.code, state: msg.$exit.state });
         exitResolver = null;
       }
-      hostClose();
+      cleanup();
     }
   });
 
   // Watch child process
-  let hostClosed = false;
-  const hostClose = () => {
-    if (hostClosed) return;
-    hostClosed = true;
+  let cleaned = false;
+  const cleanup = () => {
+    if (cleaned) return;
+    cleaned = true;
     transport.close();
+    unlink(fifoPath).catch(() => {});
   };
 
   childProc.on("exit", (code) => {
@@ -111,7 +100,7 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
       exitResolver({ code, state: currentState });
       exitResolver = null;
     }
-    hostClose();
+    cleanup();
   });
 
   return {
@@ -119,9 +108,8 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
 
     async ready() {},
 
-    send(msg: Message, sender = { fromName: "host", fromId: Symbol() }) {
-      const fromIdName = sender.fromId ? (Symbol.keyFor(sender.fromId) ?? undefined) : undefined;
-      transport.send(encodeMsg(msg.type, sender.fromName, fromIdName, msg));
+    send(msg: Message) {
+      transport.send(encode("$msg", { type: msg.type, fromName: "host", body: msg }));
     },
 
     async wait() {
@@ -129,7 +117,7 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
     },
 
     onMessage(handler) {
-      msgHandlers.push(handler);
+      msgHandler = handler;
     },
   };
 }

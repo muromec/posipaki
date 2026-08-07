@@ -4,6 +4,7 @@
 // avoid the async-open behavior of createReadStream which causes deadlocks.
 
 import { open, type FileHandle } from "node:fs/promises";
+import { createReadStream } from "node:fs";
 import * as readline from "node:readline";
 
 export class FifoTransport {
@@ -11,7 +12,6 @@ export class FifoTransport {
   private writeFd: FileHandle;
   private rl: readline.Interface;
   private pvtOnMessage: ((line: string) => void) | null = null;
-  private pvtOnClose: (() => void) | null = null;
   private closed = false;
 
   private constructor(
@@ -29,7 +29,6 @@ export class FifoTransport {
 
     this.rl.on("close", () => {
       this.closed = true;
-      if (this.pvtOnClose) this.pvtOnClose();
     });
   }
 
@@ -52,13 +51,12 @@ export class FifoTransport {
 
     // Create readline interface from the raw fd
     // We import createReadStream lazily to avoid issues
-    const { createReadStream } = await import("node:fs");
     const rs = createReadStream("", {
       fd: readFd.fd,
       encoding: "utf-8",
       autoClose: false,
     });
-    const rl = readline.createInterface({ input: rs, crlfDelay: Infinity });
+    const rl = readline.createInterface({ input: rs });
 
     // Don't close readFd — the stream uses the fd directly
     return new FifoTransport(readFd, writeFd, rl);
@@ -66,10 +64,6 @@ export class FifoTransport {
 
   onMessage(handler: (line: string) => void): void {
     this.pvtOnMessage = handler;
-  }
-
-  onClose(handler: () => void): void {
-    this.pvtOnClose = handler;
   }
 
   async send(line: string): Promise<void> {
