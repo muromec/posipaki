@@ -1,3 +1,4 @@
+/* eslint-disable unicorn/consistent-function-scoping */
 import { describe, it, expect, vi } from "vitest";
 import { runDispatch } from "./index";
 import { spawnAsync, asyncify, runDispatchAsync } from "./index";

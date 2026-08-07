@@ -82,7 +82,7 @@ const counterDef_vB = defineActor({
 
   handlers: {
     PING(msg) {
-      msg.count;
+      void msg.count;
     },
     POKE(msg) {
       this.increment();

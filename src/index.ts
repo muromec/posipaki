@@ -6,10 +6,10 @@
  * @module
  */
 
-import { Process, spawn } from "./process";
-import { runDispatch } from "./util";
-import { AsyncProcess, spawnAsync, runDispatchAsync } from "./process.async";
-import { asyncify } from "./adapters";
+import { Process, spawn } from "./process.js";
+import { runDispatch } from "./util.js";
+import { AsyncProcess, spawnAsync, runDispatchAsync } from "./process.async.js";
+import { asyncify } from "./adapters.js";
 
 export { Process, spawn, runDispatch };
 export { AsyncProcess, spawnAsync, runDispatchAsync, asyncify };
@@ -27,7 +27,7 @@ export type {
   SupervisorState,
   SenderOrigin,
   SenderInfo,
-} from "./types";
+} from "./types.js";
 
 export { defineActor, defineMessages } from "./define-actor.js";
 export type {

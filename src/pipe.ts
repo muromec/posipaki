@@ -2,7 +2,7 @@ import { runDispatch } from "./util.js";
 import type { ExitMessage } from "./util.js";
 import type { ProcessFn, ProcessCtx } from "./process.js";
 import type { AsyncProcess } from "./process.async.js";
-import type { Message, WithSender, SenderInfo } from "./types.js";
+import type { Message, WithSender } from "./types.js";
 
 /**
  * State yielded by the pipe process. `params` starts as a copy of the

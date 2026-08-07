@@ -4,7 +4,7 @@ import { pipe } from "../src/pipe";
 const timer = setTimeout(() => null, 1000 * 30);
 
 const worker = defineActor({
-  initialState(args: { number: number }): {
+  initialState(_args: { number: number }): {
     done: boolean;
     result: { number: number } | null;
   } {
@@ -31,12 +31,12 @@ const main = defineActor({
   onStart() {
     const worker2 = worker.fn;
     const worker3 = worker.fn;
-    const child = this.ctx.fork(pipe([worker.fn, worker2, worker3]), "w")({
+    const _child = this.ctx.fork(pipe([worker.fn, worker2, worker3]), "w")({
       number: 1,
     });
   },
   handlers: {},
-  onChildExit(name) {
+  onChildExit(_name) {
     this.state.done = true;
     // child state available via this.$child[name].state
   },

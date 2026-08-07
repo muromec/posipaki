@@ -9,7 +9,6 @@ import type {
   ProcessCtx,
   AsyncProcessFn,
   ProcessFn,
-  Fork,
 } from "./types.js";
 import { asyncify } from "./adapters.js";
 
@@ -80,11 +79,11 @@ export class AsyncProcess<
     [];
   private subscribers: Array<NotifyFn> = [];
   private exitWaiter: Waiter;
-  private _isPaused: boolean = false;
-  private _tickInProgress: boolean = false;
-  private _exitReject: ((e: unknown) => void) | null = null;
-  private _ready!: Waiter;
-  private _resolveReady!: () => void;
+  private pvtIsPaused: boolean = false;
+  private pvtTickInProgress: boolean = false;
+  private pvtExitReject: ((e: unknown) => void) | null = null;
+  private pvtReady!: Waiter;
+  private pvtResolveReady!: () => void;
 
   constructor(
     fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
@@ -97,13 +96,13 @@ export class AsyncProcess<
     this.id = Symbol(pname);
     this.state = null;
     this.exitWaiter = makeWaiter();
-    this._ready = makeWaiter();
-    this._resolveReady = this._ready.resolve;
+    this.pvtReady = makeWaiter();
+    this.pvtResolveReady = this.pvtReady.resolve;
   }
 
   /** Promise that resolves once the initial state is available. */
   ready(): Promise<void> {
-    return this._ready.promise;
+    return this.pvtReady.promise;
   }
 
   // ---- lifecycle ------------------------------------------------------------
@@ -128,28 +127,28 @@ export class AsyncProcess<
       },
     };
 
-    this.current = this._watchExit(ctx, arg0);
+    this.current = this.pvtWatchExit(ctx, arg0);
     void this.current.next().then((ret: IteratorResult<State | null, void>) => {
       this.state = ret.value ?? null;
-      this._resolveReady();
+      this.pvtResolveReady();
       if (ret.done) {
         this.exitWaiter.resolve();
         return;
       }
-      // Advance past the initial yield so the _watchExit generator
+      // Advance past the initial yield so the pvtWatchExit generator
       // runs its finally block (EXIT/STOP) and the inner generator
       // enters its dispatch loop.
       const advance: WithSender<InMessage | StopMessage> = [
         { type: "__ADVANCE__" } as InMessage,
         { fromName: "__internal__", fromId: Symbol("__internal__") } as SenderInfo,
       ];
-      this._eatResult(this.current!.next(advance));
+      this.pvtEatResult(this.current!.next(advance));
     });
     return this;
   }
 
   /** Wrap the user's generator so EXIT/STOP logic fires on completion. */
-  private async *_watchExit(
+  private async *pvtWatchExit(
     ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
     arg0: Args,
   ): AsyncProcessGenerator<State, InMessage> {
@@ -202,41 +201,41 @@ export class AsyncProcess<
 
   // ---- message processing ---------------------------------------------------
 
-  protected async _tick(): Promise<void> {
-    if (!this.current || this._tickInProgress) return;
+  protected async pvtTick(): Promise<void> {
+    if (!this.current || this.pvtTickInProgress) return;
 
-    this._tickInProgress = true;
+    this.pvtTickInProgress = true;
     try {
       let msgAndSender: WithSender<InMessage | StopMessage> | undefined;
       let ret: IteratorResult<State | null, void> | null = null;
       while ((msgAndSender = this.buffer.shift()) !== undefined) {
-        ret = await this._safeNext(msgAndSender);
+        ret = await this.pvtSafeNext(msgAndSender);
         if (!ret || ret.done) break;
       }
       this.notify();
-      this._eatResult(ret);
+      this.pvtEatResult(ret);
     } catch (e) {
-      this._exitReject?.(e);
-      this._exitReject = null;
+      this.pvtExitReject?.(e);
+      this.pvtExitReject = null;
     } finally {
-      this._tickInProgress = false;
+      this.pvtTickInProgress = false;
     }
   }
 
   /** Call `.next()` and redirect unhandled rejections. */
-  private async _safeNext(
+  private async pvtSafeNext(
     msgAndSender: WithSender<InMessage | StopMessage>,
   ): Promise<IteratorResult<State | null, void> | null> {
     try {
       return await this.current!.next(msgAndSender);
     } catch (e) {
-      this._exitReject?.(e);
-      this._exitReject = null;
+      this.pvtExitReject?.(e);
+      this.pvtExitReject = null;
       return { done: true, value: undefined };
     }
   }
 
-  private _eatResult(
+  private pvtEatResult(
     ret:
       | IteratorResult<State | null, void>
       | Promise<IteratorResult<State | null, void>>
@@ -266,7 +265,7 @@ export class AsyncProcess<
     } else {
       this.buffer.push(msgOrTuple as WithSender<InMessage | StopMessage>);
     }
-    this._scheduleTick();
+    this.pvtScheduleTick();
   }
 
   /**
@@ -279,13 +278,13 @@ export class AsyncProcess<
     this.nextTick = null;
   }
 
-  private _scheduleTick(): void {
-    if (this._isPaused) return;
+  private pvtScheduleTick(): void {
+    if (this.pvtIsPaused) return;
 
     this.nextTick?.cancel();
     this.nextTick = defer(() => {
       this.nextTick = null;
-      void this._tick();
+      void this.pvtTick();
     });
   }
 
@@ -313,12 +312,12 @@ export class AsyncProcess<
   pause(): void {
     this.nextTick?.cancel();
     this.nextTick = null;
-    this._isPaused = true;
+    this.pvtIsPaused = true;
   }
 
   resume(): void {
-    this._isPaused = false;
-    this._scheduleTick();
+    this.pvtIsPaused = false;
+    this.pvtScheduleTick();
   }
 
   // ---- waiting --------------------------------------------------------------
@@ -329,15 +328,15 @@ export class AsyncProcess<
    */
   wait(): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      this._exitReject = reject;
+      this.pvtExitReject = reject;
 
       this.exitWaiter.promise.then(
         () => {
-          this._exitReject = null;
+          this.pvtExitReject = null;
           resolve();
         },
         (e) => {
-          this._exitReject = null;
+          this.pvtExitReject = null;
           reject(e);
         },
       );

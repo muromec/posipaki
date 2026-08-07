@@ -1,3 +1,4 @@
+/* eslint-disable unicorn/consistent-function-scoping */
 import { describe, it, expect, vi } from "vitest";
 import { spawn } from "./index";
 import type { ProcessCtx, Message, WithSender } from "./types";

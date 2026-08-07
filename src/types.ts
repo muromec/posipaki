@@ -3,7 +3,7 @@
  *
  * @module
  */
-import type { AsyncProcess } from "./process.async";
+import type { AsyncProcess } from "./process.async.js";
 
 // ---- Message -----------------------------------------------------------------
 

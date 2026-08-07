@@ -1,3 +1,4 @@
+/* eslint-disable unicorn/consistent-function-scoping */
 // ── Actor Tree Naming Tests ─────────────────────────────────────────────
 //
 // Tests for automatic tree naming: defineActor({ name: 'x' }), optional

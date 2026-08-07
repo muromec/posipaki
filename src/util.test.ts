@@ -1,3 +1,4 @@
+/* eslint-disable unicorn/consistent-function-scoping */
 import { describe, it, expect } from "vitest";
 import { watchExit } from "./util";
 import type { Message, ExitMessage, ProcessCtx } from "./types";

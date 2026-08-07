@@ -40,7 +40,7 @@ class Process<
     return this;
   }
   tick(): Promise<void> {
-    return super._tick();
+    return super.pvtTick();
   }
 }
 

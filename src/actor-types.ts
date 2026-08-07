@@ -10,7 +10,6 @@ import type {
   Message,
   ProcessCtx,
   ExitMessage,
-  StopMessage,
 } from "./types.js";
 import type {
   ActorPlugin,
@@ -44,6 +43,7 @@ export interface ActorDefinition<
   ExposedState,
   InMsg extends Message,
   OutMsg extends Message,
+  // eslint-disable-next-line no-unused-vars
   Handlers extends HandlerOptions<InMsg>,
 > {
   fn: AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>;
@@ -51,7 +51,7 @@ export interface ActorDefinition<
   /** Preferred process name (from config.name). */
   name?: string;
   /** Raw plugin config (array or transform). Resolved at fork time. @internal */
-  _pluginsRaw?: ActorPlugin[] | PluginTransform;
+  pvtPluginsRaw?: ActorPlugin[] | PluginTransform;
   /** Spawn this actor as a standalone process. */
   spawn(args: Args): AsyncProcess<Args, ExposedState, InMsg, OutMsg>;
   /** Spawn this actor as a child of the calling process. */
@@ -69,6 +69,7 @@ export interface ActorHooksConfig<
   InMsg extends Message,
   OutMsg extends Message,
   Methods extends MethodOptions,
+  // eslint-disable-next-line no-unused-vars
   Handlers extends HandlerOptions<InMsg>,
 > {
   onStart?: OnStartHook<ExposedState>;
@@ -105,6 +106,7 @@ export interface ActorConfig<
   InMsg extends Message,
   OutMsg extends Message,
   Methods extends MethodOptions,
+  // eslint-disable-next-line no-unused-vars
   Handlers extends HandlerOptions<InMsg>,
 > {
   initialState:
@@ -176,6 +178,7 @@ export type ActorContext<
   InMsg extends Message,
   OutMsg extends Message,
   Methods extends MethodOptions,
+  // eslint-disable-next-line no-unused-vars
   Handlers extends HandlerOptions<InMsg>,
 > = Methods & ActorDecorated & {
   state: InternalState;

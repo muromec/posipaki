@@ -13,7 +13,7 @@ function* f1({ pname, sendSelf }, { number }: { number: number }) {
   const t = setTimeout(() => sendSelf({ type: "POKE" }), 100 * number);
   yield* runDispatch(
     pname,
-    ([msg, _sender]) => {
+    ([_msg, _sender]) => {
       state.done = true;
       state.result = { number: number * 2 };
     },

@@ -16,7 +16,7 @@ async function* slow({ pname, sendSelf }) {
 
   yield* runDispatch(
     pname,
-    ([msg, _sender]) => {
+    ([_msg, _sender]) => {
       state.done = true;
     },
     () => state.done,
@@ -29,7 +29,7 @@ async function* slow({ pname, sendSelf }) {
 async function* main({ pname, fork }) {
   const state = { done: false };
   yield state;
-  const child = fork(fast, "f1")(null);
+  const _child = fork(fast, "f1")(null);
   const timerProc = fork(slow, "timer2")(null);
 
   yield* runDispatch(

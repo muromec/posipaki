@@ -27,7 +27,7 @@ const main = defineActor({
   initialState: { done: false },
   onStart() {
     this.ctx.fork(fast.fn, "f1")(null);
-    const timerProc = this.ctx.fork(slow.fn, "timer2")(null);
+    const _timerProc = this.ctx.fork(slow.fn, "timer2")(null);
   },
   handlers: {},
   onChildExit(name) {

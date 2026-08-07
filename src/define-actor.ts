@@ -7,7 +7,6 @@
 
 import { runDispatchAsync, spawnAsync } from "./process.async.js";
 import type {
-  SenderInfo,
   WithSender,
   AsyncProcessFn,
   Message,
@@ -24,7 +23,7 @@ import type {
   HandlerOptions,
   HandlerFn,
 } from "./actor-types.js";
-import { HookRegistry, stopPropagation, STOP_SENTINEL } from "./hooks.js";
+import { HookRegistry, STOP_SENTINEL } from "./hooks.js";
 import type { ActorPlugin, PluginTransform } from "./hooks.js";
 import type { HookResult, OnMessageHook, OnEmitHook, OnChildExitHook, OnStartHook, OnStopRequestedHook, OnEndHook, OnErrorHook } from "./hooks.js";
 
@@ -59,16 +58,18 @@ export function defineActor<
 ): ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers> {
   // ── internal helpers ──────────────────────────────────────────────
 
-  /** Extract __resolvedPlugins from an async process function
+  /** Extract pvtResolvedPlugins from an async process function
    *  (set by the parent's fork() for plugin inheritance). */
+  // eslint-disable-next-line unicorn/consistent-function-scoping
   const getResolvedPlugins = (f: unknown): ActorPlugin[] | undefined => {
-    const withPlugins = f as { __resolvedPlugins?: ActorPlugin[] };
-    return withPlugins.__resolvedPlugins;
+    const withPlugins = f as { pvtResolvedPlugins?: ActorPlugin[] };
+    return withPlugins.pvtResolvedPlugins;
   };
 
   /** Stash resolved plugins on a function for the child to read. */
+  // eslint-disable-next-line unicorn/consistent-function-scoping
   const stashPlugins = (f: unknown, plugs: ActorPlugin[]): void => {
-    (f as { __resolvedPlugins?: ActorPlugin[] }).__resolvedPlugins = plugs;
+    (f as { pvtResolvedPlugins?: ActorPlugin[] }).pvtResolvedPlugins = plugs;
   };
 
   // Internal generator receives WithSender<InMsg> so sender identity
@@ -98,7 +99,7 @@ export function defineActor<
       : (rawState as unknown as ExposedState);
 
     // ── hooks ──────────────────────────────────────────────────────────
-    const _hooks = new HookRegistry<any, any, any>();
+    const pvtHooks = new HookRegistry<any, any, any>();
 
     // Build the actor context.
     const self: ActorContext<
@@ -116,8 +117,8 @@ export function defineActor<
       id: ctx.id,
       emit(msg) {
         // Fire onEmit hooks before the actual emit.
-        for (const fn of _hooks.onEmit) {
-          try { fn(msg); } catch { /* ignore — errors bubble through onError */ }
+        for (const hookFn of pvtHooks.onEmit) {
+          try { hookFn(msg); } catch { /* ignore — errors bubble through onError */ }
         }
         ctx.toParent(msg);
       },
@@ -131,11 +132,11 @@ export function defineActor<
       },
       $child: {},
       // ── hook registration ─────────────────────────────────────
-      onMessage: (fn: OnMessageHook<any>) => { _hooks.onMessage.push(fn); },
-      onEmit: (fn: OnEmitHook<any>) => { _hooks.onEmit.push(fn); },
-      onChildExit: (fn: OnChildExitHook) => { _hooks.onChildExit.push(fn); },
-      onStopRequested: (fn: OnStopRequestedHook) => { _hooks.onStopRequested.push(fn); },
-      onError: (fn: OnErrorHook) => { _hooks.onError.push(fn); },
+      onMessage: (h: OnMessageHook<any>) => { pvtHooks.onMessage.push(h); },
+      onEmit: (h: OnEmitHook<any>) => { pvtHooks.onEmit.push(h); },
+      onChildExit: (h: OnChildExitHook) => { pvtHooks.onChildExit.push(h); },
+      onStopRequested: (h: OnStopRequestedHook) => { pvtHooks.onStopRequested.push(h); },
+      onError: (h: OnErrorHook) => { pvtHooks.onError.push(h); },
       fork(childFn, name, childArgs) {
         // Unwrap ActorDefinition, derive name.
         const resolved = typeof childFn === "function" ? childFn : childFn.fn;
@@ -152,7 +153,7 @@ export function defineActor<
           : [];
 
         // Merge with child's raw config.
-        const childRaw: ActorPlugin[] | PluginTransform | undefined = (childDef as { _pluginsRaw?: ActorPlugin[] | PluginTransform })?._pluginsRaw;
+        const childRaw: ActorPlugin[] | PluginTransform | undefined = (childDef as { pvtPluginsRaw?: ActorPlugin[] | PluginTransform })?.pvtPluginsRaw;
         let childPlugs: ActorPlugin[];
         if (!childRaw) {
           childPlugs = [...parentPlugs];
@@ -184,13 +185,13 @@ export function defineActor<
     // ── wire hook registration + decorate onto ctx (for plugin install) ─
     const decorated = new Map<string, unknown>();
     const ctxAny = ctx as Record<string, unknown>;
-    ctxAny.onMessage = (fn: OnMessageHook<InMsg>) => { _hooks.onMessage.push(fn); };
-    ctxAny.onEmit = (fn: OnEmitHook<OutMsg>) => { _hooks.onEmit.push(fn); };
-    ctxAny.onChildExit = (fn: OnChildExitHook) => { _hooks.onChildExit.push(fn); };
-    ctxAny.onStart = (fn: OnStartHook<ExposedState>) => { _hooks.onStart.push(fn); };
-    ctxAny.onStopRequested = (fn: OnStopRequestedHook) => { _hooks.onStopRequested.push(fn); };
-    ctxAny.onError = (fn: OnErrorHook) => { _hooks.onError.push(fn); };
-    ctxAny.onEnd = (fn: OnEndHook) => { _hooks.onEnd.push(fn); };
+    ctxAny.onMessage = (h: OnMessageHook<InMsg>) => { pvtHooks.onMessage.push(h); };
+    ctxAny.onEmit = (h: OnEmitHook<OutMsg>) => { pvtHooks.onEmit.push(h); };
+    ctxAny.onChildExit = (h: OnChildExitHook) => { pvtHooks.onChildExit.push(h); };
+    ctxAny.onStart = (h: OnStartHook<ExposedState>) => { pvtHooks.onStart.push(h); };
+    ctxAny.onStopRequested = (h: OnStopRequestedHook) => { pvtHooks.onStopRequested.push(h); };
+    ctxAny.onError = (h: OnErrorHook) => { pvtHooks.onError.push(h); };
+    ctxAny.onEnd = (h: OnEndHook) => { pvtHooks.onEnd.push(h); };
     ctxAny.decorate = (key: string, value: unknown) => {
       if (key in self) throw new Error(`decorate: key "${key}" conflicts with built-in`);
       if (decorated.has(key)) throw new Error(`decorate: key "${key}" already decorated`);
@@ -198,7 +199,7 @@ export function defineActor<
     };
 
     // ── install plugins ──────────────────────────────────────────────
-    // On child actors, __resolvedPlugins is set by the parent's fork().
+    // On child actors, pvtResolvedPlugins is set by the parent's fork().
     // On root actors, use config.plugins directly.
     const resolvedPlugs = getResolvedPlugins(fn)
       ?? (config.plugins
@@ -206,28 +207,28 @@ export function defineActor<
           : []);
 
     for (const p of resolvedPlugs) {
-      let _err: unknown = null;
+      let pvtErr: unknown = null;
       try {
         await p.install(ctx as ProcessCtx<unknown, unknown, Message, Message>);
       } catch (e) {
-        _err = e;
+        pvtErr = e;
       }
       // Also catch sync throws from non-async install functions.
-      if (_err) {
-        console.error(`[${ctx.pname}] plugin "${p.name}" install failed:`, _err);
+      if (pvtErr) {
+        console.error(`[${ctx.pname}] plugin "${p.name}" install failed:`, pvtErr);
       }
     }
 
     // ── register config.hooks (after plugins, so plugins fire first) ─
     if (config.hooks) {
       const h = config.hooks;
-      if (h.onStart)    _hooks.onStart.push((state) => h.onStart!.call(self, state));
-      if (h.onMessage)  _hooks.onMessage.push((msg, sender) => h.onMessage!.call(self, msg, sender));
-      if (h.onEmit)     _hooks.onEmit.push((msg) => h.onEmit!.call(self, msg));
-      if (h.onChildExit) _hooks.onChildExit.push((name) => h.onChildExit!.call(self, name));
-      if (h.onStopRequested) _hooks.onStopRequested.push(() => h.onStopRequested!.call(self));
-      if (h.onEnd)      _hooks.onEnd.push((reason) => h.onEnd!.call(self, reason));
-      if (h.onError)    _hooks.onError.push((err) => h.onError!.call(self, err));
+      if (h.onStart)    pvtHooks.onStart.push((state) => h.onStart!.call(self, state));
+      if (h.onMessage)  pvtHooks.onMessage.push((msg, sender) => h.onMessage!.call(self, msg, sender));
+      if (h.onEmit)     pvtHooks.onEmit.push((msg) => h.onEmit!.call(self, msg));
+      if (h.onChildExit) pvtHooks.onChildExit.push((name) => h.onChildExit!.call(self, name));
+      if (h.onStopRequested) pvtHooks.onStopRequested.push(() => h.onStopRequested!.call(self));
+      if (h.onEnd)      pvtHooks.onEnd.push((reason) => h.onEnd!.call(self, reason));
+      if (h.onError)    pvtHooks.onError.push((err) => h.onError!.call(self, err));
     }
 
     // ── merge decorated properties onto self ───────────────────────
@@ -244,8 +245,8 @@ export function defineActor<
     }
 
     // Fire hooks.onStart after the actor's own onStart.
-    for (const fn of _hooks.onStart) {
-      try { await fn(exposedState); } catch (e) { /* error handled by onStart body */ }
+    for (const hookFn of pvtHooks.onStart) {
+      try { await hookFn(exposedState); } catch { /* error handled by onStart body */ }
     }
 
     // Dispatch loop..
@@ -256,8 +257,8 @@ export function defineActor<
 
         // ── Built-in STOP handling ──────────────────────────────────
         if (msg.type === "STOP") {
-          for (const fn of _hooks.onStopRequested) {
-            try { await fn(); } catch {}
+          for (const hookFn of pvtHooks.onStopRequested) {
+            try { await hookFn(); } catch {}
           }
           if (config.onStopRequested) {
             await config.onStopRequested.call(self);
@@ -290,8 +291,8 @@ export function defineActor<
             // Recognized child — consume EXIT here.
             delete self.$child[childName];
           }
-          for (const fn of _hooks.onChildExit) {
-            try { await fn(childName); } catch {}
+          for (const hookFn of pvtHooks.onChildExit) {
+            try { await hookFn(childName); } catch {}
           }
           if (config.onChildExit) {
             await config.onChildExit.call(self, childName, msg as ExitMessage);
@@ -302,13 +303,13 @@ export function defineActor<
         // ── onMessage hooks ────────────────────────────────────────
         let hookStopped = false;
         if (msg.type !== "STOP" && msg.type !== "EXIT") {
-          for (const fn of _hooks.onMessage) {
+          for (const hookFn of pvtHooks.onMessage) {
             try {
-              const result: HookResult = await fn(msg, sender);
+              const result: HookResult = await hookFn(msg, sender);
               if (result === STOP_SENTINEL) { hookStopped = true; break; }
             } catch (e) {
               // Error in hook: fire onError hooks, then continue.
-              for (const errFn of _hooks.onError) {
+              for (const errFn of pvtHooks.onError) {
                 try { errFn(e); } catch {}
               }
             }
@@ -324,8 +325,8 @@ export function defineActor<
             try {
               await handler.call(self, msg as InMsg, sender);
             } catch (e) {
-              for (const fn of _hooks.onError) {
-                try { fn(e); } catch {}
+              for (const hookFn of pvtHooks.onError) {
+                try { hookFn(e); } catch {}
               }
               throw e; // rethrow to trigger exit
             }
@@ -333,8 +334,8 @@ export function defineActor<
             try {
               await config.onUnhandled.call(self, msg as InMsg, sender);
             } catch (e) {
-              for (const fn of _hooks.onError) {
-                try { fn(e); } catch {}
+              for (const hookFn of pvtHooks.onError) {
+                try { hookFn(e); } catch {}
               }
               throw e; // rethrow to trigger exit
             }
@@ -348,8 +349,8 @@ export function defineActor<
     );
 
     // Fire hooks.onEnd before the actor's onEnd.
-    for (const fn of _hooks.onEnd) {
-      try { await fn(exitReason ?? "done"); } catch {}
+    for (const hookFn of pvtHooks.onEnd) {
+      try { await hookFn(exitReason ?? "done"); } catch {}
     }
 
     // Call onEnd.
@@ -361,7 +362,7 @@ export function defineActor<
   return {
     fn: fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
     name: config.name,
-    _pluginsRaw: config.plugins,
+    pvtPluginsRaw: config.plugins,
     config: config as unknown as ActorConfig<
       Args,
       InternalState,
