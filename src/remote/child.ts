@@ -9,6 +9,18 @@
 
 import type { AsyncProcessFn, Message } from "../types.js";
 import { FifoTransport } from "./fifo.js";
+
+/** Reconstruct sender identity from wire message. */
+export function makeSender(
+  fromName: string,
+  parentName: string | null,
+  parentId: symbol | null,
+): { fromName: string; fromId: symbol } {
+  if (parentId && fromName === parentName) {
+    return { fromName, fromId: parentId };
+  }
+  return { fromName, fromId: Symbol() };
+}
 import { encode, decode, isInit, isMsg, PROTO_VERSION } from "./protocol.js";
 import { spawnAsync } from "../index.js";
 
@@ -30,15 +42,29 @@ export async function runChild(
   await transport.send(encode("$proto", PROTO_VERSION));
 
   // 2. Wait for $init
-  const initArgs = await new Promise<Record<string, unknown>>((resolve) => {
+  const initMsg = await new Promise<Record<string, unknown>>((resolve) => {
     transport.onMessage((line) => {
       const msg = decode(line);
       if (isInit(msg)) resolve(msg.$init);
     });
   });
 
+  const parentName = (initMsg.parentName as string) ?? null;
+  const parentIdName = (initMsg.parentIdName as string) ?? null;
+  const parentId = parentIdName ? Symbol.for(parentIdName) : null;
+
+  // Remove parent fields from init args before passing to actor
+  const { parentName: _pn, parentIdName: _pid, ...initArgs } = initMsg;
+
   // 3. Spawn the actor with a wrapped context that forwards emits to the wire
-  const proc = spawnAsync(fn, "remote", (msgWithSender) => {
+  // Wrap fn to inject parentId/parentName into ctx before the actor starts
+  const wrappedFn: typeof fn = async function* (ctx, args) {
+    (ctx as Record<string, unknown>).parentName = parentName;
+    (ctx as Record<string, unknown>).parentId = parentId;
+    return yield* fn(ctx, args);
+  };
+
+  const proc = spawnAsync(wrappedFn, "remote", (msgWithSender) => {
     const [msg, sender] = msgWithSender;
     transport.send(encode("$msg", { type: msg.type, fromName: sender.fromName, body: msg })).catch(() => {});
   })(initArgs);

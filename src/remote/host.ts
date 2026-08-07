@@ -15,6 +15,7 @@ import type { Message } from "../types.js";
 export interface SpawnOptions {
   command: string[];
   args: Record<string, unknown>;
+  parentName?: string;
 }
 
 export interface RemoteProxy {
@@ -48,7 +49,11 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
   }
 
   // Send $init
-  await transport.send(encode("$init", opts.args));
+  await transport.send(encode("$init", {
+    ...opts.args,
+    parentName: opts.parentName ?? "host",
+    parentIdName: opts.parentName ?? "host",
+  }));
   
   // Wait for first $state → ready
   let currentState: unknown = null;
@@ -109,7 +114,8 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
     async ready() {},
 
     send(msg: Message) {
-      transport.send(encode("$msg", { type: msg.type, fromName: "host", body: msg }));
+      const from = opts.parentName ?? "host";
+      transport.send(encode("$msg", { type: msg.type, fromName: from, body: msg }));
     },
 
     async wait() {
