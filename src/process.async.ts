@@ -111,12 +111,14 @@ export class AsyncProcess<
    * Kick off the async generator. The first `yield` sets the initial
    * state; for async generators this happens in a microtask.
    */
-  start(arg0: Args) {
+  start(arg0: Args, parentName?: string | null, parentId?: symbol | null) {
     const selfCtx: SenderInfo = { fromName: this.pname, fromId: this.id };
 
     const ctx: ProcessCtx<Args, State, InMessage, OutMessage> = {
       pname: this.pname,
       id: this.id,
+      parentName: parentName ?? null,
+      parentId: parentId ?? null,
       fork: this.fork.bind(this),
       forkSync: this.forkSync.bind(this),
       sendSelf: (msg) => {
@@ -180,7 +182,7 @@ export class AsyncProcess<
       this.children.push(
         child as unknown as AsyncProcess<unknown, unknown, Message, Message>,
       );
-      child.start(args);
+      child.start(args, this.pname, this.id);
       return child;
     };
   }

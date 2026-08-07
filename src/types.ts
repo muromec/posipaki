@@ -105,6 +105,8 @@ export type ForkSync<
 export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   pname: string;
   id: symbol;
+  parentName: string | null;
+  parentId: symbol | null;
   sendSelf: (msg: IM | StopMessage) => void;
   toParent: ProcessMessageCb<OM>;
   /** Register an onMessage hook. Return stopPropagation() to short-circuit. */
