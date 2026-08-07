@@ -47,12 +47,10 @@ the encoding or transport does.
 | **Wire protocol** | Six message types, handshake, sender identity, fd forwarding |
 | **Bridge adapter** | spawn + transport + protocol — the universal primitive |
 | **Isolation wrappers** | `withBwrap`, `withSudo`, `withSsh` — modify the spawn command |
-| **Supervisor** | restart on crash, backoff, exit-code semantics |
 | **Actor** | unchanged — same handlers, state, doesn't know it's remote |
 
 The bridge spawns, bridges messages, and resolves when the child exits. The
-supervisor is a separate wrapper. Isolation wrappers are pure functions on the
-spawn command.
+isolation wrappers are pure functions on the spawn command.
 
 ---
 
@@ -280,10 +278,6 @@ The host adapter resolves `proc.wait()` with `{ code, finalState }`:
 - Graceful: code and state from `$exit`
 - Crash: code is null, state is last known `$state`
 
-The supervisor (layer above bridge) interprets exit codes:
-- 0 = clean exit, do not restart
-- 42 = self-requested restart, resolve pending tool call
-- null/other = crash, restart with backoff
 
 ---
 
@@ -412,44 +406,20 @@ symbol was sent), a fresh symbol is synthesized.
    - `wait()` — resolves on `$exit` or pipe close
    - `onMessage(handler)` — called for each incoming `$msg`
 
-## Self-Restart
-
-The agent gets a tool that triggers a restart of its own process:
-
-```
-tool_call: restart_self(reason: string)
-  → child calls process.exit(42)
-  → supervisor sees exit code 42
-  → supervisor spawns new child with restart context
-  → new child loads conversation history from disk
-  → tool result: { status: "restarted", reason: "..." }
-```
-
-The `$init` message carries a `restart` flag so the new process knows it's a
-continuation, not a fresh start. It resolves the pending `restart_self` tool
-call immediately on startup.
-
-### What survives the restart
-
-- **Conversation history** — already on disk (ThreadStore), loaded on init
-- **Memory** — already file-backed key-value store
-- **Identity** — loaded from identity.yaml
-
 ---
 
 ## Implementation Order
 
-1. **Wire protocol spec** — this document, finalized
-2. **`defineRemoteActor` + `runChild`** — child-side adapter, tested with a
-   trivial echo actor over fifo
-3. **`spawn()` + `RemoteProxy`** — host-side adapter, tested against echo actor
-4. **`$fd` forwarding** — captured stdout/stderr over the wire
-5. **Wrappers** — `withBwrap`, `withSudo`, `withSsh` (relay)
-6. **Terminal bridge** — first real actor isolated (highest crash risk)
-7. **Tool pool** — clean TOOL_CALL/TOOL_RESULT interface
-8. **Full persona isolation** — each reflector tree in its own process
-9. **Supervisor** — restart policy, backoff, exit-code interpretation
-10. **Self-restart tool** — `process.exit(42)` + supervisor coordination
+1. ✅ **Wire protocol** — `encode`/`decode`, type guards (`protocol.ts`)
+2. ✅ **Fifo transport** — raw fd open, readline (`fifo.ts`)
+3. ✅ **Child adapter** — `runChild(fn)`, `makeSender()` (`child.ts`)
+4. ✅ **Host adapter** — `spawnRemote()`, `RemoteProxy` (`host.ts`)
+5. ✅ **Parent identity** — `parentId`/`parentName` on `ProcessCtx`, wired through `$init`
+6. **`defineRemoteActor(fn, import.meta.url)`** — one-file wrapper, auto-detects child mode
+7. **`$fd` forwarding** — captured stdout/stderr over the wire
+8. **Wrappers** — `withBwrap`, `withSudo`, `withSsh` (relay)
+9. **Terminal bridge** — first real actor isolated (highest crash risk)
+10. **Full persona isolation** — each reflector tree in its own process
 
 ---
 
@@ -461,14 +431,6 @@ call immediately on startup.
 
 2. **Startup latency.** Spawning a Node.js process per actor adds overhead.
    Keep frequently-used actors warm, isolate only the ones that benefit.
-
-3. **State transfer on restart.** Currently the child reloads from disk. Could
-   the supervisor pass a snapshot to the new child, avoiding disk I/O? v1:
-   disk reload.
-
-4. **Graceful shutdown.** Should the supervisor send STOP and wait for the
-   child to finish in-flight work, or SIGTERM immediately? STOP first, SIGTERM
-   after timeout.
 
 5. **Cross-process tool calls.** If the tool pool is a separate process, tool
    calls cross a process boundary twice (connector → pool → connector). Extra
