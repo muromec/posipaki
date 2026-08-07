@@ -1,3 +1,5 @@
+// ⚠️ WIP — fragile. May hang on startup, drop EBADF on shutdown.
+// Good for POC/demo, not production-ready.
 // ── Remote Actor POC ───────────────────────────────────────────────────────
 //
 // Demonstrates defineRemoteActor — one import, both ends of the wire.
@@ -21,14 +23,12 @@ const echoActor = defineActor({
   },
 });
 
-export const remoteEcho = defineRemoteActor(echoActor.fn, import.meta.url);
+const remoteEcho = defineRemoteActor(echoActor.fn, import.meta.url);
 
-// defineRemoteActor calls runChild() in child mode (--fifo present).
-// The guard below prevents host code from running in the child.
-if (!process.argv.some((a) => a.startsWith("--fifo="))) {
+if (!remoteEcho.isChild) {
   console.log("Host: spawning child...");
 
-  const proxy = await remoteEcho.spawn(null)({} as any);
+  const proxy = await remoteEcho.spawn(null)({});
 
   console.log("Host: child ready, state:", proxy.state);
 
