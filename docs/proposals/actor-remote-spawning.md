@@ -485,3 +485,84 @@ call immediately on startup.
   per-persona bwrap sandboxes
 - [Server Isolation](server-isolation.md) — orthogonal: whole harness in bwrap
 - [Docs index](00-INDEX.md)
+
+---
+
+## Sender identity across the wire
+
+### The problem
+
+posipaki's `sender` tuple carries `{ fromName: string, fromId: symbol }`.
+`fromId` is used in-process for identity comparison:
+
+- Parent identifies child messages: `sender.fromId === childProc.id`
+- Child identifies parent messages: `sender.fromId === ctx.parentId`
+- Pipe/supervisor match EXIT messages to tasks by symbol identity
+
+Symbols don't survive `JSON.stringify`. Anonymous symbols (`Symbol()`) are
+unrecoverable. Named symbols (`Symbol.for("name")`) can be round-tripped
+via a string key.
+
+### Point-to-point simplification
+
+A remote actor link has exactly two participants — host and child. There
+are only two sender identities to track:
+
+| Direction | fromName | fromId |
+|-----------|----------|--------|
+| host → child | `"host"` (or parent's actual name) | proxy id (synthetic, host-side only) |
+| child → host | child's `pname` | proxy id (synthetic, host-side only) |
+
+The child doesn't need `fromId` from the host — there's only one sender.
+The host needs a stable `fromId` for the child so it can integrate with
+in-process supervision (`sender.fromId === proxy.id`).
+
+### How the wrappers handle it
+
+**Host side (parent):**
+
+The `spawnRemote` adapter creates a synthetic id for the proxy:
+`const proxyId = Symbol()`.  All messages forwarded from the child to the
+parent are stamped with `{ fromName: childPname, fromId: proxyId }`.
+The parent's `sender.fromId === proxy.id` comparison works.
+
+**Child side:**
+
+The `$init` message carries `parentName` (string) and `parentIdName`
+(string).  The `runChild` adapter sets:
+
+```ts
+ctx.parentName = init.parentName;           // "root", "openai:butler", etc.
+ctx.parentId = Symbol.for(init.parentIdName); // Symbol.for("root"), etc.
+```
+
+The host stamps outgoing messages with `fromIdName: parentIdName`, so the
+child sees `sender.fromId === ctx.parentId` — same as in-process.
+
+### What the wire carries
+
+`$msg` messages carry `fromName` only.  `$init` carries `parentName` and
+`parentIdName` once, at startup.  `fromId` never crosses the wire — it's
+synthesized on both sides from the init handshake.
+
+```json
+// $init: host → child (once)
+{"$init": {
+  "parentName": "root",
+  "parentIdName": "root",
+  "... actor args ..."
+}}
+
+// $msg: bidirectional
+{"$msg": {
+  "type": "PING",
+  "fromName": "host",    // or child's pname
+  "body": {...}
+}}
+```
+
+### Requires
+
+- [Parent Identity on ProcessCtx](parent-identity-on-ctx.md) — `parentId`
+  and `parentName` must be available on `ctx` for the child-side
+  reconstruction to work.
