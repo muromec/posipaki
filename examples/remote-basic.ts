@@ -1,12 +1,12 @@
 // ── Remote Actor POC ───────────────────────────────────────────────────────
 //
-// Demonstrates spawning a posipaki actor in a child process over a named fifo.
+// Demonstrates defineRemoteActor — one import, both ends of the wire.
 //
 // Run:
 //   bun run examples/remote-basic.ts
 
 import { defineActor, defineMessages } from "../src/index.js";
-import { runChild, spawnRemote } from "../src/remote/index.js";
+import { defineRemoteActor } from "../src/remote/define.js";
 
 const echoActor = defineActor({
   name: "echo",
@@ -21,32 +21,29 @@ const echoActor = defineActor({
   },
 });
 
-const isChild = process.argv.some((a) => a.startsWith("--fifo="));
+export const remoteEcho = defineRemoteActor(echoActor.fn, import.meta.url);
 
-if (isChild) {
-  await runChild(echoActor.fn);
-} else {
+// defineRemoteActor calls runChild() in child mode (--fifo present).
+// The guard below prevents host code from running in the child.
+if (!process.argv.some((a) => a.startsWith("--fifo="))) {
   console.log("Host: spawning child...");
 
-  const proxy = await spawnRemote({
-    command: ["bun", "run", "examples/remote-basic.ts"],
-    args: {},
-  });
+  const proxy = await remoteEcho.spawn(null)({} as any);
 
   console.log("Host: child ready, state:", proxy.state);
 
   const pongs: Array<{ count: number }> = [];
-  proxy.onMessage((msg) => {
-    if (msg.type === "PONG") pongs.push(msg as { count: number; type: string });
+  proxy.onMessage((msg: any) => {
+    if (msg.type === "PONG") pongs.push(msg);
   });
 
   for (let i = 1; i <= 3; i++) {
-    proxy.send({ type: "PING", count: i });
+    proxy.send({ type: "PING", count: i } as any);
     await new Promise((r) => setTimeout(r, 50));
   }
   await new Promise((r) => setTimeout(r, 200));
 
-  console.log("Host: received PONGs:", pongs.map((p) => p.count));
+  console.log("Host: received PONGs:", pongs.map((p: any) => p.count));
   console.log("Host: final state:", proxy.state);
 
   proxy.send({ type: "STOP" } as any);

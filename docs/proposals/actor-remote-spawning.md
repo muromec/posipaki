@@ -550,3 +550,16 @@ identity — each message from C gets a fresh anonymous symbol.
 For the common case (no handoff), `fromName` always matches, `fromId` is
 always stable, and the child's `sender.fromId === ctx.parentId` comparison
 works exactly as in-process.
+
+## Known Issues
+
+### Child process hangs on startup error
+
+When `runChild()` fails early (e.g. missing `--fifo` flag), the child
+process prints an error and calls `process.exit(1)`.  Under `bun run`,
+the process sometimes hangs instead of exiting, consuming 30-50% CPU.
+The parent process (command tool harness) also waits indefinitely.
+
+Workaround: ensure `--fifo` is always passed.  Root cause not yet
+identified — suspected bun event loop issue with async I/O during
+early startup.
