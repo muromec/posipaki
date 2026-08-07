@@ -5,7 +5,7 @@
 //   export const myRemoteActor = defineRemoteActor(MyActor.fn, import.meta.url);
 
 import { fileURLToPath } from "node:url";
-import type { AsyncProcessFn, Message, ProcessCtx } from "../types.js";
+import type { ProcessCtx, Message } from "../types.js";
 import { runChild } from "./child.js";
 import { spawnRemote } from "./host.js";
 import type { RemoteProxy } from "./host.js";
@@ -18,9 +18,9 @@ export interface RemoteActorDefinition<Args> {
 }
 
 export function defineRemoteActor(
-  fn: AsyncProcessFn<any, any, any, any>,
+  fn: Parameters<typeof runChild>[0],
   url: string,
-): RemoteActorDefinition<any> {
+): RemoteActorDefinition<Record<string, unknown>> {
   const scriptPath = fileURLToPath(url);
   const isChild = process.argv.some((a) => a.startsWith("--fifo="));
 
@@ -34,11 +34,11 @@ export function defineRemoteActor(
     },
 
     spawn(_ctx) {
-      return (args: any) => {
+      return (args: Record<string, unknown>) => {
         return spawnRemote({
           command: ["bun", "run", scriptPath],
           args: args,
-        }) as Promise<RemoteProxy>;
+        });
       };
     },
   };
