@@ -116,7 +116,7 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
   });
 
   return {
-    state: currentState,
+    get state() { return currentState; },
     async ready() {},
     send(msg: Message) {
       const from = opts.parentName ?? "host";

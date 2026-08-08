@@ -213,6 +213,9 @@ export class AsyncProcess<
       while ((msgAndSender = this.buffer.shift()) !== undefined) {
         ret = await this.pvtSafeNext(msgAndSender);
         if (!ret || ret.done) break;
+        // Track state from non-null yields (defineActor's runDispatchAsync
+        // yields null — we skip those and keep the last known state).
+        if (ret.value != null) this.state = ret.value;
       }
       this.notify();
       this.pvtEatResult(ret);
