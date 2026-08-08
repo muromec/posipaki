@@ -14,12 +14,13 @@ import { defineActor } from "../define-actor.js";
 import { stopPropagation } from "../hooks.js";
 import type { HookResult } from "../hooks.js";
 import { runChild } from "./child.js";
-import { spawnRemote } from "./host.js";
+import { type Connector, defaultConnector } from "./host.js";
 import type { RemoteProxy } from "./host.js";
 import type { ActorDefinition } from "../actor-types.js";
 
 export interface RemoteActorOptions {
   manual?: boolean;
+  connector?: Connector;
 }
 
 export interface RemoteActorBundle<
@@ -73,10 +74,11 @@ export function defineRemoteActor<
     expose: (s: IS): ExposedState => s.$remote?.state as ExposedState,
     handlers: {} as unknown as Handlers,
     async setup(this: Ctx, args: Args): Promise<IS> {
-      const remote = await spawnRemote<ExposedState, InMsg, OutMsg, Args>({
-        command: ["bun", "run", scriptPath, marker],
-        args: args,
-      });
+      const connect = opts.connector ?? defaultConnector(scriptPath);
+      const remote = await connect({
+        command: [marker],
+        args: args as Record<string, unknown>,
+      }) as RemoteProxy<ExposedState, InMsg, OutMsg>;
       remote.onMessage((msg: OutMsg) => {
         this.emit(msg);
       });

@@ -1,6 +1,8 @@
 // ── Host-side adapter ──────────────────────────────────────────────────────
 //
-// Spawns a child process and returns a RemoteProxy.
+// commandConnector: spawns a child process and bridges the wire protocol.
+// Connector wrappers (bunConnector, nodeConnector, defaultConnector) produce
+// the command array from a script path.
 
 import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -11,7 +13,9 @@ import { FifoUtf8NlineTransport } from "./fifo.js";
 import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
 import type { Message } from "../types.js";
 
-export interface SpawnOptions<Args = Record<string, unknown>> {
+// ── types ──────────────────────────────────────────────────────────────────
+
+export interface CommandSpawnOptions<Args = Record<string, unknown>> {
   command: string[];
   args: Args;
   parentName?: string;
@@ -29,13 +33,22 @@ export interface RemoteProxy<
   onMessage(handler: (msg: OutMsg) => void): void;
 }
 
+/** A connector takes a command and returns a RemoteProxy. */
+export type Connector<
+  State = unknown,
+  InMsg extends Message = Message,
+  OutMsg extends Message = Message,
+> = (opts: CommandSpawnOptions) => Promise<RemoteProxy<State, InMsg, OutMsg>>;
+
+// ── commandConnector ───────────────────────────────────────────────────────
+
 export async function spawnRemote<
   State = unknown,
   InMsg extends Message = Message,
   OutMsg extends Message = Message,
   Args = Record<string, unknown>,
 >(
-  opts: SpawnOptions<Args>,
+  opts: CommandSpawnOptions<Args>,
 ): Promise<RemoteProxy<State, InMsg, OutMsg>> {
   const basePath = join(tmpdir(), `posipaki-${randomUUID()}`);
 
@@ -135,3 +148,41 @@ export async function spawnRemote<
     onMessage(handler: (msg: OutMsg) => void) { msgHandler = handler; },
   };
 }
+
+// ── connector wrappers ─────────────────────────────────────────────────────
+
+function scriptConnector(
+  runner: string,
+  runnerArgs: string[],
+): (scriptPath: string) => Connector {
+  return (scriptPath: string) => {
+    return ((opts: CommandSpawnOptions) => {
+      return commandConnector({
+        ...opts,
+        command: [runner, ...runnerArgs, scriptPath, ...opts.command],
+      });
+    }) as Connector;
+  };
+}
+
+/** Spawn via `bun run <script>`. */
+export const bunConnector = scriptConnector("bun", ["run"]);
+
+/** Spawn via `node <script>`. */
+export const nodeConnector = scriptConnector("node", []);
+
+/**
+ * Auto-detect: prefers `bun run` if the script is a .ts file and bun is
+ * the current runtime, otherwise falls back to `node`.
+ */
+export function defaultConnector(scriptPath: string): Connector {
+  // Check if we're running under bun
+  const isBun = typeof (globalThis as any).Bun !== "undefined";
+  const isTs = scriptPath.endsWith(".ts");
+  if (isBun && isTs) return bunConnector(scriptPath);
+  return nodeConnector(scriptPath);
+}
+
+// ── alias ───────────────────────────────────────────────────────────────────
+
+export const commandConnector = spawnRemote;
