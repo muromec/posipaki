@@ -29,8 +29,9 @@ if (!isRemoteRoot) {
 
   const pongs: Array<{ type: "PONG"; count: number }> = [];
   const proc = spawnAsync(
+    // echoActor.fn,
     remoteEcho.fn,
-    "remote-echo",
+    "echo",
     (msg) => {
       const [body] = msg;
       if (body.type === "PONG") pongs.push(body);
@@ -39,15 +40,14 @@ if (!isRemoteRoot) {
 
   await proc.ready();
 
-  const send = (msg: { type: string; [key: string]: unknown }) =>
-    proc.send(msg, { fromName: "host", fromId: Symbol() });
-
-  send({ type: "PING", count: 1 });
-  send({ type: "PING", count: 2 });
-  send({ type: "PING", count: 3 });
-  send({ type: "STOP" });
+  proc.send({ type: "PING", count: 1 });
+  proc.send({ type: "PING", count: 2 });
+  proc.send({ type: "PING", count: 3 });
+  proc.send({ type: "STOP" });
 
   await proc.wait();
 
   console.log("Host: received PONGs:", pongs.map(p => p.count));
+  console.log("Host: remote state:", proc.state);
+
 }

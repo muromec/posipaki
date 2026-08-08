@@ -258,12 +258,12 @@ export class AsyncProcess<
   }
 
   /** Stamp and enqueue a message from a named sender (external API). */
-  send(msg: InMessage | StopMessage, from: SenderInfo): void;
+  send(msg: InMessage | StopMessage, from?: SenderInfo): void;
   /** Enqueue a pre-stamped message (internal: fromChild, toAllChildren). */
   send(msgAndSender: WithSender<InMessage | StopMessage>): void;
   send(msgOrTuple: InMessage | StopMessage | WithSender<InMessage | StopMessage>, from?: SenderInfo): void {
-    if (from !== undefined) {
-      this.buffer.push([msgOrTuple as InMessage | StopMessage, from]);
+    if ('type' in msgOrTuple) {
+      this.buffer.push([msgOrTuple as InMessage | StopMessage, from as SenderInfo]);
     } else {
       this.buffer.push(msgOrTuple as WithSender<InMessage | StopMessage>);
     }
