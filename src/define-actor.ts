@@ -82,21 +82,9 @@ export function defineActor<
     let exitReason: unknown;
     let stopRequested = false;
 
-    // Resolve internal state — literal or function of args.
-    const rawState: InternalState =
-      typeof config.initialState === "function"
-        ? (
-            config.initialState as (
-              args: Args,
-              ictx: typeof ctx,
-            ) => InternalState
-          )(args, ctx)
-        : config.initialState;
-
-    // Apply expose if provided, otherwise identity.
-    let exposedState: ExposedState = config.expose
-      ? config.expose(rawState)
-      : (rawState as unknown as ExposedState);
+    // State resolved below after self is built.
+    let rawState: InternalState = undefined as unknown as InternalState;
+    let exposedState: ExposedState = undefined as unknown as ExposedState;
 
     // ── hooks ──────────────────────────────────────────────────────────
     const pvtHooks = new HookRegistry<any, any, any>();
@@ -236,23 +224,38 @@ export function defineActor<
       (self as Record<string, unknown>)[key] = value;
     }
 
-    // Call onStart with args (before first yield — async setup goes here).
-    if (config.onStart) {
-      await config.onStart.call(self, args);
+    // ── resolve state (setup or initialState) ────────────────────
+    if (config.setup) {
+      rawState = await config.setup.call(self, args);
+    } else if (typeof config.initialState === "function") {
+      rawState = (config.initialState as (a: Args, ictx: typeof ctx) => InternalState)(args, ctx);
+    } else if (config.initialState !== undefined) {
+      rawState = config.initialState;
+    } else {
+      throw new Error("ActorConfig: setup() or initialState is required");
     }
-
-    // Recompute exposed state after onStart (state may have changed).
+    (self as { state: unknown }).state = rawState;
     exposedState = config.expose
       ? config.expose(rawState)
       : (rawState as unknown as ExposedState);
 
-    // Fire hooks.onStart after the actor's own onStart.
-    for (const hookFn of pvtHooks.onStart) {
-      try { await hookFn(exposedState); } catch { /* error handled by onStart body */ }
+    // Call onStart with args (legacy — use setup() for new code).
+    if (config.onStart) {
+      await config.onStart.call(self, args);
+      exposedState = config.expose
+        ? config.expose(rawState)
+        : (rawState as unknown as ExposedState);
     }
 
-    // Yield the exposed state — external consumers see this.
+    // Fire hooks.onStart.
+    for (const hookFn of pvtHooks.onStart) {
+      try { await hookFn(exposedState); } catch {}
+    }
+
     yield exposedState;
+
+    // ── afterStart ──────────────────────────────────────────────────
+    if (config.afterStart) { await config.afterStart.call(self); }
 
     // Dispatch loop..
     yield* runDispatchAsync<WithSender<InMsg | ExitMessage>>(

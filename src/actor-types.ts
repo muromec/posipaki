@@ -109,7 +109,7 @@ export interface ActorConfig<
   // eslint-disable-next-line no-unused-vars
   Handlers extends HandlerOptions<InMsg>,
 > {
-  initialState:
+  initialState?:
     | InternalState
     | ((
         this: void,
@@ -134,6 +134,15 @@ export interface ActorConfig<
   plugins?: ActorPlugin[] | PluginTransform;
   outMessages?: ActorMessages<OutMsg>;
   inMessages?: ActorMessages<InMsg>;
+
+  setup?: (
+    this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
+    args: Args,
+  ) => InternalState | Promise<InternalState>;
+
+  afterStart?: (
+    this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
+  ) => void | Promise<void>;
 
   onStart?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,

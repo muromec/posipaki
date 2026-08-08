@@ -70,18 +70,17 @@ export function defineRemoteActor<
     name: actor.config.name ?? "actor",
     inMessages: actor.config.inMessages,
     outMessages: actor.config.outMessages,
-    initialState: (): IS => ({ $remote: null }),
     expose: (s: IS): ExposedState => s.$remote?.state as ExposedState,
     handlers: {} as unknown as Handlers,
-    async onStart(this: Ctx, args: Args) {
+    async setup(this: Ctx, args: Args): Promise<IS> {
       const remote = await spawnRemote({
         command: ["bun", "run", scriptPath, marker],
         args: args as Record<string, unknown>,
       });
-      this.state.$remote = remote;
       remote.onMessage((msg: Message) => {
         this.emit(msg as OutMsg);
       });
+      return { $remote: remote };
     },
     hooks: {
       async onMessage(this: Ctx, msg: InMsg): Promise<HookResult> {
