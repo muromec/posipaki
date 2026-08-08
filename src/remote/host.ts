@@ -1,7 +1,6 @@
 // ── Host-side adapter ──────────────────────────────────────────────────────
 //
-// Spawns a child process and returns a proxy that quacks like a posipaki
-// process handle.
+// Spawns a child process and returns a RemoteProxy.
 
 import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -18,21 +17,22 @@ export interface SpawnOptions {
   parentName?: string;
 }
 
-export interface RemoteProxy {
-  state: unknown;
+export interface RemoteProxy<State = unknown> {
+  readonly state: State;
   ready(): Promise<void>;
   send(msg: Message): void;
-  wait(): Promise<{ code: number | null; state: unknown }>;
+  wait(): Promise<{ code: number | null; state: State }>;
   onMessage(handler: (msg: Message) => void): void;
 }
 
-export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
+export async function spawnRemote<State = unknown>(
+  opts: SpawnOptions,
+): Promise<RemoteProxy<State>> {
   const basePath = join(tmpdir(), `posipaki-${randomUUID()}`);
 
   execSync(`mkfifo "${basePath}.in"`);
   execSync(`mkfifo "${basePath}.out"`);
 
-  // Start opening the read fifo before spawning the child (deadlock prevention)
   const setup = FifoUtf8NlineTransport.beginConnect(basePath + ".in", basePath + ".out");
 
   const childCmd = [
@@ -77,8 +77,8 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
 
   // ── persistent handler ──────────────────────────────────────────────
   let msgHandler: ((msg: Message) => void) | null = null;
-  let exitResolver: ((value: { code: number | null; state: unknown }) => void) | null = null;
-  const exitPromise = new Promise<{ code: number | null; state: unknown }>((resolve) => {
+  let exitResolver: ((value: { code: number | null; state: State }) => void) | null = null;
+  const exitPromise = new Promise<{ code: number | null; state: State }>((resolve) => {
     exitResolver = resolve;
   });
 
@@ -90,7 +90,7 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
       msgHandler?.(msg.$msg.body as Message);
     } else if (isExit(msg)) {
       if (exitResolver) {
-        exitResolver({ code: msg.$exit.code, state: msg.$exit.state });
+        exitResolver({ code: msg.$exit.code, state: msg.$exit.state as State });
         exitResolver = null;
       }
       cleanup();
@@ -109,14 +109,14 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
 
   childProc.on("exit", (code) => {
     if (exitResolver) {
-      exitResolver({ code, state: currentState });
+      exitResolver({ code, state: currentState as State });
       exitResolver = null;
     }
     cleanup();
   });
 
   return {
-    get state() { return currentState as Record<string, unknown>; },
+    get state(): State { return currentState as State; },
     async ready() {},
     send(msg: Message) {
       const from = opts.parentName ?? "host";
