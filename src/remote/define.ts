@@ -1,12 +1,14 @@
 // ── defineRemoteActor ──────────────────────────────────────────────────────
 //
 // Wraps an ActorDefinition so that when spawned, it runs in a child process
-// over two named fifos. Returns a real ActorDefinition — local and remote
-// actors are type-compatible and interchangeable.
+// over two named fifos. Returns a structured object with the proxy actor,
+// a runRemoteRoot function, and an isRemoteRoot flag.
 //
 //   const echo = defineActor({ ... });
-//   const remoteEcho = defineRemoteActor(echo, import.meta.url);
-//   const proc = remoteEcho.spawn({});  // AsyncProcess, same interface
+//   const { actor: remoteEcho, isRemoteRoot } = defineRemoteActor(echo, import.meta.url);
+//   if (!isRemoteRoot) {
+//     const proc = remoteEcho.spawn({});
+//   }
 
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -22,6 +24,21 @@ import type { ActorDefinition } from "../actor-types.js";
 
 export interface RemoteActorOptions {
   manual?: boolean;
+}
+
+export interface RemoteActorBundle<
+  Args,
+  ExposedState,
+  InMsg extends Message,
+  OutMsg extends Message,
+  Handlers extends HandlerOptions<InMsg>,
+> {
+  /** The proxy actor — plug-compatible with defineActor. */
+  actor: ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers>;
+  /** Run the remote root (child) side. */
+  runRemoteRoot(): Promise<void>;
+  /** True if this process is the remote root (child). */
+  isRemoteRoot: boolean;
 }
 
 function pathHash(path: string): string {
@@ -45,12 +62,12 @@ export function defineRemoteActor<
   actor: ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers>,
   url: string,
   opts: RemoteActorOptions = {},
-): ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers> & { isChild: boolean } {
+): RemoteActorBundle<Args, ExposedState, InMsg, OutMsg, Handlers> {
   const scriptPath = fileURLToPath(url);
   const marker = `${MARKER_PREFIX}${pathHash(scriptPath)}`;
-  const isChild = !opts.manual && process.argv.includes(marker);
+  const isRemoteRoot = !opts.manual && process.argv.includes(marker);
 
-  if (isChild) {
+  if (isRemoteRoot) {
     runChild(actor.fn);
   }
 
@@ -94,7 +111,10 @@ export function defineRemoteActor<
   });
 
   return {
-    ...proxyDef,
-    isChild,
+    actor: proxyDef,
+    runRemoteRoot() {
+      return runChild(actor.fn);
+    },
+    isRemoteRoot,
   };
 }

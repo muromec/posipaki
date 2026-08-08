@@ -1,7 +1,7 @@
 // ── Remote Actor POC — stable, no hangs, no EBADF ─────────────────────────
 //
 // Demonstrates defineRemoteActor — one import, both ends of the wire.
-// Returns a real ActorDefinition, interchangeable with defineActor.
+// Returns { actor, runRemoteRoot, isRemoteRoot }.
 //
 // Run:
 //   bun run examples/remote-basic.ts
@@ -22,9 +22,9 @@ const echoActor = defineActor({
   },
 });
 
-const remoteEcho = defineRemoteActor(echoActor, import.meta.url);
+const { actor: remoteEcho, isRemoteRoot } = defineRemoteActor(echoActor, import.meta.url);
 
-if (!remoteEcho.isChild) {
+if (!isRemoteRoot) {
   console.log("Host: spawning child...");
 
   const proc = remoteEcho.spawn({});

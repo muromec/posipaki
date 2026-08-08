@@ -4,13 +4,11 @@ import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { defineActor, defineMessages } from "../index.js";
 import { defineRemoteActor } from "./define.js";
 
-// Mock child module so isChild doesn't actually run
 vi.mock("./child.js", () => ({
-  runChild: vi.fn(),
+  runChild: vi.fn(() => Promise.resolve()),
   makeSender: vi.fn(),
 }));
 
-// Mock host module so spawn doesn't actually spawn
 vi.mock("./host.js", () => ({
   spawnRemote: vi.fn(() => Promise.resolve({
     state: { pings: 0 },
@@ -20,8 +18,6 @@ vi.mock("./host.js", () => ({
     onMessage: () => {},
   })),
 }));
-
-// ── helpers ────────────────────────────────────────────────────────────────
 
 function makeDummyActor() {
   return defineActor({
@@ -40,28 +36,28 @@ const TEST_URL = "file:///home/test/project/src/actors/echo.ts";
 // ── pathHash ───────────────────────────────────────────────────────────────
 
 describe("defineRemoteActor — pathHash", () => {
-  it("same URL produces same isChild value", () => {
+  it("same URL produces same isRemoteRoot value", () => {
     const a = defineRemoteActor(makeDummyActor(), TEST_URL);
     const b = defineRemoteActor(makeDummyActor(), TEST_URL);
-    expect(a.isChild).toBe(b.isChild);
+    expect(a.isRemoteRoot).toBe(b.isRemoteRoot);
   });
 });
 
-// ── isChild detection ──────────────────────────────────────────────────────
+// ── isRemoteRoot detection ─────────────────────────────────────────────────
 
-describe("defineRemoteActor — isChild detection", () => {
+describe("defineRemoteActor — isRemoteRoot detection", () => {
   let savedArgv: string[];
 
   beforeEach(() => { savedArgv = [...process.argv]; });
   afterEach(() => { process.argv = savedArgv; });
 
-  it("isChild is false when marker is not in argv", () => {
+  it("isRemoteRoot is false when marker is not in argv", () => {
     process.argv = ["bun", "script.ts"];
     const def = defineRemoteActor(makeDummyActor(), TEST_URL);
-    expect(def.isChild).toBe(false);
+    expect(def.isRemoteRoot).toBe(false);
   });
 
-  it("isChild is true when marker is in argv", async () => {
+  it("isRemoteRoot is true when marker is in argv", async () => {
     const { createHash } = await import("node:crypto");
     const { fileURLToPath } = await import("node:url");
     const scriptPath = fileURLToPath(TEST_URL);
@@ -70,10 +66,10 @@ describe("defineRemoteActor — isChild detection", () => {
 
     process.argv = ["bun", "script.ts", marker];
     const def = defineRemoteActor(makeDummyActor(), TEST_URL);
-    expect(def.isChild).toBe(true);
+    expect(def.isRemoteRoot).toBe(true);
   });
 
-  it("manual: true prevents auto child detection", async () => {
+  it("manual: true prevents auto remote root detection", async () => {
     const { createHash } = await import("node:crypto");
     const { fileURLToPath } = await import("node:url");
     const scriptPath = fileURLToPath(TEST_URL);
@@ -82,30 +78,35 @@ describe("defineRemoteActor — isChild detection", () => {
 
     process.argv = ["bun", "script.ts", marker];
     const def = defineRemoteActor(makeDummyActor(), TEST_URL, { manual: true });
-    expect(def.isChild).toBe(false);
+    expect(def.isRemoteRoot).toBe(false);
   });
 });
 
-// ── returned definition shape ──────────────────────────────────────────────
+// ── returned shape ─────────────────────────────────────────────────────────
 
-describe("defineRemoteActor — definition shape", () => {
-  it("returns isChild, fn, config, spawn", () => {
+describe("defineRemoteActor — return shape", () => {
+  it("returns { actor, runRemoteRoot, isRemoteRoot }", () => {
     const def = defineRemoteActor(makeDummyActor(), TEST_URL);
-    expect(typeof def.isChild).toBe("boolean");
-    expect(typeof def.fn).toBe("function");
-    expect(typeof def.spawn).toBe("function");
-    expect(def.config).toBeDefined();
+    expect(typeof def.isRemoteRoot).toBe("boolean");
+    expect(typeof def.runRemoteRoot).toBe("function");
+    expect(def.actor).toBeDefined();
+    expect(typeof def.actor.spawn).toBe("function");
   });
 
-  it("spawn returns an AsyncProcess", async () => {
-    const def = defineRemoteActor(makeDummyActor(), TEST_URL);
-    const proc = def.spawn({});
+  it("actor.spawn returns an AsyncProcess", () => {
+    const { actor } = defineRemoteActor(makeDummyActor(), TEST_URL);
+    const proc = actor.spawn({});
     expect(proc).toBeDefined();
     expect(typeof proc.send).toBe("function");
     expect(typeof proc.wait).toBe("function");
     expect(typeof proc.subscribe).toBe("function");
-    // Don't await — the mock spawnRemote resolves immediately but
-    // the generator runs async. Just verify the handle shape.
+  });
+
+  it("runRemoteRoot returns a Promise", () => {
+    const def = defineRemoteActor(makeDummyActor(), TEST_URL);
+    const result = def.runRemoteRoot();
+    expect(result).toBeInstanceOf(Promise);
+    result.catch(() => {});
   });
 });
 
@@ -117,7 +118,7 @@ describe("defineRemoteActor — marker format", () => {
   beforeEach(() => { savedArgv = [...process.argv]; });
   afterEach(() => { process.argv = savedArgv; });
 
-  it("correct hash triggers isChild", async () => {
+  it("correct hash triggers isRemoteRoot", async () => {
     const { createHash } = await import("node:crypto");
     const { fileURLToPath } = await import("node:url");
     const scriptPath = fileURLToPath(TEST_URL);
@@ -125,24 +126,24 @@ describe("defineRemoteActor — marker format", () => {
 
     process.argv = ["bun", "script.ts", `--remote=${expectedHash}`];
     const def = defineRemoteActor(makeDummyActor(), TEST_URL);
-    expect(def.isChild).toBe(true);
+    expect(def.isRemoteRoot).toBe(true);
   });
 
-  it("wrong hash does not trigger isChild", () => {
+  it("wrong hash does not trigger isRemoteRoot", () => {
     process.argv = ["bun", "script.ts", "--remote=deadbeefcafe"];
     const def = defineRemoteActor(makeDummyActor(), TEST_URL);
-    expect(def.isChild).toBe(false);
+    expect(def.isRemoteRoot).toBe(false);
   });
 
-  it("--remote without =value does not trigger isChild", () => {
+  it("--remote without =value does not trigger isRemoteRoot", () => {
     process.argv = ["bun", "script.ts", "--remote"];
     const def = defineRemoteActor(makeDummyActor(), TEST_URL);
-    expect(def.isChild).toBe(false);
+    expect(def.isRemoteRoot).toBe(false);
   });
 
   it("--remote= (empty hash) does not match", () => {
     process.argv = ["bun", "script.ts", "--remote="];
     const def = defineRemoteActor(makeDummyActor(), TEST_URL);
-    expect(def.isChild).toBe(false);
+    expect(def.isRemoteRoot).toBe(false);
   });
 });
