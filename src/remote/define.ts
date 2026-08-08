@@ -3,20 +3,20 @@
 // Wraps an ActorDefinition so that when spawned, it runs in a child process
 // over two named fifos. Returns { actor, runRemoteRoot, isRemoteRoot }.
 //
-// Uses a raw AsyncProcessFn instead of defineActor hooks because the proxy
-// must yield the live remote state on every tick.  defineActor's
-// runDispatchAsync yields null, which would hide state updates.
+// The proxy is a real defineActor with hooks — local and remote actors
+// share the same ActorDefinition type and are fully interchangeable.
 
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import type { AsyncProcessFn, Message } from "../types.js";
-import type { ProcessCtx as PCtx } from "../types.js";
+import type { Message } from "../types.js";
+import type { ActorContext, HandlerOptions } from "../actor-types.js";
+import { defineActor } from "../define-actor.js";
+import { stopPropagation } from "../hooks.js";
+import type { HookResult } from "../hooks.js";
 import { runChild } from "./child.js";
 import { spawnRemote } from "./host.js";
-
-import { spawnAsync } from "../process.async.js";
+import type { RemoteProxy } from "./host.js";
 import type { ActorDefinition } from "../actor-types.js";
-import type { HandlerOptions } from "../actor-types.js";
 
 export interface RemoteActorOptions {
   manual?: boolean;
@@ -40,6 +40,12 @@ function pathHash(path: string): string {
 
 const MARKER_PREFIX = "--remote=";
 
+type ProxyInternalState<ES> = {
+  $remote: RemoteProxy | null;
+  /** Initial exposed state computed locally — used until the remote connects. */
+  $initial: ES;
+};
+
 export function defineRemoteActor<
   Args,
   ExposedState,
@@ -59,50 +65,56 @@ export function defineRemoteActor<
     runChild(actor.fn);
   }
 
-  const proxyFn: AsyncProcessFn<Args, ExposedState, InMsg, OutMsg> = async function* (
-    ctx: PCtx<Args, ExposedState, InMsg, OutMsg>,
-    args: Args,
-  ) {
-    const remote = await spawnRemote({
-      command: ["bun", "run", scriptPath, marker],
-      args: args as Record<string, unknown>,
-    });
+  type IS = ProxyInternalState<ExposedState>;
+  type Ctx = ActorContext<Args, IS, InMsg, OutMsg, {}, Handlers>;
 
-    remote.onMessage((msg) => {
-      ctx.toParent(msg as OutMsg);
-    });
-
-    // Yield the live remote state on every tick so proc.state tracks it.
-    let msg = yield remote.state as ExposedState;
-
-    while (true) {
-      if (msg[0].type === "STOP") {
-        remote.send(msg[0]);
-        await remote.wait();
-        return;
-      }
-      remote.send(msg[0]);
-      msg = yield remote.state as ExposedState;
-    }
-  };
-
-  return {
-    actor: {
-      ...actor,
-      fn: proxyFn as unknown as typeof actor.fn,
-      spawn(args: Args) {
-        return spawnAsync(
-          proxyFn as unknown as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
-          actor.config.name ?? "actor",
-        )(args);
+  const proxyDef = defineActor<Args, IS, ExposedState, InMsg, OutMsg, {}, Handlers>({
+    name: actor.config.name ?? "actor",
+    inMessages: actor.config.inMessages,
+    outMessages: actor.config.outMessages,
+    initialState(args: Args, ctx: Ctx["ctx"]): IS {
+      // Compute initial exposed state locally — matches a local spawn.
+      const raw = typeof actor.config.initialState === "function"
+        ? (actor.config.initialState as (args: Args, ctx: Ctx["ctx"]) => Record<string, unknown>)(args, ctx)
+        : (actor.config.initialState as Record<string, unknown>);
+      const exposed = actor.config.expose
+        ? actor.config.expose(raw)
+        : raw;
+      return { $remote: null, $initial: exposed as unknown as ExposedState };
+    },
+    expose(s: IS): ExposedState {
+      // Once connected, show the live remote state.  Before connection,
+      // show the locally-computed initial state (matches local spawn).
+      return (s.$remote?.state as ExposedState) ?? s.$initial;
+    },
+    handlers: {} as unknown as Handlers,
+    async onStart(this: Ctx, args: Args) {
+      const remote = await spawnRemote({
+        command: ["bun", "run", scriptPath, marker],
+        args: args as Record<string, unknown>,
+      });
+      this.state.$remote = remote;
+      remote.onMessage((msg: Message) => {
+        this.emit(msg as OutMsg);
+      });
+    },
+    hooks: {
+      async onMessage(this: Ctx, msg: InMsg): Promise<HookResult> {
+        this.state.$remote?.send(msg);
+        return stopPropagation();
       },
-      spawnAsChild(ctx: PCtx<any, any, any, any>, args: Args, name?: string) {
-        return ctx.fork(
-          proxyFn as unknown as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
-          name ?? actor.config.name ?? "child",
-        )(args);
+      async onStopRequested(this: Ctx) {
+        if (this.state.$remote) {
+          this.state.$remote.send({ type: "STOP" });
+          await this.state.$remote.wait();
+        }
+        this.agreeToStop();
       },
     },
+  });
+
+  return {
+    actor: proxyDef,
     runRemoteRoot() {
       return runChild(actor.fn);
     },
