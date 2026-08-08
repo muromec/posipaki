@@ -17,6 +17,7 @@ import { stopPropagation } from "../hooks.js";
 import type { HookResult } from "../hooks.js";
 import { runChild } from "./child.js";
 import { spawnRemote } from "./host.js";
+import type { RemoteProxy } from "./host.js";
 import type { ActorDefinition } from "../actor-types.js";
 
 export interface RemoteActorOptions {
@@ -28,6 +29,11 @@ function pathHash(path: string): string {
 }
 
 const MARKER_PREFIX = "--remote=";
+
+type ProxyInternalState<ES> = {
+  $remote: RemoteProxy | null;
+  $state: ES;
+};
 
 export function defineRemoteActor<
   Args,
@@ -48,45 +54,39 @@ export function defineRemoteActor<
     runChild(actor.fn);
   }
 
-  // InternalState = any: we delegate initialState/expose from the original
-  // actor, so the actual type flows through at runtime.
-  const proxyDef = defineActor<Args, any, ExposedState, InMsg, OutMsg, {}, Handlers>({
+  type IS = ProxyInternalState<ExposedState>;
+  type Ctx = ActorContext<Args, IS, InMsg, OutMsg, {}, Handlers>;
+
+  const proxyDef = defineActor<Args, IS, ExposedState, InMsg, OutMsg, {}, Handlers>({
     name: actor.config.name ?? "actor",
     inMessages: actor.config.inMessages,
     outMessages: actor.config.outMessages,
-    initialState: actor.config.initialState,
-    expose: actor.config.expose,
+    initialState: (): IS => ({
+      $remote: null,
+      $state: null as unknown as ExposedState,
+    }),
+    expose: (s: IS): ExposedState => s.$state,
     handlers: {} as unknown as Handlers,
-    async onStart(this: ActorContext<Args, any, InMsg, OutMsg, {}, Handlers>, args: Args) {
+    async onStart(this: Ctx, args: Args) {
       const remote = await spawnRemote({
         command: ["bun", "run", scriptPath, marker],
         args: args as Record<string, unknown>,
       });
-      (this.state as Record<string, unknown>).$remote = remote;
+      this.state.$remote = remote;
+      this.state.$state = remote.state as ExposedState;
       remote.onMessage((msg: Message) => {
         this.emit(msg as OutMsg);
       });
     },
     hooks: {
-      async onMessage(
-        this: ActorContext<Args, any, InMsg, OutMsg, {}, Handlers>,
-        msg: InMsg,
-      ): Promise<HookResult> {
-        const remote = (this.state as Record<string, unknown>).$remote as
-          | { send(msg: Message): void }
-          | undefined;
-        remote?.send(msg);
+      async onMessage(this: Ctx, msg: InMsg): Promise<HookResult> {
+        this.state.$remote?.send(msg);
         return stopPropagation() as unknown as HookResult;
       },
-      async onStopRequested(
-        this: ActorContext<Args, any, InMsg, OutMsg, {}, Handlers>,
-      ) {
-        const remote = (this.state as Record<string, unknown>).$remote as
-          | { send(msg: Message): void; wait(): Promise<unknown> }
-          | undefined;
-        if (remote) {
-          remote.send({ type: "STOP" });
-          await remote.wait();
+      async onStopRequested(this: Ctx) {
+        if (this.state.$remote) {
+          this.state.$remote.send({ type: "STOP" });
+          await this.state.$remote.wait();
         }
         this.agreeToStop();
       },
