@@ -1,16 +1,11 @@
 // ── Child-side adapter ─────────────────────────────────────────────────────
 //
 // Wraps a posipaki actor in a CLI process that speaks the wire protocol over
-// a named fifo.  Usage:
-//
-//   if (isMain(import.meta.url)) {
-//     runChild(MyActor.fn);
-//   }
+// two unidirectional named fifos.
 
 import type { AsyncProcessFn, Message } from "../types.js";
-import { FifoTransport } from "./fifo.js";
+import { FifoUtf8NlineTransport } from "./fifo.js";
 
-/** Reconstruct sender identity from wire message. */
 export function makeSender(
   fromName: string,
   parentName: string | null,
@@ -27,16 +22,19 @@ import { spawnAsync } from "../index.js";
 export async function runChild(
   fn: AsyncProcessFn<Record<string, unknown>, Record<string, unknown>, Message, Message>,
 ): Promise<void> {
-  const fifoPath = process.argv
-    .find((a) => a.startsWith("--fifo="))
-    ?.slice("--fifo=".length);
+  const fifoIn = process.argv
+    .find((a) => a.startsWith("--fifo-in="))
+    ?.slice("--fifo-in=".length);
+  const fifoOut = process.argv
+    .find((a) => a.startsWith("--fifo-out="))
+    ?.slice("--fifo-out=".length);
 
-  if (!fifoPath) {
-    console.error("child: --fifo=<path> required");
+  if (!fifoIn || !fifoOut) {
+    console.error("child: --fifo-in=<path> and --fifo-out=<path> required");
     process.exit(1);
   }
 
-  const transport = await FifoTransport.open(fifoPath, "writer");
+  const transport = await FifoUtf8NlineTransport.connect(fifoOut, fifoIn);
 
   // 1. Send protocol version
   await transport.send(encode("$proto", PROTO_VERSION));
@@ -48,16 +46,14 @@ export async function runChild(
       if (isInit(msg)) resolve(msg.$init);
     });
   });
+  transport.removeHandler();
 
   const parentName = (initMsg.parentName as string) ?? null;
   const parentIdName = (initMsg.parentIdName as string) ?? null;
   const parentId = parentIdName ? Symbol.for(parentIdName) : null;
-
-  // Remove parent fields from init args before passing to actor
   const { parentName: _pn, parentIdName: _pid, ...initArgs } = initMsg;
 
-  // 3. Spawn the actor with a wrapped context that forwards emits to the wire
-  // Wrap fn to inject parentId/parentName into ctx before the actor starts
+  // 3. Spawn the actor
   const wrappedFn: typeof fn = async function* (ctx, args) {
     (ctx as Record<string, unknown>).parentName = parentName;
     (ctx as Record<string, unknown>).parentId = parentId;
@@ -78,16 +74,12 @@ export async function runChild(
     transport.send(encode("$state", proc.state as Record<string, unknown>)).catch(() => {});
   });
 
-  // 6. Forward incoming wire messages to the actor
+  // 6. Forward incoming messages to the actor
   transport.onMessage((line) => {
     const msg = decode(line);
-    if (isInit(msg)) return; // already handled
     if (isMsg(msg)) {
       const { fromName, body } = msg.$msg;
-      proc.send(
-        body as Message,
-        { fromName, fromId: Symbol() },
-      );
+      proc.send(body as Message, { fromName, fromId: Symbol() });
     }
   });
 

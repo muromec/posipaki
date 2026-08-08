@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { unlink } from "node:fs/promises";
-import { FifoTransport } from "./fifo.js";
+import { FifoUtf8NlineTransport } from "./fifo.js";
 import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
 import type { Message } from "../types.js";
 
@@ -27,19 +27,27 @@ export interface RemoteProxy {
 }
 
 export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
-  const fifoPath = join(tmpdir(), `posipaki-${randomUUID()}.pipe`);
+  const basePath = join(tmpdir(), `posipaki-${randomUUID()}`);
 
-  execSync(`mkfifo "${fifoPath}"`);
+  execSync(`mkfifo "${basePath}.in"`);
+  execSync(`mkfifo "${basePath}.out"`);
 
-  const childCmd = [...opts.command, `--fifo=${fifoPath}`];
+  // Start opening the read fifo before spawning the child (deadlock prevention)
+  const setup = FifoUtf8NlineTransport.beginConnect(basePath + ".in", basePath + ".out");
+
+  const childCmd = [
+    ...opts.command,
+    `--fifo-in=${basePath + ".in"}`,
+    `--fifo-out=${basePath + ".out"}`,
+  ];
   const childProc: ChildProcess = spawn(childCmd[0], childCmd.slice(1), {
     cwd: process.cwd(),
     stdio: ["inherit", "inherit", "inherit"],
   });
-  
-  const transport = await FifoTransport.open(fifoPath, "reader");
-  
-  // Read $proto
+
+  const transport = await setup.transport;
+
+  // ── handshake ───────────────────────────────────────────────────────
   const protoLine = await new Promise<string>((resolve) => {
     transport.onMessage((line) => resolve(line));
   });
@@ -47,17 +55,16 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
   if (!isProto(protoMsg) || protoMsg.$proto !== PROTO_VERSION) {
     throw new Error(`unsupported protocol: ${protoLine.slice(0, 50)}`);
   }
+  transport.removeHandler();
 
-  // Send $init
   await transport.send(encode("$init", {
     ...opts.args,
     parentName: opts.parentName ?? "host",
     parentIdName: opts.parentName ?? "host",
   }));
-  
-  // Wait for first $state → ready
+
   let currentState: unknown = null;
-  const readyPromise = new Promise<void>((resolve) => {
+  await new Promise<void>((resolve) => {
     transport.onMessage((line) => {
       const msg = decode(line);
       if (isState(msg)) {
@@ -66,16 +73,15 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
       }
     });
   });
-  await readyPromise;
-  
-  // Message handlers
+  transport.removeHandler();
+
+  // ── persistent handler ──────────────────────────────────────────────
   let msgHandler: ((msg: Message) => void) | null = null;
   let exitResolver: ((value: { code: number | null; state: unknown }) => void) | null = null;
   const exitPromise = new Promise<{ code: number | null; state: unknown }>((resolve) => {
     exitResolver = resolve;
   });
 
-  // Process remaining messages
   transport.onMessage((line) => {
     const msg = decode(line);
     if (isState(msg)) {
@@ -91,13 +97,14 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
     }
   });
 
-  // Watch child process
+  // ── cleanup ─────────────────────────────────────────────────────────
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;
     cleaned = true;
     transport.close();
-    unlink(fifoPath).catch(() => {});
+    unlink(basePath + ".in").catch(() => {});
+    unlink(basePath + ".out").catch(() => {});
   };
 
   childProc.on("exit", (code) => {
@@ -110,20 +117,12 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
 
   return {
     state: currentState,
-
     async ready() {},
-
     send(msg: Message) {
       const from = opts.parentName ?? "host";
       transport.send(encode("$msg", { type: msg.type, fromName: from, body: msg }));
     },
-
-    async wait() {
-      return exitPromise;
-    },
-
-    onMessage(handler) {
-      msgHandler = handler;
-    },
+    async wait() { return exitPromise; },
+    onMessage(handler) { msgHandler = handler; },
   };
 }

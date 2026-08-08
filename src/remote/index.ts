@@ -3,5 +3,5 @@ export { spawnRemote } from "./host.js";
 export type { SpawnOptions, RemoteProxy } from "./host.js";
 export { defineRemoteActor } from "./define.js";
 export type { RemoteActorDefinition } from "./define.js";
-export { FifoTransport } from "./fifo.js";
+export { FifoUtf8NlineTransport } from "./fifo.js";
 export * from "./protocol.js";

@@ -1,6 +1,4 @@
-// ⚠️ WIP — fragile. May hang on startup, drop EBADF on shutdown.
-// Good for POC/demo, not production-ready.
-// ── Remote Actor POC ───────────────────────────────────────────────────────
+// ── Remote Actor POC — stable, no hangs, no EBADF ─────────────────────────
 //
 // Demonstrates defineRemoteActor — one import, both ends of the wire.
 //
