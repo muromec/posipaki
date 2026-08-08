@@ -10,12 +10,12 @@
 
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import type { AsyncProcessFn, Message } from "../types.js";
+import type { AsyncProcessFn, Message, WithSender, StopMessage } from "../types.js";
 import type { HandlerOptions } from "../actor-types.js";
 import type { ProcessCtx as PCtx } from "../types.js";
 import { runChild } from "./child.js";
 import { spawnRemote } from "./host.js";
-import { spawnAsync } from "../process.async.js";
+import { spawnAsync, runDispatchAsync } from "../process.async.js";
 import type { ActorDefinition } from "../actor-types.js";
 
 export interface RemoteActorOptions {
@@ -56,34 +56,29 @@ export function defineRemoteActor<
       args: args as Record<string, unknown>,
     });
 
-    // Forward child emits → parent
     remote.onMessage((msg) => {
       ctx.toParent(msg as OutMsg);
     });
 
     yield remote.state as ExposedState;
 
-    let msg = yield remote.state as ExposedState;
-
-    while (true) {
+    let done = false;
+    yield* runDispatchAsync<WithSender<InMsg | StopMessage>>("remote-proxy", async (msg) => {
       if (msg[0].type === "STOP") {
         remote.send(msg[0]);
         await remote.wait();
+        done = true;
         return;
       }
       remote.send(msg[0]);
-      msg = yield (remote.state as ExposedState);
-    }
+    }, () => done);
   };
 
   return {
     ...actor,
     fn: proxyFn,
     spawn(args: Args) {
-      return spawnAsync(
-        proxyFn,
-        actor.config.name ?? "actor",
-      )(args);
+      return spawnAsync(proxyFn, actor.config.name ?? "actor")(args);
     },
     spawnAsChild(
       ctx: PCtx<any, any, any, any>,
