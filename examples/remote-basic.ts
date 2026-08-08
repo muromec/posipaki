@@ -49,7 +49,7 @@ if (!isRemoteRoot) {
   send({ type: "PING", count: 3 });
   await new Promise((r) => setTimeout(r, 200));
 
-  console.log("Host: received PONGs:", pongs.map((p: any) => p.count));
+  console.log("Host: received PONGs:", pongs.map(p => p.count));
 
   send({ type: "STOP" });
   await proc.wait();
