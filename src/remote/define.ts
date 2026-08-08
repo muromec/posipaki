@@ -98,7 +98,7 @@ export function defineRemoteActor<
     hooks: {
       async onMessage(this: Ctx, msg: InMsg): Promise<HookResult> {
         this.state.$remote?.send(msg);
-        return stopPropagation() as unknown as HookResult;
+        return stopPropagation();
       },
       async onStopRequested(this: Ctx) {
         if (this.state.$remote) {

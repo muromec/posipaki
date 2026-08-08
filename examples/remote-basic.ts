@@ -38,20 +38,16 @@ if (!isRemoteRoot) {
   )({});
 
   await proc.ready();
-  console.log("Host: child ready");
 
-  const send = (msg: any) => proc.send(msg, { fromName: "host", fromId: Symbol() });
+  const send = (msg: { type: string; [key: string]: unknown }) =>
+    proc.send(msg, { fromName: "host", fromId: Symbol() });
 
   send({ type: "PING", count: 1 });
-  await new Promise((r) => setTimeout(r, 200));
   send({ type: "PING", count: 2 });
-  await new Promise((r) => setTimeout(r, 200));
   send({ type: "PING", count: 3 });
-  await new Promise((r) => setTimeout(r, 200));
+  send({ type: "STOP" });
+
+  await proc.wait();
 
   console.log("Host: received PONGs:", pongs.map(p => p.count));
-
-  send({ type: "STOP" });
-  await proc.wait();
-  console.log("Host: child exited");
 }
