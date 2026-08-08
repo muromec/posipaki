@@ -59,25 +59,10 @@ export async function runChild<
   const { parentName: _pn, parentIdName: _pid, ...initArgs } = initMsg;
 
   // 3. Spawn the actor
-  // Intercept yields to track state — defineActor's runDispatchAsync
-  // yields null, but we need the actual state for $state messages.
   const wrappedFn: typeof fn = async function* (ctx, args) {
     (ctx as Record<string, unknown>).parentName = parentName;
     (ctx as Record<string, unknown>).parentId = parentId;
-
-    const gen = fn(ctx, args);
-    let result = await gen.next();
-    let currentState = (result.value ?? null) as State | null;
-
-    if (result.done) return;
-    const firstMsg = yield currentState;
-
-    result = await gen.next(firstMsg);
-    while (!result.done) {
-      if (result.value != null) currentState = result.value as State;
-      const msg = yield currentState;
-      result = await gen.next(msg);
-    }
+    return yield* fn(ctx, args);
   };
 
   const proc = spawnAsync(wrappedFn, "remote", (msgWithSender) => {
