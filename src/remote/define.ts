@@ -73,12 +73,12 @@ export function defineRemoteActor<
     expose: (s: IS): ExposedState => s.$remote?.state as ExposedState,
     handlers: {} as unknown as Handlers,
     async setup(this: Ctx, args: Args): Promise<IS> {
-      const remote = await spawnRemote({
+      const remote = await spawnRemote<ExposedState, InMsg, OutMsg, Args>({
         command: ["bun", "run", scriptPath, marker],
-        args: args as Record<string, unknown>,
+        args: args,
       });
-      remote.onMessage((msg: Message) => {
-        this.emit(msg as OutMsg);
+      remote.onMessage((msg: OutMsg) => {
+        this.emit(msg);
       });
       return { $remote: remote };
     },

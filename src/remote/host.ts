@@ -11,23 +11,32 @@ import { FifoUtf8NlineTransport } from "./fifo.js";
 import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
 import type { Message } from "../types.js";
 
-export interface SpawnOptions {
+export interface SpawnOptions<Args = Record<string, unknown>> {
   command: string[];
-  args: Record<string, unknown>;
+  args: Args;
   parentName?: string;
 }
 
-export interface RemoteProxy<State = unknown> {
+export interface RemoteProxy<
+  State = unknown,
+  InMsg extends Message = Message,
+  OutMsg extends Message = Message,
+> {
   readonly state: State;
   ready(): Promise<void>;
-  send(msg: Message): void;
+  send(msg: InMsg): void;
   wait(): Promise<{ code: number | null; state: State }>;
-  onMessage(handler: (msg: Message) => void): void;
+  onMessage(handler: (msg: OutMsg) => void): void;
 }
 
-export async function spawnRemote<State = unknown>(
-  opts: SpawnOptions,
-): Promise<RemoteProxy<State>> {
+export async function spawnRemote<
+  State = unknown,
+  InMsg extends Message = Message,
+  OutMsg extends Message = Message,
+  Args = Record<string, unknown>,
+>(
+  opts: SpawnOptions<Args>,
+): Promise<RemoteProxy<State, InMsg, OutMsg>> {
   const basePath = join(tmpdir(), `posipaki-${randomUUID()}`);
 
   execSync(`mkfifo "${basePath}.in"`);
@@ -58,7 +67,7 @@ export async function spawnRemote<State = unknown>(
   transport.removeHandler();
 
   await transport.send(encode("$init", {
-    ...opts.args,
+    ...opts.args as Record<string, unknown>,
     parentName: opts.parentName ?? "host",
     parentIdName: opts.parentName ?? "host",
   }));
@@ -76,7 +85,7 @@ export async function spawnRemote<State = unknown>(
   transport.removeHandler();
 
   // ── persistent handler ──────────────────────────────────────────────
-  let msgHandler: ((msg: Message) => void) | null = null;
+  let msgHandler: ((msg: OutMsg) => void) | null = null;
   let exitResolver: ((value: { code: number | null; state: State }) => void) | null = null;
   const exitPromise = new Promise<{ code: number | null; state: State }>((resolve) => {
     exitResolver = resolve;
@@ -87,7 +96,7 @@ export async function spawnRemote<State = unknown>(
     if (isState(msg)) {
       Object.assign(currentState, msg.$state as Record<string, unknown>);
     } else if (isMsg(msg)) {
-      msgHandler?.(msg.$msg.body as Message);
+      msgHandler?.(msg.$msg.body as OutMsg);
     } else if (isExit(msg)) {
       if (exitResolver) {
         exitResolver({ code: msg.$exit.code, state: msg.$exit.state as State });
@@ -118,11 +127,11 @@ export async function spawnRemote<State = unknown>(
   return {
     get state(): State { return currentState as State; },
     async ready() {},
-    send(msg: Message) {
+    send(msg: InMsg) {
       const from = opts.parentName ?? "host";
       transport.send(encode("$msg", { type: msg.type, fromName: from, body: msg }));
     },
     async wait() { return exitPromise; },
-    onMessage(handler) { msgHandler = handler; },
+    onMessage(handler: (msg: OutMsg) => void) { msgHandler = handler; },
   };
 }
