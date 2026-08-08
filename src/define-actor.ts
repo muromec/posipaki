@@ -236,8 +236,19 @@ export function defineActor<
       (self as Record<string, unknown>)[key] = value;
     }
 
-    // Yield the exposed state — external consumers see this.
-    yield exposedState;
+    // ── setup hook (runs before first yield — async, e.g. remote connect) ──
+    if (config.setup) {
+      await config.setup.call(self, args);
+      // Recompute exposed state after setup.
+      const updatedExposed: ExposedState = config.expose
+        ? config.expose(rawState)
+        : (rawState as unknown as ExposedState);
+      (self as { state: InternalState }).state = rawState;
+      // Yield the (possibly updated) exposed state.
+      yield updatedExposed;
+    } else {
+      yield exposedState;
+    }
 
     // Call onStart with args.
     if (config.onStart) {

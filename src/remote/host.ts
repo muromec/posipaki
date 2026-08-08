@@ -63,12 +63,12 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
     parentIdName: opts.parentName ?? "host",
   }));
 
-  let currentState: unknown = null;
+  let currentState: Record<string, unknown> = {};
   await new Promise<void>((resolve) => {
     transport.onMessage((line) => {
       const msg = decode(line);
       if (isState(msg)) {
-        currentState = msg.$state;
+        Object.assign(currentState, msg.$state as Record<string, unknown>);
         resolve();
       }
     });
@@ -85,7 +85,7 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
   transport.onMessage((line) => {
     const msg = decode(line);
     if (isState(msg)) {
-      currentState = msg.$state;
+      Object.assign(currentState, msg.$state as Record<string, unknown>);
     } else if (isMsg(msg)) {
       msgHandler?.(msg.$msg.body as Message);
     } else if (isExit(msg)) {
@@ -116,7 +116,7 @@ export async function spawnRemote(opts: SpawnOptions): Promise<RemoteProxy> {
   });
 
   return {
-    get state() { return currentState; },
+    get state() { return currentState as Record<string, unknown>; },
     async ready() {},
     send(msg: Message) {
       const from = opts.parentName ?? "host";

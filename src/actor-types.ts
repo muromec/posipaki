@@ -135,6 +135,12 @@ export interface ActorConfig<
   outMessages?: ActorMessages<OutMsg>;
   inMessages?: ActorMessages<InMsg>;
 
+  /** Async setup before the first yield.  Use for remote connections, DB init, etc. */
+  setup?: (
+    this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
+    args: Args,
+  ) => void | Promise<void>;
+
   onStart?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     args: Args,

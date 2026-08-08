@@ -3,8 +3,8 @@
 // Wraps an ActorDefinition so that when spawned, it runs in a child process
 // over two named fifos. Returns { actor, runRemoteRoot, isRemoteRoot }.
 //
-// The proxy is a real defineActor with hooks — local and remote actors
-// share the same ActorDefinition type and are fully interchangeable.
+// Uses defineActor's setup hook to spawn the remote child before the first
+// yield, so proc.ready() shows the live remote state — same as local spawn.
 
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
@@ -40,10 +40,8 @@ function pathHash(path: string): string {
 
 const MARKER_PREFIX = "--remote=";
 
-type ProxyInternalState<ES> = {
+type ProxyInternalState = {
   $remote: RemoteProxy | null;
-  /** Initial exposed state computed locally — used until the remote connects. */
-  $initial: ES;
 };
 
 export function defineRemoteActor<
@@ -65,30 +63,17 @@ export function defineRemoteActor<
     runChild(actor.fn);
   }
 
-  type IS = ProxyInternalState<ExposedState>;
+  type IS = ProxyInternalState;
   type Ctx = ActorContext<Args, IS, InMsg, OutMsg, {}, Handlers>;
 
   const proxyDef = defineActor<Args, IS, ExposedState, InMsg, OutMsg, {}, Handlers>({
     name: actor.config.name ?? "actor",
     inMessages: actor.config.inMessages,
     outMessages: actor.config.outMessages,
-    initialState(args: Args, ctx: Ctx["ctx"]): IS {
-      // Compute initial exposed state locally — matches a local spawn.
-      const raw = typeof actor.config.initialState === "function"
-        ? (actor.config.initialState as (args: Args, ctx: Ctx["ctx"]) => Record<string, unknown>)(args, ctx)
-        : (actor.config.initialState as Record<string, unknown>);
-      const exposed = actor.config.expose
-        ? actor.config.expose(raw)
-        : raw;
-      return { $remote: null, $initial: exposed as unknown as ExposedState };
-    },
-    expose(s: IS): ExposedState {
-      // Once connected, show the live remote state.  Before connection,
-      // show the locally-computed initial state (matches local spawn).
-      return (s.$remote?.state as ExposedState) ?? s.$initial;
-    },
+    initialState: (): IS => ({ $remote: null }),
+    expose: (s: IS): ExposedState => s.$remote?.state as ExposedState,
     handlers: {} as unknown as Handlers,
-    async onStart(this: Ctx, args: Args) {
+    async setup(this: Ctx, args: Args) {
       const remote = await spawnRemote({
         command: ["bun", "run", scriptPath, marker],
         args: args as Record<string, unknown>,
