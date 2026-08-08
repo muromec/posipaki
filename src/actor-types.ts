@@ -45,6 +45,7 @@ export interface ActorDefinition<
   OutMsg extends Message,
   // eslint-disable-next-line no-unused-vars
   Handlers extends HandlerOptions<InMsg>,
+  ReflectionMethods = {},
 > {
   fn: AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>;
   config: ActorConfig<Args, any, ExposedState, InMsg, OutMsg, {}, Handlers>;
@@ -53,13 +54,13 @@ export interface ActorDefinition<
   /** Raw plugin config (array or transform). Resolved at fork time. @internal */
   pvtPluginsRaw?: ActorPlugin[] | PluginTransform;
   /** Spawn this actor as a standalone process. */
-  spawn(args: Args): AsyncProcess<Args, ExposedState, InMsg, OutMsg>;
+  spawn(args: Args): AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
   /** Spawn this actor as a child of the calling process. */
   spawnAsChild(
     ctx: ProcessCtx<any, any, any, any>,
     args: Args,
     name?: string,
-  ): AsyncProcess<Args, ExposedState, InMsg, OutMsg>;
+  ): AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
 }
 
 export interface ActorHooksConfig<
@@ -108,6 +109,7 @@ export interface ActorConfig<
   Methods extends MethodOptions,
   // eslint-disable-next-line no-unused-vars
   Handlers extends HandlerOptions<InMsg>,
+  ReflectionMethods = {},
 > {
   initialState?:
     | InternalState
@@ -179,6 +181,9 @@ export interface ActorConfig<
     name: string,
     reason: ExitMessage,
   ) => void | Promise<void>;
+
+  $reflectionMethods?: ReflectionMethods &
+    ThisType<ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>>;
 }
 
 export type ActorContext<

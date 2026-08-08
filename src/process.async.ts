@@ -63,7 +63,10 @@ export class AsyncProcess<
   State,
   InMessage extends Message,
   OutMessage extends Message,
+  ReflectionMethods = {},
 > {
+  /** Reflection methods.  Empty by default — defineActor fills in configured methods. */
+  $reflection: ReflectionMethods = {} as ReflectionMethods;
   pgenerator: AsyncProcessFn<Args, State, InMessage, OutMessage>;
   pname: string;
   /** Called for every message sent via `ctx.toParent`. Receives `WithSender<OutMessage>`. */

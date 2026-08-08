@@ -45,6 +45,7 @@ export function defineActor<
   OutMsg extends Message,
   Methods extends MethodOptions,
   Handlers extends HandlerOptions<InMsg>,
+  ReflectionMethods = {},
 >(
   config: ActorConfig<
     Args,
@@ -53,9 +54,10 @@ export function defineActor<
     InMsg,
     OutMsg,
     Methods,
-    Handlers
+    Handlers,
+    ReflectionMethods
   >,
-): ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers> {
+): ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers, ReflectionMethods> {
   // ── internal helpers ──────────────────────────────────────────────
 
   /** Extract pvtResolvedPlugins from an async process function
@@ -74,6 +76,10 @@ export function defineActor<
 
   // Internal generator receives WithSender<InMsg> so sender identity
   // is directly accessible in the dispatch loop with zero casts.
+  // Promise that resolves with the ActorContext after yield.
+  // Reflection methods await this so they get the real `this` context.
+  const actorCtxMap = new Map<symbol, ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>>();
+
   const fn = async function* (
     ctx: ProcessCtx<Args, ExposedState, InMsg, OutMsg>,
     args: Args,
@@ -168,6 +174,7 @@ export function defineActor<
       },
       
     };
+    actorCtxMap.set(ctx.id, self);
 
 
     // ── wire hook registration + decorate onto ctx (for plugin install) ─
@@ -253,6 +260,7 @@ export function defineActor<
     }
 
     yield exposedState;
+
 
     // ── afterStart ──────────────────────────────────────────────────
     if (config.afterStart) { await config.afterStart.call(self); }
@@ -365,7 +373,19 @@ export function defineActor<
     if (config.onEnd) {
       await config.onEnd.call(self, exitReason ?? "done");
     }
+    actorCtxMap.delete(ctx.id);
   };
+
+  type ReflectableProcess = { id: symbol; $reflection: Record<string, Function> };
+
+  function attachReflection(proc: ReflectableProcess): void {
+    if (!config.$reflectionMethods) return;
+    for (const [key, method] of Object.entries(config.$reflectionMethods)) {
+      (proc.$reflection as Record<string, Function>)[key] = async (...methodArgs: unknown[]) => {
+        return (method as Function).call(actorCtxMap.get(proc.id)!, ...methodArgs);
+      };
+    }
+  }
 
   return {
     fn: fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
@@ -381,20 +401,24 @@ export function defineActor<
       Handlers
     >,
     spawn(args: Args) {
-      return spawnAsync(
+      const proc = spawnAsync(
         fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
         config.name ?? "actor",
       )(args);
+      attachReflection(proc);
+      return proc as AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
     },
     spawnAsChild(
       ctx: ProcessCtx<any, any, any, any>,
       args: Args,
       name?: string,
     ) {
-      return ctx.fork(
+      const proc = ctx.fork(
         fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
         name ?? config.name ?? 'child',
       )(args);
+      attachReflection(proc);
+      return proc as AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
     },
   };
 }
