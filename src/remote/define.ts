@@ -1,13 +1,14 @@
-// ⚠️ WIP — child mode detection via --remote=<hash> marker.
 // ── defineRemoteActor ──────────────────────────────────────────────────────
 //
 // One-file wrapper: import on the host side, execute on the child side.
 //
 //   export const myRemoteActor = defineRemoteActor(MyActor.fn, import.meta.url);
+//
+// Local and remote actors share the same spawn() signature:
+//   const proc = myActor.spawn(args);  // works for both
 
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import type { ProcessCtx, Message } from "../types.js";
 import { runChild } from "./child.js";
 import { spawnRemote } from "./host.js";
 import type { RemoteProxy } from "./host.js";
@@ -19,9 +20,8 @@ export interface RemoteActorOptions {
 export interface RemoteActorDefinition<Args> {
   isChild: boolean;
   runChild(): Promise<void>;
-  spawn(
-    ctx: ProcessCtx<unknown, unknown, Message, Message> | null,
-  ): (args: Args) => Promise<RemoteProxy>;
+  /** Spawn the remote actor.  Same signature as ActorDefinition.spawn(). */
+  spawn(args: Args): Promise<RemoteProxy>;
 }
 
 function pathHash(path: string): string {
@@ -51,13 +51,11 @@ export function defineRemoteActor(
       return runChild(fn);
     },
 
-    spawn(_ctx) {
-      return (args: Record<string, unknown>) => {
-        return spawnRemote({
-          command: ["bun", "run", scriptPath, marker],
-          args: args,
-        });
-      };
+    spawn(args: Record<string, unknown>) {
+      return spawnRemote({
+        command: ["bun", "run", scriptPath, marker],
+        args,
+      });
     },
   };
 }

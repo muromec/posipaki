@@ -101,16 +101,16 @@ describe("defineRemoteActor — definition shape", () => {
     await result; // don't leave it hanging
   });
 
-  it("spawn(ctx) returns a curried function", () => {
+  it("spawn is a function (not curried)", () => {
     const def = defineRemoteActor(dummyFn(), TEST_URL);
-    const spawnFn = def.spawn(null);
+    const spawnFn = def.spawn;
     expect(typeof spawnFn).toBe("function");
   });
 
-  it("spawn(ctx)(args) returns a Promise<RemoteProxy>", async () => {
+  it("spawn(args) returns a Promise<RemoteProxy>", async () => {
     const def = defineRemoteActor(dummyFn(), TEST_URL);
-    const spawnFn = def.spawn(null);
-    const proxy = await spawnFn({ tools: ["a"] });
+    const spawnFn = def.spawn;
+    const proxy = await def.spawn({ tools: ["a"] });
     expect(proxy).toBeDefined();
     expect(typeof proxy.send).toBe("function");
     expect(typeof proxy.onMessage).toBe("function");

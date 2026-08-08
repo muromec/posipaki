@@ -26,7 +26,7 @@ const remoteEcho = defineRemoteActor(echoActor.fn, import.meta.url);
 if (!remoteEcho.isChild) {
   console.log("Host: spawning child...");
 
-  const proxy = await remoteEcho.spawn(null)({});
+  const proxy = await remoteEcho.spawn({});
 
   console.log("Host: child ready, state:", proxy.state);
 
