@@ -6,16 +6,16 @@
 //
 //   const echo = defineActor({ ... });
 //   const remoteEcho = defineRemoteActor(echo, import.meta.url);
-//   const proc = remoteEcho.spawn({});  // AsyncProcess, same as echo.spawn({})
+//   const proc = remoteEcho.spawn({});  // AsyncProcess, same interface
 
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
-import type { AsyncProcessFn, Message, WithSender, StopMessage } from "../types.js";
+import type { Message } from "../types.js";
 import type { HandlerOptions } from "../actor-types.js";
-import type { ProcessCtx as PCtx } from "../types.js";
+import { defineActor } from "../define-actor.js";
+import { stopPropagation } from "../hooks.js";
 import { runChild } from "./child.js";
 import { spawnRemote } from "./host.js";
-import { spawnAsync, runDispatchAsync } from "../process.async.js";
 import type { ActorDefinition } from "../actor-types.js";
 
 export interface RemoteActorOptions {
@@ -47,49 +47,42 @@ export function defineRemoteActor<
     runChild(actor.fn);
   }
 
-  const proxyFn: AsyncProcessFn<Args, ExposedState, InMsg, OutMsg> = async function* (
-    ctx: PCtx<Args, ExposedState, InMsg, OutMsg>,
-    args: Args,
-  ) {
-    const remote = await spawnRemote({
-      command: ["bun", "run", scriptPath, marker],
-      args: args as Record<string, unknown>,
-    });
-
-    remote.onMessage((msg) => {
-      ctx.toParent(msg as OutMsg);
-    });
-
-    yield remote.state as ExposedState;
-
-    let done = false;
-    yield* runDispatchAsync<WithSender<InMsg | StopMessage>>("remote-proxy", async (msg) => {
-      if (msg[0].type === "STOP") {
-        remote.send(msg[0]);
-        await remote.wait();
-        done = true;
-        return;
-      }
-      remote.send(msg[0]);
-    }, () => done);
-  };
+  const proxyDef = defineActor<Args, any, ExposedState, InMsg, OutMsg, {}, Handlers>({
+    name: actor.config.name ?? "actor",
+    inMessages: actor.config.inMessages,
+    outMessages: actor.config.outMessages,
+    initialState: actor.config.initialState,
+    expose: actor.config.expose,
+    handlers: {} as unknown as Handlers,
+    // onStart on the config (not hooks) fires with args
+    async onStart(this: any, args: Args) {
+      const remote = await spawnRemote({
+        command: ["bun", "run", scriptPath, marker],
+        args: args as Record<string, unknown>,
+      });
+      this.state.$remote = remote;
+      remote.onMessage((msg: Message) => {
+        this.emit(msg);
+      });
+    },
+    hooks: {
+      async onMessage(this: any, msg: InMsg) {
+        this.state.$remote?.send(msg);
+        return stopPropagation() as any;
+      },
+      async onStopRequested(this: any) {
+        const remote = this.state.$remote;
+        if (remote) {
+          remote.send({ type: "STOP" });
+          await remote.wait();
+        }
+        this.agreeToStop();
+      },
+    },
+  });
 
   return {
-    ...actor,
-    fn: proxyFn,
-    spawn(args: Args) {
-      return spawnAsync(proxyFn, actor.config.name ?? "actor")(args);
-    },
-    spawnAsChild(
-      ctx: PCtx<any, any, any, any>,
-      args: Args,
-      name?: string,
-    ) {
-      return ctx.fork(
-        proxyFn,
-        name ?? actor.config.name ?? "child",
-      )(args);
-    },
+    ...proxyDef,
     isChild,
   };
 }
