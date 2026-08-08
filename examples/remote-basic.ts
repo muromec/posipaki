@@ -1,6 +1,7 @@
 // ── Remote Actor POC — stable, no hangs, no EBADF ─────────────────────────
 //
 // Demonstrates defineRemoteActor — one import, both ends of the wire.
+// Returns a real ActorDefinition, interchangeable with defineActor.
 //
 // Run:
 //   bun run examples/remote-basic.ts
@@ -21,30 +22,24 @@ const echoActor = defineActor({
   },
 });
 
-const remoteEcho = defineRemoteActor(echoActor.fn, import.meta.url);
+const remoteEcho = defineRemoteActor(echoActor, import.meta.url);
 
 if (!remoteEcho.isChild) {
   console.log("Host: spawning child...");
 
-  const proxy = await remoteEcho.spawn({});
+  const proc = remoteEcho.spawn({});
+  await proc.ready();
 
-  console.log("Host: child ready, state:", proxy.state);
+  console.log("Host: child ready");
 
-  const pongs: Array<{ count: number }> = [];
-  proxy.onMessage((msg: any) => {
-    if (msg.type === "PONG") pongs.push(msg);
-  });
+  const send = (msg: any) => proc.send(msg, { fromName: "host", fromId: Symbol() });
 
-  for (let i = 1; i <= 3; i++) {
-    proxy.send({ type: "PING", count: i } as any);
-    await new Promise((r) => setTimeout(r, 50));
-  }
+  send({ type: "PING", count: 1 });
+  send({ type: "PING", count: 2 });
+  send({ type: "PING", count: 3 });
   await new Promise((r) => setTimeout(r, 200));
 
-  console.log("Host: received PONGs:", pongs.map((p: any) => p.count));
-  console.log("Host: final state:", proxy.state);
-
-  proxy.send({ type: "STOP" } as any);
-  const result = await proxy.wait();
-  console.log("Host: child exited with code", result.code);
+  send({ type: "STOP" });
+  await proc.wait();
+  console.log("Host: child exited");
 }

@@ -1,18 +1,19 @@
 // ── defineRemoteActor tests ────────────────────────────────────────────────
 
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
+import { defineActor, defineMessages } from "../index.js";
 import { defineRemoteActor } from "./define.js";
 
-// Mock child module — prevent runChild from actually executing
+// Mock child module so isChild doesn't actually run
 vi.mock("./child.js", () => ({
-  runChild: vi.fn(() => Promise.resolve()),
+  runChild: vi.fn(),
   makeSender: vi.fn(),
 }));
 
-// Mock host module — prevent spawnRemote from actually spawning
+// Mock host module so spawn doesn't actually spawn
 vi.mock("./host.js", () => ({
   spawnRemote: vi.fn(() => Promise.resolve({
-    state: {},
+    state: { pings: 0 },
     ready: async () => {},
     send: () => {},
     wait: async () => ({ code: 0, state: {} }),
@@ -22,8 +23,16 @@ vi.mock("./host.js", () => ({
 
 // ── helpers ────────────────────────────────────────────────────────────────
 
-function dummyFn(): any {
-  return async function* () {};
+function makeDummyActor() {
+  return defineActor({
+    name: "dummy",
+    inMessages: defineMessages<{ type: "PING"; count: number }>(),
+    outMessages: defineMessages<{ type: "PONG"; count: number }>(),
+    initialState: () => ({ pings: 0 }),
+    handlers: {
+      PING(msg: any) { this.emit({ type: "PONG", count: msg.count }); },
+    },
+  });
 }
 
 const TEST_URL = "file:///home/test/project/src/actors/echo.ts";
@@ -32,16 +41,9 @@ const TEST_URL = "file:///home/test/project/src/actors/echo.ts";
 
 describe("defineRemoteActor — pathHash", () => {
   it("same URL produces same isChild value", () => {
-    const a = defineRemoteActor(dummyFn(), TEST_URL);
-    const b = defineRemoteActor(dummyFn(), TEST_URL);
+    const a = defineRemoteActor(makeDummyActor(), TEST_URL);
+    const b = defineRemoteActor(makeDummyActor(), TEST_URL);
     expect(a.isChild).toBe(b.isChild);
-  });
-
-  it("different URLs both produce definitions", () => {
-    const a = defineRemoteActor(dummyFn(), "file:///a.ts");
-    const b = defineRemoteActor(dummyFn(), "file:///b.ts");
-    expect(typeof a.isChild).toBe("boolean");
-    expect(typeof b.isChild).toBe("boolean");
   });
 });
 
@@ -55,7 +57,7 @@ describe("defineRemoteActor — isChild detection", () => {
 
   it("isChild is false when marker is not in argv", () => {
     process.argv = ["bun", "script.ts"];
-    const def = defineRemoteActor(dummyFn(), TEST_URL);
+    const def = defineRemoteActor(makeDummyActor(), TEST_URL);
     expect(def.isChild).toBe(false);
   });
 
@@ -67,7 +69,7 @@ describe("defineRemoteActor — isChild detection", () => {
     const marker = `--remote=${hash}`;
 
     process.argv = ["bun", "script.ts", marker];
-    const def = defineRemoteActor(dummyFn(), TEST_URL);
+    const def = defineRemoteActor(makeDummyActor(), TEST_URL);
     expect(def.isChild).toBe(true);
   });
 
@@ -79,7 +81,7 @@ describe("defineRemoteActor — isChild detection", () => {
     const marker = `--remote=${hash}`;
 
     process.argv = ["bun", "script.ts", marker];
-    const def = defineRemoteActor(dummyFn(), TEST_URL, { manual: true });
+    const def = defineRemoteActor(makeDummyActor(), TEST_URL, { manual: true });
     expect(def.isChild).toBe(false);
   });
 });
@@ -87,34 +89,23 @@ describe("defineRemoteActor — isChild detection", () => {
 // ── returned definition shape ──────────────────────────────────────────────
 
 describe("defineRemoteActor — definition shape", () => {
-  it("returns isChild (boolean), runChild (function), spawn (function)", () => {
-    const def = defineRemoteActor(dummyFn(), TEST_URL);
+  it("returns isChild, fn, config, spawn", () => {
+    const def = defineRemoteActor(makeDummyActor(), TEST_URL);
     expect(typeof def.isChild).toBe("boolean");
-    expect(typeof def.runChild).toBe("function");
+    expect(typeof def.fn).toBe("function");
     expect(typeof def.spawn).toBe("function");
+    expect(def.config).toBeDefined();
   });
 
-  it("runChild returns a Promise", async () => {
-    const def = defineRemoteActor(dummyFn(), TEST_URL);
-    const result = def.runChild();
-    expect(result).toBeInstanceOf(Promise);
-    await result; // don't leave it hanging
-  });
-
-  it("spawn is a function (not curried)", () => {
-    const def = defineRemoteActor(dummyFn(), TEST_URL);
-    const spawnFn = def.spawn;
-    expect(typeof spawnFn).toBe("function");
-  });
-
-  it("spawn(args) returns a Promise<RemoteProxy>", async () => {
-    const def = defineRemoteActor(dummyFn(), TEST_URL);
-    const spawnFn = def.spawn;
-    const proxy = await def.spawn({ tools: ["a"] });
-    expect(proxy).toBeDefined();
-    expect(typeof proxy.send).toBe("function");
-    expect(typeof proxy.onMessage).toBe("function");
-    expect(typeof proxy.wait).toBe("function");
+  it("spawn returns an AsyncProcess", async () => {
+    const def = defineRemoteActor(makeDummyActor(), TEST_URL);
+    const proc = def.spawn({});
+    expect(proc).toBeDefined();
+    expect(typeof proc.send).toBe("function");
+    expect(typeof proc.wait).toBe("function");
+    expect(typeof proc.subscribe).toBe("function");
+    // Don't await — the mock spawnRemote resolves immediately but
+    // the generator runs async. Just verify the handle shape.
   });
 });
 
@@ -133,25 +124,25 @@ describe("defineRemoteActor — marker format", () => {
     const expectedHash = createHash("sha256").update(scriptPath).digest("hex").slice(0, 12);
 
     process.argv = ["bun", "script.ts", `--remote=${expectedHash}`];
-    const def = defineRemoteActor(dummyFn(), TEST_URL);
+    const def = defineRemoteActor(makeDummyActor(), TEST_URL);
     expect(def.isChild).toBe(true);
   });
 
   it("wrong hash does not trigger isChild", () => {
     process.argv = ["bun", "script.ts", "--remote=deadbeefcafe"];
-    const def = defineRemoteActor(dummyFn(), TEST_URL);
+    const def = defineRemoteActor(makeDummyActor(), TEST_URL);
     expect(def.isChild).toBe(false);
   });
 
   it("--remote without =value does not trigger isChild", () => {
     process.argv = ["bun", "script.ts", "--remote"];
-    const def = defineRemoteActor(dummyFn(), TEST_URL);
+    const def = defineRemoteActor(makeDummyActor(), TEST_URL);
     expect(def.isChild).toBe(false);
   });
 
   it("--remote= (empty hash) does not match", () => {
     process.argv = ["bun", "script.ts", "--remote="];
-    const def = defineRemoteActor(dummyFn(), TEST_URL);
+    const def = defineRemoteActor(makeDummyActor(), TEST_URL);
     expect(def.isChild).toBe(false);
   });
 });
