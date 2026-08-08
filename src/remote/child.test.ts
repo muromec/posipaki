@@ -77,7 +77,7 @@ describe("runChild integration", () => {
     });
     const stateMsg = decode(stateLine);
     expect(isState(stateMsg)).toBe(true);
-    expect((stateMsg.$state as any).pings).toBe(0);
+    expect((stateMsg.$state as Record<string, unknown>).pings).toBe(0);
     host.removeHandler();
 
     const messages: any[] = [];

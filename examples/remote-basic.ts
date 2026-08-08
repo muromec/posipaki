@@ -27,13 +27,13 @@ const { actor: remoteEcho, isRemoteRoot } = defineRemoteActor(echoActor, import.
 if (!isRemoteRoot) {
   console.log("Host: spawning child...");
 
-  const pongs: Array<{ count: number }> = [];
+  const pongs: Array<{ type: string; count: number }> = [];
   const proc = spawnAsync(
     remoteEcho.fn,
     "remote-echo",
     (msg) => {
       const [body] = msg;
-      if (body.type === "PONG") pongs.push(body as any);
+      if (body.type === "PONG") pongs.push(body as { type: string; count: number });
     },
   )({});
 
