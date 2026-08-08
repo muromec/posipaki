@@ -94,7 +94,7 @@ export function defineActor<
         : config.initialState;
 
     // Apply expose if provided, otherwise identity.
-    const exposedState: ExposedState = config.expose
+    let exposedState: ExposedState = config.expose
       ? config.expose(rawState)
       : (rawState as unknown as ExposedState);
 
@@ -236,29 +236,23 @@ export function defineActor<
       (self as Record<string, unknown>)[key] = value;
     }
 
-    // ── setup hook (runs before first yield — async, e.g. remote connect) ──
-    if (config.setup) {
-      await config.setup.call(self, args);
-      // Recompute exposed state after setup.
-      const updatedExposed: ExposedState = config.expose
-        ? config.expose(rawState)
-        : (rawState as unknown as ExposedState);
-      (self as { state: InternalState }).state = rawState;
-      // Yield the (possibly updated) exposed state.
-      yield updatedExposed;
-    } else {
-      yield exposedState;
-    }
-
-    // Call onStart with args.
+    // Call onStart with args (before first yield — async setup goes here).
     if (config.onStart) {
       await config.onStart.call(self, args);
     }
+
+    // Recompute exposed state after onStart (state may have changed).
+    exposedState = config.expose
+      ? config.expose(rawState)
+      : (rawState as unknown as ExposedState);
 
     // Fire hooks.onStart after the actor's own onStart.
     for (const hookFn of pvtHooks.onStart) {
       try { await hookFn(exposedState); } catch { /* error handled by onStart body */ }
     }
+
+    // Yield the exposed state — external consumers see this.
+    yield exposedState;
 
     // Dispatch loop..
     yield* runDispatchAsync<WithSender<InMsg | ExitMessage>>(
