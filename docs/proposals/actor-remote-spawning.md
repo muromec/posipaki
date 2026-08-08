@@ -563,3 +563,35 @@ The parent process (command tool harness) also waits indefinitely.
 Workaround: ensure `--fifo` is always passed.  Root cause not yet
 identified — suspected bun event loop issue with async I/O during
 early startup.
+
+---
+
+## Implementation Status (2026-08-08)
+
+### Done
+1. ✅ Wire protocol (`protocol.ts`)
+2. ✅ Fifo transport (`FifoUtf8NlineTransport`, two-fifo, strict handler lifecycle)
+3. ✅ Child adapter (`runChild`, generic, `yield*` interception for state tracking)
+4. ✅ Host adapter (`spawnRemote<State,InMsg,OutMsg,Args>`, `RemoteProxy` with state getter)
+5. ✅ Parent identity (`parentId`/`parentName` on `ProcessCtx`)
+6. ✅ `defineRemoteActor` — returns `{ actor, runRemoteRoot, isRemoteRoot }`
+7. ✅ `setup()` hook — async state initialization before first yield
+
+### Diverged from original proposal
+- **API shape**: `defineRemoteActor(actor, url)` takes a full `ActorDefinition` (not just `fn`), returns `{ actor, runRemoteRoot, isRemoteRoot }` instead of a merged object. `actor` is a real `ActorDefinition` — plug-compatible with local actors.
+- **Spawn signature**: `actor.spawn(args)` is flat (not curried with `ctx`). Returns `AsyncProcess`.
+- **No ctx parameter**: parent identity flows through `spawnAsync(fn, name, toParent)` instead.
+- **Internal**: proxy actor built with `defineActor` + `setup` hook, not a hand-written `AsyncProcessFn`.
+
+### TBD
+- **$fd forwarding** — captured stdout/stderr over the wire
+- **Separation of spawner from wrapper** — `spawnRemote` should be injectable so wrappers (`withBwrap`, `withSudo`, `withSsh`) can compose. Currently hardcodes `bun run scriptPath`. The spawner should be a composable interface:
+  ```typescript
+  type Spawner = (opts: SpawnOptions) => Promise<RemoteProxy>;
+  
+  function withBwrap(opts: BwrapOptions): (inner: Spawner) => Spawner;
+  function withSudo(user: string): (inner: Spawner) => Spawner;
+  ```
+- **Terminal bridge** — first real isolated actor
+- **Full persona isolation** — each reflector tree in its own process
+- **Open questions** — serialization audit, startup latency, cross-process tool calls, SSH relay
