@@ -29,8 +29,7 @@ if (!isRemoteRoot) {
 
   const proc = remoteEcho.spawn({});
   await proc.ready();
-
-  console.log("Host: child ready");
+  console.log("Host: child ready, initial state:", JSON.stringify(proc.state));
 
   const send = (msg: any) => proc.send(msg, { fromName: "host", fromId: Symbol() });
 
@@ -41,5 +40,5 @@ if (!isRemoteRoot) {
 
   send({ type: "STOP" });
   await proc.wait();
-  console.log("Host: child exited");
+  console.log("Host: child exited cleanly");
 }
