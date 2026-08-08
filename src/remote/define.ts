@@ -47,9 +47,8 @@ function pathHash(path: string): string {
 
 const MARKER_PREFIX = "--remote=";
 
-type ProxyInternalState<ES> = {
+type ProxyInternalState = {
   $remote: RemoteProxy | null;
-  $state: ES;
 };
 
 export function defineRemoteActor<
@@ -71,7 +70,7 @@ export function defineRemoteActor<
     runChild(actor.fn);
   }
 
-  type IS = ProxyInternalState<ExposedState>;
+  type IS = ProxyInternalState;
   type Ctx = ActorContext<Args, IS, InMsg, OutMsg, {}, Handlers>;
 
   const proxyDef = defineActor<Args, IS, ExposedState, InMsg, OutMsg, {}, Handlers>({
@@ -80,9 +79,8 @@ export function defineRemoteActor<
     outMessages: actor.config.outMessages,
     initialState: (): IS => ({
       $remote: null,
-      $state: null as unknown as ExposedState,
     }),
-    expose: (s: IS): ExposedState => s.$state,
+    expose: (s: IS): ExposedState => s.$remote?.state as ExposedState,
     handlers: {} as unknown as Handlers,
     async onStart(this: Ctx, args: Args) {
       const remote = await spawnRemote({
@@ -90,7 +88,6 @@ export function defineRemoteActor<
         args: args as Record<string, unknown>,
       });
       this.state.$remote = remote;
-      this.state.$state = remote.state as ExposedState;
       remote.onMessage((msg: Message) => {
         this.emit(msg as OutMsg);
       });
