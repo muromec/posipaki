@@ -19,8 +19,13 @@ export function makeSender(
 import { encode, decode, isInit, isMsg, PROTO_VERSION } from "./protocol.js";
 import { spawnAsync } from "../index.js";
 
-export async function runChild(
-  fn: AsyncProcessFn<Record<string, unknown>, Record<string, unknown>, Message, Message>,
+export async function runChild<
+  Args,
+  State,
+  InMsg extends Message,
+  OutMsg extends Message,
+>(
+  fn: AsyncProcessFn<Args, State, InMsg, OutMsg>,
 ): Promise<void> {
   const fifoIn = process.argv
     .find((a) => a.startsWith("--fifo-in="))
@@ -63,7 +68,7 @@ export async function runChild(
   const proc = spawnAsync(wrappedFn, "remote", (msgWithSender) => {
     const [msg, sender] = msgWithSender;
     transport.send(encode("$msg", { type: msg.type, fromName: sender.fromName, body: msg })).catch(() => {});
-  })(initArgs);
+  })(initArgs as unknown as Args);
   await proc.ready();
 
   // 4. Send initial state
@@ -79,7 +84,7 @@ export async function runChild(
     const msg = decode(line);
     if (isMsg(msg)) {
       const { fromName, body } = msg.$msg;
-      proc.send(body as Message, { fromName, fromId: Symbol() });
+      proc.send(body as InMsg, { fromName, fromId: Symbol() });
     }
   });
 

@@ -44,7 +44,7 @@ export function defineRemoteActor<
   const isChild = !opts.manual && process.argv.includes(marker);
 
   if (isChild) {
-    runChild(actor.fn as unknown as Parameters<typeof runChild>[0]);
+    runChild(actor.fn);
   }
 
   const proxyFn: AsyncProcessFn<Args, ExposedState, InMsg, OutMsg> = async function* (
