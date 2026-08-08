@@ -566,32 +566,28 @@ early startup.
 
 ---
 
-## Implementation Status (2026-08-08)
+## Implementation Status (0.14.0)
 
 ### Done
-1. ✅ Wire protocol (`protocol.ts`)
-2. ✅ Fifo transport (`FifoUtf8NlineTransport`, two-fifo, strict handler lifecycle)
-3. ✅ Child adapter (`runChild`, generic, `yield*` interception for state tracking)
-4. ✅ Host adapter (`spawnRemote<State,InMsg,OutMsg,Args>`, `RemoteProxy` with state getter)
-5. ✅ Parent identity (`parentId`/`parentName` on `ProcessCtx`)
+1. ✅ Wire protocol — `encode`/`decode`, type guards (`protocol.ts`)
+2. ✅ Fifo transport — `FifoUtf8NlineTransport`, two-fifo, strict handler lifecycle
+3. ✅ Child adapter — `runChild(fn)`, generic, `makeSender()` (`child.ts`)
+4. ✅ Host adapter — `commandConnector` (`host.ts`), `RemoteProxy<State,InMsg,OutMsg>`
+5. ✅ Parent identity — `parentId`/`parentName` on `ProcessCtx`
 6. ✅ `defineRemoteActor` — returns `{ actor, runRemoteRoot, isRemoteRoot }`
-7. ✅ `setup()` hook — async state initialization before first yield
+7. ✅ `setup()` / `afterStart()` hooks — async init before first yield
+8. ✅ Connector wrappers — `bunConnector`, `nodeConnector`, `defaultConnector`
+9. ✅ `defineRemoteActor` accepts optional `connector` (defaults to `defaultConnector`)
 
 ### Diverged from original proposal
-- **API shape**: `defineRemoteActor(actor, url)` takes a full `ActorDefinition` (not just `fn`), returns `{ actor, runRemoteRoot, isRemoteRoot }` instead of a merged object. `actor` is a real `ActorDefinition` — plug-compatible with local actors.
-- **Spawn signature**: `actor.spawn(args)` is flat (not curried with `ctx`). Returns `AsyncProcess`.
-- **No ctx parameter**: parent identity flows through `spawnAsync(fn, name, toParent)` instead.
-- **Internal**: proxy actor built with `defineActor` + `setup` hook, not a hand-written `AsyncProcessFn`.
+- **API shape**: takes `ActorDefinition` (not just `fn`), returns `{ actor, runRemoteRoot, isRemoteRoot }`. `actor` is plug-compatible with local actors.
+- **Spawn signature**: `actor.spawn(args)` flat (not curried), returns `AsyncProcess`.
+- **Internal**: proxy actor uses `defineActor` + `setup` hook.
+- **Connector model**: `commandConnector` is the base, wrappers (`bunConnector`, `nodeConnector`) produce `Connector` functions. Wrappers compose at the call site.
 
 ### TBD
 - **$fd forwarding** — captured stdout/stderr over the wire
-- **Separation of spawner from wrapper** — `spawnRemote` should be injectable so wrappers (`withBwrap`, `withSudo`, `withSsh`) can compose. Currently hardcodes `bun run scriptPath`. The spawner should be a composable interface:
-  ```typescript
-  type Spawner = (opts: SpawnOptions) => Promise<RemoteProxy>;
-  
-  function withBwrap(opts: BwrapOptions): (inner: Spawner) => Spawner;
-  function withSudo(user: string): (inner: Spawner) => Spawner;
-  ```
+- **Isolation wrappers** — `withBwrap`, `withSudo`, `withSsh` as connector transforms
 - **Terminal bridge** — first real isolated actor
 - **Full persona isolation** — each reflector tree in its own process
 - **Open questions** — serialization audit, startup latency, cross-process tool calls, SSH relay

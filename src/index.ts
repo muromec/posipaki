@@ -55,3 +55,20 @@ export type {
   ActorDecorated,
   PluginTransform,
 } from "./hooks.js";
+
+// ── remote actors ──────────────────────────────────────────────────────────
+
+export {
+  defineRemoteActor,
+  commandConnector,
+  bunConnector,
+  nodeConnector,
+  defaultConnector,
+} from "./remote/index.js";
+export type {
+  RemoteActorBundle,
+  RemoteActorOptions,
+  RemoteProxy,
+  Connector,
+  CommandSpawnOptions,
+} from "./remote/index.js";
