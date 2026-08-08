@@ -53,12 +53,12 @@ export function defineRemoteActor<
   ) {
     const remote = await spawnRemote({
       command: ["bun", "run", scriptPath, marker],
-      args: args as unknown as Record<string, unknown>,
+      args: args as Record<string, unknown>,
     });
 
     // Forward child emits → parent
     remote.onMessage((msg) => {
-      ctx.toParent(msg as unknown as OutMsg);
+      ctx.toParent(msg as OutMsg);
     });
 
     yield remote.state as ExposedState;
@@ -78,10 +78,10 @@ export function defineRemoteActor<
 
   return {
     ...actor,
-    fn: proxyFn as unknown as typeof actor.fn,
+    fn: proxyFn,
     spawn(args: Args) {
       return spawnAsync(
-        proxyFn as unknown as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
+        proxyFn,
         actor.config.name ?? "actor",
       )(args);
     },
@@ -91,7 +91,7 @@ export function defineRemoteActor<
       name?: string,
     ) {
       return ctx.fork(
-        proxyFn as unknown as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
+        proxyFn,
         name ?? actor.config.name ?? "child",
       )(args);
     },
