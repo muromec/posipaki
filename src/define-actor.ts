@@ -79,6 +79,7 @@ export function defineActor<
   // Promise that resolves with the ActorContext after yield.
   // Reflection methods await this so they get the real `this` context.
   const actorCtxMap = new Map<symbol, ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>>();
+  const pvtRegisteredReflection = new Map<symbol, Map<string, Function>>();
 
   const fn = async function* (
     ctx: ProcessCtx<Args, ExposedState, InMsg, OutMsg>,
@@ -94,6 +95,8 @@ export function defineActor<
 
     // ── hooks ──────────────────────────────────────────────────────────
     const pvtHooks = new HookRegistry<any, any, any>();
+
+    const decorated = new Map<string, unknown>();
 
     // Build the actor context.
     const self: ActorContext<
@@ -125,12 +128,31 @@ export function defineActor<
         done = true;
       },
       $child: {},
-      // ── hook registration ─────────────────────────────────────
-      onMessage: (h: OnMessageHook<any>) => { pvtHooks.onMessage.push(h); },
-      onEmit: (h: OnEmitHook<any>) => { pvtHooks.onEmit.push(h); },
-      onChildExit: (h: OnChildExitHook) => { pvtHooks.onChildExit.push(h); },
-      onStopRequested: (h: OnStopRequestedHook) => { pvtHooks.onStopRequested.push(h); },
-      onError: (h: OnErrorHook) => { pvtHooks.onError.push(h); },
+      // ── registration API ─────────────────────────────────────
+      hooks: {
+        onMessage: (h: OnMessageHook<any>) => { pvtHooks.onMessage.push(h); },
+        onEmit: (h: OnEmitHook<any>) => { pvtHooks.onEmit.push(h); },
+        onChildExit: (h: OnChildExitHook) => { pvtHooks.onChildExit.push(h); },
+        onStart: (h: OnStartHook<unknown>) => { pvtHooks.onStart.push(h); },
+        onStopRequested: (h: OnStopRequestedHook) => { pvtHooks.onStopRequested.push(h); },
+        onError: (h: OnErrorHook) => { pvtHooks.onError.push(h); },
+        onEnd: (h: OnEndHook) => { pvtHooks.onEnd.push(h); },
+      },
+      reflection: {
+        register(name: string, method: (this: ActorContext<unknown, unknown, Message, Message, MethodOptions, HandlerOptions<Message>>) => unknown) {
+          let methods = pvtRegisteredReflection.get(ctx.id);
+          if (!methods) {
+            methods = new Map();
+            pvtRegisteredReflection.set(ctx.id, methods);
+          }
+          methods.set(`${currentPluginName}.${name}`, method as Function);
+        },
+      },
+      decorate: (key: string, value: unknown) => {
+        if (key in self) throw new Error(`decorate: key "${key}" conflicts with built-in`);
+        if (decorated.has(key)) throw new Error(`decorate: key "${key}" already decorated`);
+        decorated.set(key, value);
+      },
       fork(childFn, name, childArgs) {
         // Unwrap ActorDefinition, derive name.
         const resolved = typeof childFn === "function" ? childFn : childFn.fn;
@@ -176,23 +198,6 @@ export function defineActor<
     };
     actorCtxMap.set(ctx.id, self);
 
-
-    // ── wire hook registration + decorate onto ctx (for plugin install) ─
-    const decorated = new Map<string, unknown>();
-    const ctxAny = ctx as Record<string, unknown>;
-    ctxAny.onMessage = (h: OnMessageHook<InMsg>) => { pvtHooks.onMessage.push(h); };
-    ctxAny.onEmit = (h: OnEmitHook<OutMsg>) => { pvtHooks.onEmit.push(h); };
-    ctxAny.onChildExit = (h: OnChildExitHook) => { pvtHooks.onChildExit.push(h); };
-    ctxAny.onStart = (h: OnStartHook<ExposedState>) => { pvtHooks.onStart.push(h); };
-    ctxAny.onStopRequested = (h: OnStopRequestedHook) => { pvtHooks.onStopRequested.push(h); };
-    ctxAny.onError = (h: OnErrorHook) => { pvtHooks.onError.push(h); };
-    ctxAny.onEnd = (h: OnEndHook) => { pvtHooks.onEnd.push(h); };
-    ctxAny.decorate = (key: string, value: unknown) => {
-      if (key in self) throw new Error(`decorate: key "${key}" conflicts with built-in`);
-      if (decorated.has(key)) throw new Error(`decorate: key "${key}" already decorated`);
-      decorated.set(key, value);
-    };
-
     // ── install plugins ──────────────────────────────────────────────
     // On child actors, pvtResolvedPlugins is set by the parent's fork().
     // On root actors, use config.plugins directly.
@@ -201,10 +206,12 @@ export function defineActor<
           ? (typeof config.plugins === "function" ? config.plugins([]) : config.plugins)
           : []);
 
+    let currentPluginName: string | null = null;
     for (const p of resolvedPlugs) {
       let pvtErr: unknown = null;
+      currentPluginName = p.name;
       try {
-        await p.install(ctx as ProcessCtx<unknown, unknown, Message, Message>);
+        await p.install(self as unknown as ActorContext<unknown, unknown, Message, Message, MethodOptions, HandlerOptions<Message>>);
       } catch (e) {
         pvtErr = e;
       }
@@ -374,15 +381,28 @@ export function defineActor<
       await config.onEnd.call(self, exitReason ?? "done");
     }
     actorCtxMap.delete(ctx.id);
+    pvtRegisteredReflection.delete(ctx.id);
   };
 
   type ReflectableProcess = { id: symbol; $reflection: Record<string, Function> };
 
   function attachReflection(proc: ReflectableProcess): void {
-    if (!config.$reflectionMethods) return;
-    for (const [key, method] of Object.entries(config.$reflectionMethods)) {
-      (proc.$reflection as Record<string, Function>)[key] = async (...methodArgs: unknown[]) => {
-        return (method as Function).call(actorCtxMap.get(proc.id)!, ...methodArgs);
+    const merged = new Map<string, Function>();
+    if (config.$reflectionMethods) {
+      for (const [key, method] of Object.entries(config.$reflectionMethods)) {
+        merged.set(key, method as Function);
+      }
+    }
+    const pluginMethods = pvtRegisteredReflection.get(proc.id);
+    if (pluginMethods) {
+      for (const [key, method] of pluginMethods) {
+        merged.set(key, method);
+      }
+    }
+    const refl = proc.$reflection as Record<string, Function>;
+    for (const [key, method] of merged) {
+      refl[key] = async (...methodArgs: unknown[]) => {
+        return method.call(actorCtxMap.get(proc.id)!, ...methodArgs);
       };
     }
   }

@@ -15,19 +15,19 @@ export interface TimeoutGuardOpts {
 export function timeoutGuard(opts: TimeoutGuardOpts): ActorPlugin {
   return {
     name: 'timeoutGuard',
-    install(ctx: any) {
+    install(self: any) {
       let timer: ReturnType<typeof setTimeout> | null = null;
 
       const reset = () => {
         if (timer) clearTimeout(timer);
         timer = setTimeout(() => {
-          console.error(`[${ctx.pname}] timeout after ${opts.ms}ms — exiting`);
+          console.error(`[${self.name}] timeout after ${opts.ms}ms — exiting`);
           try { process.exit(1); } catch {}
         }, opts.ms);
       };
 
-      ctx.onMessage?.(() => reset());
-      ctx.onStart?.(() => reset());
+      self.hooks.onMessage(() => reset());
+      self.hooks.onStart(() => reset());
     },
   };
 }

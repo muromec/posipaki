@@ -21,12 +21,12 @@ function spyPlugin(id: string): ActorPlugin & { calls: string[] } {
   const calls: string[] = [];
   const p: any = {
     name: `spy-${id}`,
-    install(ctx: any) {
-      ctx.onMessage?.(() => calls.push(`${id}:onMessage`));
-      ctx.onEmit?.(() => calls.push(`${id}:onEmit`));
-      ctx.onChildExit?.(() => calls.push(`${id}:onChildExit`));
-      ctx.onStart?.(() => calls.push(`${id}:onStart`));
-      ctx.onError?.(() => calls.push(`${id}:onError`));
+    install(self: any) {
+      self.hooks.onMessage(() => calls.push(`${id}:onMessage`));
+      self.hooks.onEmit(() => calls.push(`${id}:onEmit`));
+      self.hooks.onChildExit(() => calls.push(`${id}:onChildExit`));
+      self.hooks.onStart(() => calls.push(`${id}:onStart`));
+      self.hooks.onError(() => calls.push(`${id}:onError`));
     },
   };
   return Object.assign(p, { calls });
@@ -91,8 +91,8 @@ describe('plugin basic', () => {
     let stateCount = -1;
     const plug: ActorPlugin = {
       name: 'test',
-      install(ctx: any) {
-        ctx.onStart = (fn: any) => { stateCount = fn.state?.count ?? -1; };
+      install(self: any) {
+        self.hooks.onStart = (fn: any) => { stateCount = fn.state?.count ?? -1; };
         // Actually: hooks.onStart fires via existing mechanism.
         // Let's use the existing hook API.
       },
@@ -105,8 +105,8 @@ describe('plugin basic', () => {
       initialState: () => ({ count: 42 }),
       plugins: [{
         name: 'test',
-        install(ctx: any) {
-          ctx.onMessage = undefined; // placeholder, real test below
+        install(self: any) {
+          self.hooks.onMessage = undefined; // placeholder, real test below
         },
       }],
       handlers: { POKE() {} },
@@ -146,9 +146,9 @@ describe('plugin inheritance', () => {
 
     const inheritCheck: ActorPlugin = {
       name: 'inherit-check',
-      install(ctx: any) {
-        ctx.onMessage?.(() => childSpyCalls.push('inherited:onMessage'));
-        ctx.onStart?.(() => childSpyCalls.push('inherited:onStart'));
+      install(self: any) {
+        self.hooks.onMessage(() => childSpyCalls.push('inherited:onMessage'));
+        self.hooks.onStart(() => childSpyCalls.push('inherited:onStart'));
       },
     };
 
@@ -235,8 +235,8 @@ describe('plugin inheritance', () => {
 
     const extraPlg: ActorPlugin = {
       name: 'extra',
-      install(ctx: any) {
-        ctx.onMessage?.(() => extraCalls.push('extra:onMessage'));
+      install(self: any) {
+        self.hooks.onMessage(() => extraCalls.push('extra:onMessage'));
       },
     };
 
@@ -282,8 +282,8 @@ describe('plugin hook propagation', () => {
 
     const parentPlg: ActorPlugin = {
       name: 'pexit',
-      install(ctx: any) {
-        ctx.onChildExit?.((name: string) => { childExits.push(name); });
+      install(self: any) {
+        self.hooks.onChildExit((name: string) => { childExits.push(name); });
       },
     };
 
@@ -320,8 +320,8 @@ describe('plugin hook propagation', () => {
     const errors: string[] = [];
     const plg: ActorPlugin = {
       name: 'err-catcher',
-      install(ctx: any) {
-        ctx.onError?.((e: unknown) => { errors.push((e as Error).message); });
+      install(self: any) {
+        self.hooks.onError((e: unknown) => { errors.push((e as Error).message); });
       },
     };
 
@@ -445,8 +445,8 @@ describe('plugins — adversarial', () => {
     const order: string[] = [];
     const make = (id: string): ActorPlugin => ({
       name: id,
-      install(ctx: any) {
-        ctx.onMessage?.(() => order.push(id));
+      install(self: any) {
+        self.hooks.onMessage(() => order.push(id));
       },
     });
 
@@ -528,11 +528,11 @@ describe('hook ordering: plugins + actor hooks', () => {
 
     const plug1: ActorPlugin = {
       name: 'first',
-      install(ctx: any) { ctx.onMessage?.(() => order.push('plug1')); },
+      install(self: any) { self.hooks.onMessage(() => order.push('plug1')); },
     };
     const plug2: ActorPlugin = {
       name: 'second',
-      install(ctx: any) { ctx.onMessage?.(() => order.push('plug2')); },
+      install(self: any) { self.hooks.onMessage(() => order.push('plug2')); },
     };
 
     const Actor = defineActor({
@@ -563,8 +563,8 @@ describe('hook ordering: plugins + actor hooks', () => {
 
     const plug: ActorPlugin = {
       name: 'blocker',
-      install(ctx: any) {
-        ctx.onMessage?.(() => { order.push('plug'); return stopPropagation(); });
+      install(self: any) {
+        self.hooks.onMessage(() => { order.push('plug'); return stopPropagation(); });
       },
     };
 
@@ -643,7 +643,7 @@ describe('full lifecycle coverage', () => {
 
     const plug: ActorPlugin = {
       name: 'e',
-      install(ctx: any) { ctx.onEnd?.(() => order.push('plug')); },
+      install(self: any) { self.hooks.onEnd(() => order.push('plug')); },
     };
 
     const Actor = defineActor({
@@ -673,7 +673,7 @@ describe('full lifecycle coverage', () => {
 
     const plug: ActorPlugin = {
       name: 's',
-      install(ctx: any) { ctx.onStopRequested?.(() => order.push('plug')); },
+      install(self: any) { self.hooks.onStopRequested(() => order.push('plug')); },
     };
 
     const Actor = defineActor({
@@ -701,7 +701,7 @@ describe('full lifecycle coverage', () => {
 
     const plug: ActorPlugin = {
       name: 'e',
-      install(ctx: any) { ctx.onEmit?.(() => order.push('plug')); },
+      install(self: any) { self.hooks.onEmit(() => order.push('plug')); },
     };
 
     const Actor = defineActor({
@@ -734,7 +734,7 @@ describe('full lifecycle coverage', () => {
 
     const plug: ActorPlugin = {
       name: 'ce',
-      install(ctx: any) { ctx.onChildExit?.((name: string) => order.push(`plug:${name}`)); },
+      install(self: any) { self.hooks.onChildExit((name: string) => order.push(`plug:${name}`)); },
     };
 
     const Child = defineActor({
@@ -779,11 +779,11 @@ describe('onError: plugins + actor ordering', () => {
 
     const plug1: ActorPlugin = {
       name: 'err1',
-      install(ctx: any) { ctx.onError?.((e: unknown) => errors.push(`plug1:${(e as Error).message}`)); },
+      install(self: any) { self.hooks.onError((e: unknown) => errors.push(`plug1:${(e as Error).message}`)); },
     };
     const plug2: ActorPlugin = {
       name: 'err2',
-      install(ctx: any) { ctx.onError?.((e: unknown) => errors.push(`plug2:${(e as Error).message}`)); },
+      install(self: any) { self.hooks.onError((e: unknown) => errors.push(`plug2:${(e as Error).message}`)); },
     };
 
     const Actor = defineActor({
@@ -817,13 +817,13 @@ describe('onError: plugins + actor ordering', () => {
 
     const plug1: ActorPlugin = {
       name: 'faulty',
-      install(ctx: any) {
-        ctx.onError?.(() => { fired.push('plug1'); throw new Error('inner error'); });
+      install(self: any) {
+        self.hooks.onError(() => { fired.push('plug1'); throw new Error('inner error'); });
       },
     };
     const plug2: ActorPlugin = {
       name: 'reliable',
-      install(ctx: any) { ctx.onError?.(() => fired.push('plug2')); },
+      install(self: any) { self.hooks.onError(() => fired.push('plug2')); },
     };
 
     const Actor = defineActor({
@@ -856,8 +856,8 @@ describe('decorate', () => {
   it('plugin can decorate a value onto this', async () => {
     const plug: ActorPlugin = {
       name: 'decorator',
-      install(ctx: any) {
-        ctx.decorate?.('logger', { name: ctx.pname, count: 0 });
+      install(self: any) {
+        self.decorate('logger', { name: self.name, count: 0 });
       },
     };
 
@@ -894,7 +894,7 @@ describe('decorate', () => {
   it('decorate throws on key conflict with built-in', async () => {
     const plug: ActorPlugin = {
       name: 'bad',
-      install(ctx: any) { ctx.decorate?.('state', {}); },
+      install(self: any) { self.decorate('state', {}); },
     };
 
     // The plugin install is wrapped in try/catch, so the actor
@@ -935,13 +935,13 @@ describe('decorate', () => {
     let secondThrew = false;
     const plug1: ActorPlugin = {
       name: 'p1',
-      install(ctx: any) { ctx.decorate?.('shared', 1); },
+      install(self: any) { self.decorate('shared', 1); },
     };
     const plug2: ActorPlugin = {
       name: 'p2',
-      install(ctx: any) {
+      install(self: any) {
         try {
-          ctx.decorate?.('shared', 2);
+          self.decorate('shared', 2);
         } catch {
           secondThrew = true;
         }
@@ -967,8 +967,8 @@ describe('decorate', () => {
   it('child inherits decorated properties from parent plugin', async () => {
     const plug: ActorPlugin = {
       name: 'decorator',
-      install(ctx: any) {
-        ctx.decorate?.('shared', 'from-parent');
+      install(self: any) {
+        self.decorate('shared', 'from-parent');
       },
     };
 
@@ -1011,11 +1011,11 @@ describe('decorate', () => {
   it('child can override parent decorated value', async () => {
     const parentPlug: ActorPlugin = {
       name: 'parent-deco',
-      install(ctx: any) { ctx.decorate?.('label', 'parent-value'); },
+      install(self: any) { self.decorate('label', 'parent-value'); },
     };
     const childPlug: ActorPlugin = {
       name: 'child-deco',
-      install(ctx: any) { ctx.decorate?.('label', 'child-value'); },
+      install(self: any) { self.decorate('label', 'child-value'); },
     };
 
     const Child = defineActor({
@@ -1058,7 +1058,7 @@ describe('decorate', () => {
   it('decorate is available in lifecycle hooks', async () => {
     const plug: ActorPlugin = {
       name: 'deco',
-      install(ctx: any) { ctx.decorate?.('greeting', 'hello'); },
+      install(self: any) { self.decorate('greeting', 'hello'); },
     };
 
     let hookGreeting: string | undefined;

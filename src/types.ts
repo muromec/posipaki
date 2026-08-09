@@ -109,22 +109,6 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   parentId: symbol | null;
   sendSelf: (msg: IM | StopMessage) => void;
   toParent: ProcessMessageCb<OM>;
-  /** Register an onMessage hook. Return stopPropagation() to short-circuit. */
-  onMessage?: (fn: (msg: IM, sender: SenderInfo) => void | Promise<void> | symbol) => void;
-  /** Register an onEmit hook. */
-  onEmit?: (fn: (msg: OM) => void) => void;
-  /** Register an onChildExit hook. */
-  onChildExit?: (fn: (name: string) => void | Promise<void>) => void;
-  /** Register an onStart hook. */
-  onStart?: (fn: (state: State) => void | Promise<void>) => void;
-  /** Register an onStopRequested hook. */
-  onStopRequested?: (fn: () => void | Promise<void>) => void;
-  /** Register an onError hook. */
-  onError?: (fn: (err: unknown) => void) => void;
-  /** Register an onEnd hook. Fires before the process exits. */
-  onEnd?: (fn: (reason: unknown) => void | Promise<void>) => void;
-  /** Register a decorated property. Throws if key conflicts. */
-  decorate?: (key: string, value: unknown) => void;
 } & Pick<AsyncProcess<Args, State, IM, OM>, "fork" | "forkSync">;
 
 // ---- Pipe -------------------------------------------------------------------

@@ -19,14 +19,14 @@ export function rbac(opts: RbacOpts): ActorPlugin {
 
   return {
     name: 'rbac',
-    install(ctx: any) {
-      ctx.onMessage?.((msg: any) => {
+    install(self: any) {
+      self.hooks.onMessage((msg: any) => {
         const toolName = msg.toolCall?.function?.name
           ?? msg.type === 'TOOL_EXECUTE' ? (msg as any).toolCall?.function?.name
           : null;
 
         if (toolName && !allowed.has(toolName)) {
-          console.warn(`[${ctx.pname}] blocked tool: ${toolName}`);
+          console.warn(`[${self.name}] blocked tool: ${toolName}`);
           return stopPropagation();
         }
       });

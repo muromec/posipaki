@@ -4,29 +4,27 @@
 // Hooks are additive — multiple callbacks can register for the same hook
 // point, and they fire in registration order.
 
-import type { Message, SenderInfo, ProcessCtx } from './types.js';
+import type { Message } from './types.js';
+import {
+  STOP_SENTINEL,
+  stopPropagation,
+} from './actor-types.js';
+import type {
+  HookResult,
+  OnStartHook,
+  OnMessageHook,
+  OnEmitHook,
+  OnChildExitHook,
+  OnStopRequestedHook,
+  OnEndHook,
+  OnErrorHook,
+  ActorPlugin,
+  PluginTransform,
+} from './actor-types.js';
 
 // ── stop propagation sentinel ────────────────────────────────────────────
 
 /** Returned by onMessage hooks to prevent further dispatch. */
-export const STOP_SENTINEL = Symbol('posipaki.stopPropagation');
-
-/** Type-safe sentinel for short-circuiting onMessage hooks. */
-export const stopPropagation = (): typeof STOP_SENTINEL => STOP_SENTINEL;
-
-/** Return type of onMessage hooks: void (continue) or sentinel (stop). */
-export type HookResult = void | typeof STOP_SENTINEL;
-
-// ── hook function types ──────────────────────────────────────────────────
-
-export type OnStartHook<State> = (state: State) => void | Promise<void>;
-export type OnMessageHook<InMsg extends Message> = (msg: InMsg, sender: SenderInfo) => HookResult | Promise<HookResult>;
-export type OnEmitHook<OutMsg extends Message> = (msg: OutMsg) => void;
-export type OnChildExitHook = (name: string) => void | Promise<void>;
-export type OnStopRequestedHook = () => void | Promise<void>;
-export type OnEndHook = (reason: unknown) => void | Promise<void>;
-export type OnErrorHook = (err: unknown) => void;
-
 // ── hook registry ────────────────────────────────────────────────────────
 
 export class HookRegistry<State, InMsg extends Message, OutMsg extends Message> {
@@ -39,21 +37,9 @@ export class HookRegistry<State, InMsg extends Message, OutMsg extends Message> 
   onError: Array<OnErrorHook> = [];
 }
 
-// ── plugin types ─────────────────────────────────────────────────────────
-
-
-/** A reusable unit of actor behaviour, installed at fork time. */
-export interface ActorPlugin<
-  InMsg extends Message = Message,
-  OutMsg extends Message = Message,
-  State = unknown,
-> {
-  name: string;
-  install(ctx: ProcessCtx<unknown, State, InMsg, OutMsg>): void | Promise<void>;
-}
-
-/** Transform parent plugins into child plugins. */
-export type PluginTransform = (parentPlugins: ActorPlugin[]) => ActorPlugin[];
+// Re-exports from actor-types.ts (backward compatibility)
+export { STOP_SENTINEL, stopPropagation };
+export type { HookResult, OnStartHook, OnMessageHook, OnEmitHook, OnChildExitHook, OnStopRequestedHook, OnEndHook, OnErrorHook, ActorPlugin, PluginTransform };
 
 // ── type augmentation (Fastify-style) ────────────────────────────────────
 

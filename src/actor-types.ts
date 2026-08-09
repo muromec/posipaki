@@ -11,13 +11,7 @@ import type {
   ProcessCtx,
   ExitMessage,
 } from "./types.js";
-import type {
-  ActorPlugin,
-  PluginTransform,
-  OnStartHook,
-  HookResult,
-  ActorDecorated,
-} from "./hooks.js";
+import type { ActorDecorated } from "./hooks.js";
 import type { AsyncProcess } from "./process.async.js";
 
 // Internal marker do not use
@@ -186,6 +180,42 @@ export interface ActorConfig<
     ThisType<ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>>;
 }
 
+// ── stop propagation sentinel ────────────────────────────────────────────
+
+/** Returned by onMessage hooks to prevent further dispatch. */
+export const STOP_SENTINEL = Symbol('posipaki.stopPropagation');
+
+/** Type-safe sentinel for short-circuiting onMessage hooks. */
+export const stopPropagation = (): typeof STOP_SENTINEL => STOP_SENTINEL;
+
+// ── hook function types ──────────────────────────────────────────────────
+
+/** Return type of onMessage hooks: void (continue) or sentinel (stop). */
+export type HookResult = void | typeof STOP_SENTINEL;
+
+export type OnStartHook<State> = (state: State) => void | Promise<void>;
+export type OnMessageHook<InMsg extends Message> = (msg: InMsg, sender: SenderInfo) => HookResult | Promise<HookResult>;
+export type OnEmitHook<OutMsg extends Message> = (msg: OutMsg) => void;
+export type OnChildExitHook = (name: string) => void | Promise<void>;
+export type OnStopRequestedHook = () => void | Promise<void>;
+export type OnEndHook = (reason: unknown) => void | Promise<void>;
+export type OnErrorHook = (err: unknown) => void;
+
+// ── plugin types ─────────────────────────────────────────────────────────
+
+/** A reusable unit of actor behaviour, installed at fork time. */
+export interface ActorPlugin<
+  InMsg extends Message = Message,
+  OutMsg extends Message = Message,
+  State = unknown,
+> {
+  name: string;
+  install(self: ActorContext<unknown, State, InMsg, OutMsg, MethodOptions, HandlerOptions<InMsg>>): void | Promise<void>;
+}
+
+/** Transform parent plugins into child plugins. */
+export type PluginTransform = (parentPlugins: ActorPlugin[]) => ActorPlugin[];
+
 export type ActorContext<
   Args,
   InternalState,
@@ -201,6 +231,25 @@ export type ActorContext<
 
   emit: (msg: OutMsg) => void;
   agreeToStop: () => void;
+
+  /** Hook registration. */
+  hooks: {
+    onMessage: (h: OnMessageHook<InMsg>) => void;
+    onEmit: (h: OnEmitHook<OutMsg>) => void;
+    onChildExit: (h: OnChildExitHook) => void;
+    onStart: (h: OnStartHook<unknown>) => void;
+    onStopRequested: (h: OnStopRequestedHook) => void;
+    onError: (h: OnErrorHook) => void;
+    onEnd: (h: OnEndHook) => void;
+  };
+
+  /** Reflection method registration. Plugin name is automatically prefixed. */
+  reflection: {
+    register(name: string, method: (this: ActorContext<unknown, unknown, Message, Message, MethodOptions, HandlerOptions<Message>>) => unknown): void;
+  };
+
+  /** Property decoration. Throws if key conflicts with built-in. */
+  decorate: (key: string, value: unknown) => void;
   exit: (reason?: unknown) => void;
 
   $child: Record<string, AsyncProcess<unknown, unknown, Message, Message>>;

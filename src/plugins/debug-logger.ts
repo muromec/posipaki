@@ -19,24 +19,24 @@ export function debugLogger(opts?: DebugLoggerOpts): ActorPlugin {
 
   return {
     name: 'debugLogger',
-    install(ctx: any) {
-      const name = ctx.pname;
+    install(self: any) {
+      const name = self.name;
 
-      ctx.onMessage?.((msg: any, sender: any) => {
+      self.hooks.onMessage((msg: any, sender: any) => {
         if (skipHbs && msg.type === 'HEARTBEAT') return;
         const via = sender ? ` from ${sender.fromName}` : '';
         log(level, `${name} ← ${msg.type}${via}`);
       });
 
-      ctx.onEmit?.((msg: any) => {
+      self.hooks.onEmit((msg: any) => {
         log(level, `${name} → ${msg.type}`);
       });
 
-      ctx.onChildExit?.((childName: string) => {
+      self.hooks.onChildExit((childName: string) => {
         log(level, `${name}: child ${childName} exited`);
       });
 
-      ctx.onError?.((err: unknown) => {
+      self.hooks.onError((err: unknown) => {
         console.error(`[${name}] error:`, (err as Error).message ?? err);
       });
     },
