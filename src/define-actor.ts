@@ -24,7 +24,7 @@ import type {
   HandlerFn,
 } from "./actor-types.js";
 import { HookRegistry, STOP_SENTINEL } from "./hooks.js";
-import type { ActorPlugin, PluginTransform } from "./hooks.js";
+import type { ActorPlugin } from "./hooks.js";
 import type { HookResult, OnMessageHook, OnEmitHook, OnChildExitHook, OnStartHook, OnStopRequestedHook, OnEndHook, OnErrorHook } from "./hooks.js";
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -169,7 +169,7 @@ export function defineActor<
           : [];
 
         // Merge with child's raw config.
-        const childRaw: ActorPlugin[] | PluginTransform | undefined = (childDef as { pvtPluginsRaw?: ActorPlugin[] | PluginTransform })?.pvtPluginsRaw;
+        const childRaw = childDef?.pvtPluginsRaw;
         let childPlugs: ActorPlugin[];
         if (!childRaw) {
           childPlugs = [...parentPlugs];
