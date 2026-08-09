@@ -208,7 +208,7 @@ export type OnErrorHook = (err: unknown) => void;
 // ── plugin types ─────────────────────────────────────────────────────────
 
 /** A reusable unit of actor behaviour. */
-export type ActorPlugin = (config: ActorConfig<any, any, any, any, any, any, any>) => ActorConfig<any, any, any, any, any, any, any> | Promise<ActorConfig<any, any, any, any, any, any, any>>;
+export type ActorPlugin = (config: ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>) => ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>> | Promise<ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>>;
 
 /** Transform parent plugins into child plugins. */
 export type PluginTransform = (parentPlugins: ActorPlugin[]) => ActorPlugin[];

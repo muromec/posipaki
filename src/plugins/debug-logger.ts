@@ -1,4 +1,6 @@
 import type { ActorPlugin } from '../hooks.js';
+import type { ActorConfig, HandlerOptions } from '../actor-types.js';
+import type { Message } from '../types.js';
 
 export interface DebugLogFn { (message: string, ...args: unknown[]): void; }
 export interface Logger { debug: DebugLogFn; info: DebugLogFn; warn: DebugLogFn; error: DebugLogFn; }
@@ -16,7 +18,7 @@ function defaultFactory(name: string): Logger { return { debug: (...a: unknown[]
 export function debugLogger(opts?: DebugLoggerOpts): ActorPlugin {
   const ignoreSet = new Set(opts?.ignore ?? []);
   const factory = opts?.factory ?? defaultFactory;
-  return async (config: any) => {
+  return async (config: ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>) => {
     const name: string = config.name ?? 'actor';
     const pats = patterns(); const log = factory(name);
     config.pluginDecorators!.set('log', log);

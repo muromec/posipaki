@@ -20,7 +20,7 @@ export function defineMessages<OutMsg extends Message = Message>(): ActorMessage
 }
 
 function resolvePlugins(
-  config: ActorConfig<any, any, any, any, any, any, any>,
+  config: ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>,
   parentPlugins?: ActorPlugin[],
 ): ActorPlugin[] {
   const raw = config.plugins;
@@ -30,9 +30,9 @@ function resolvePlugins(
 }
 
 async function assembleActor(
-  config: ActorConfig<any, any, any, any, any, any, any>,
+  config: ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>,
   plugins: ActorPlugin[],
-): Promise<ActorConfig<any, any, any, any, any, any, any>> {
+): Promise<ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>> {
   if (!config.pluginHooks) config.pluginHooks = { onMessage:[],onEmit:[],onChildExit:[],onStart:[],onStopRequested:[],onError:[],onEnd:[] };
   if (!config.pluginReflection) config.pluginReflection = new Map();
   if (!config.pluginDecorators) config.pluginDecorators = new Map();
@@ -181,7 +181,7 @@ export function defineActor<
   }
 
   type ReflectableProcess = { id: symbol; $reflection: Record<string, Function> };
-  function attachReflection(proc: ReflectableProcess, assembly: ActorConfig<any, any, any, any, any, any, any>): void {
+  function attachReflection(proc: ReflectableProcess, assembly: ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>): void {
     const merged = new Map<string, Function>();
     if (assembly.$reflectionMethods) for (const [k, m] of Object.entries(assembly.$reflectionMethods)) merged.set(k, m as Function);
     if (assembly.pluginReflection) for (const [k, m] of assembly.pluginReflection) merged.set(k, m);
@@ -189,26 +189,28 @@ export function defineActor<
     for (const [k, m] of merged) refl[k] = async (...a: unknown[]) => m.call(actorCtxMap.get(proc.id)!, ...a);
   }
 
-  const legacyFn = makeRuntime(config as any) as unknown as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>;
+  const legacyFn = makeRuntime(config as any as ActorConfig<Args, InternalState, ExposedState, InMsg, OutMsg, Methods, Handlers, ReflectionMethods>) as unknown as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>;
 
   return {
     fn: legacyFn, name: config.name, pvtPluginsRaw: config.plugins,
-    config: config as any,
+    config: config as unknown as ActorConfig<Args, any, ExposedState, InMsg, OutMsg, {}, Handlers>,
     async spawn(args: Args) {
-      const plugs = resolvePlugins(config);
-      const assembly = await assembleActor(config, plugs);
-      const runtime = makeRuntime(assembly as any);
+      const cfg = config as unknown as ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>;
+      const plugs = resolvePlugins(cfg);
+      const assembly = await assembleActor(cfg, plugs);
+      const runtime = makeRuntime(assembly as any as ActorConfig<Args, InternalState, ExposedState, InMsg, OutMsg, Methods, Handlers, ReflectionMethods>);
       const proc = spawnAsync(runtime, assembly.name ?? "actor")(args);
       attachReflection(proc, assembly);
-      return proc as any;
+      return proc as unknown as AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
     },
     async spawnAsChild(ctx: ProcessCtx<any, any, any, any>, args: Args, name?: string, parentPlugins?: ActorPlugin[]) {
-      const plugs = resolvePlugins(config, parentPlugins);
-      const assembly = await assembleActor(config, plugs);
-      const runtime = makeRuntime(assembly as any);
+      const cfg = config as unknown as ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>;
+      const plugs = resolvePlugins(cfg, parentPlugins);
+      const assembly = await assembleActor(cfg, plugs);
+      const runtime = makeRuntime(assembly as any as ActorConfig<Args, InternalState, ExposedState, InMsg, OutMsg, Methods, Handlers, ReflectionMethods>);
       const proc = ctx.fork(runtime, name ?? assembly.name ?? "child")(args);
       attachReflection(proc, assembly);
-      return proc as any;
+      return proc as unknown as AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
     },
   };
 }
