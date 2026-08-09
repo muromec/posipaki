@@ -183,3 +183,13 @@ The plugin callback gets full access to `this.state`, `this.name`, `this.$child`
 - [Actor Reflection RPC](actor-reflection-rpc.md) — the reflection mechanism this enables
 - [Tree Introspection Plugin](tree-introspection-plugin.md) — first consumer of `self.reflection.register()`
 - [Actor Plugin System](actor-plugin-system.md)
+
+## Lifecycle position
+
+Plugins install during the **augment** phase, before `setup()` generates
+the actor's initial state. See [defineActor lifecycle](define-actor-proposal.md#lifecycle-order)
+for the full phase ordering.
+
+This means plugins have access to `self` (ActorContext) but `this.state`
+is not yet populated — state setup hasn't run. Plugins should register
+hooks and reflection methods, not inspect state.

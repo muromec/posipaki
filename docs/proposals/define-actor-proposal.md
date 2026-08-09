@@ -29,15 +29,64 @@ down to those primitives — it is purely a convenience layer.
 
 The full lifecycle of a `defineActor` actor, in order:
 
+### 1. define — `defineActor(config)`
+
+Returns an `ActorDefinition`. Nothing runs yet — pure declaration.
+
+### 2. augment — plugins install
+
+```
+for (const p of plugins) { p.install(self); }
+```
+
+Plugins receive the `ActorContext` (`self`) and can register hooks
+(`self.hooks.onMessage`, etc.), decorate properties (`self.decorate`),
+and register reflection methods (`self.reflection.register`).
+
+Sync installs run in one pass. Async installs are collected and
+`await`ed together so the generator doesn't yield between plugins.
+
+### 3. assemble — reflection wired
+
+```
+attachReflection(proc);
+```
+
+All plugin-registered and config-defined reflection methods are wired
+onto `proc.$reflection`. Runs once after all plugins have installed,
+before the actor generates its initial state.
+
+### 4. start — generate state
+
 ```
 setup(args)       → returns InternalState (async, replaces initialState + onStart)
 expose(state)     → ExposedState (bridges internal → external type)
 onStart(args)     → legacy hook, mutates state in-place
 hooks.onStart     → plugin hooks
+```
+
+### 5. ready
+
+```
 yield exposedState → proc.ready() resolves — external consumers see ExposedState
+```
+
+### 6. post-ready
+
+```
 afterStart()      → post-ready side effects (async, runs after consumers can observe state)
-dispatch loop     → message handlers
-onEnd(reason)     → cleanup
+```
+
+### 7. run
+
+```
+dispatch loop     → message handlers fire on incoming messages
+```
+
+### 8. cleanup
+
+```
+onEnd(reason)     → cleanup, fires before process exit
 ```
 
 ### setup() vs initialState + onStart
