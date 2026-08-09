@@ -13,7 +13,7 @@ import type {
 } from "./actor-types.js";
 import { STOP_SENTINEL } from "./hooks.js";
 import type { ActorPlugin } from "./hooks.js";
-import type { HookResult } from "./hooks.js";
+import type { HookResult, OnMessageHook, OnEmitHook, OnChildExitHook, OnStartHook, OnStopRequestedHook, OnEndHook, OnErrorHook } from "./hooks.js";
 
 export function defineMessages<OutMsg extends Message = Message>(): ActorMessages<OutMsg> {
   return undefined as unknown as ActorMessages<OutMsg>;
@@ -69,84 +69,92 @@ export function defineActor<
       const decorated = new Map(pd);
 
       const self = {
-        ctx: ctx as any, ...((assembly.methods || {}) as Methods),
+        ctx: ctx as ProcessCtx<Args, InternalState, InMsg, OutMsg>,
+        ...((assembly.methods || {}) as Methods),
         state: rawState, name: ctx.pname, id: ctx.id,
-        emit(msg: any) { for (const h of ph.onEmit) { try { h(msg) } catch {} } ctx.toParent(msg); },
+        emit(msg: OutMsg) { for (const h of ph.onEmit) { try { h(msg) } catch {} } ctx.toParent(msg); },
         agreeToStop() { exitReason = "stopped"; done = true; },
         exit(reason: unknown) { exitReason = reason; done = true; },
-        $child: {},
+        $child: {} as Record<string, AsyncProcess<unknown, unknown, Message, Message>>,
         hooks: {
-          onMessage: (h: any) => ph.onMessage.push(h), onEmit: (h: any) => ph.onEmit.push(h),
-          onChildExit: (h: any) => ph.onChildExit.push(h), onStart: (h: any) => ph.onStart.push(h),
-          onStopRequested: (h: any) => ph.onStopRequested.push(h), onError: (h: any) => ph.onError.push(h),
-          onEnd: (h: any) => ph.onEnd.push(h),
+          onMessage: (h: OnMessageHook<InMsg>) => ph.onMessage.push(h),
+          onEmit: (h: OnEmitHook<OutMsg>) => ph.onEmit.push(h),
+          onChildExit: (h: OnChildExitHook) => ph.onChildExit.push(h),
+          onStart: (h: OnStartHook<ExposedState>) => ph.onStart.push(h),
+          onStopRequested: (h: OnStopRequestedHook) => ph.onStopRequested.push(h),
+          onError: (h: OnErrorHook) => ph.onError.push(h),
+          onEnd: (h: OnEndHook) => ph.onEnd.push(h),
         },
-        reflection: { register(name: string, method: any) { (assembly.pluginReflection ?? new Map()).set(`runtime.${name}`, method); } },
+        reflection: { register(name: string, method: Function) { (assembly.pluginReflection ?? new Map()).set(`runtime.${name}`, method); } },
         decorate: (key: string, value: unknown) => {
           if (key in self) throw new Error(`decorate: key "${key}" conflicts with built-in`);
           if (decorated.has(key)) throw new Error(`decorate: key "${key}" already decorated`);
           decorated.set(key, value);
         },
-        async fork(childFn: any, name: any, childArgs: any) {
+        fork: async <A, S, IM extends Message, OM extends Message, H extends HandlerOptions<IM>>(
+          childFn: AsyncProcessFn<A, S, IM, OM> | ActorDefinition<A, S, IM, OM, H>,
+          name?: string,
+          childArgs?: A,
+        ): Promise<AsyncProcess<A, S, IM, OM>> => {
           const childDef = typeof childFn === "object" ? childFn : null;
           const childName = name ?? childDef?.name ?? `child-${Object.keys(self.$child).length}`;
           const treeName = `${ctx.pname}:${childName}`;
-          let child: AsyncProcess<unknown, unknown, Message, Message>;
           if (childDef) {
             const parentPlugs = (assembly.plugins
               ? (typeof assembly.plugins === "function" ? assembly.plugins([]) : assembly.plugins)
               : []) as ActorPlugin[];
-            child = await childDef.spawnAsChild(ctx, childArgs!, treeName, parentPlugs) as any;
-          } else {
-            const resolvedFn = typeof childFn === "function" ? childFn : childFn.fn;
-            child = ctx.fork(resolvedFn, treeName)(childArgs!) as any;
+            const child = await childDef.spawnAsChild(ctx, childArgs!, treeName, parentPlugs);
+            self.$child[child.pname] = child as unknown as AsyncProcess<unknown, unknown, Message, Message>;
+            return child as unknown as AsyncProcess<A, S, IM, OM>;
           }
-          (self.$child as any)[child.pname] = child;
-          return child;
+          const resolvedFn = typeof childFn === "function" ? childFn : childFn.fn;
+          const child = ctx.fork(resolvedFn, treeName)(childArgs!);
+          self.$child[child.pname] = child as unknown as AsyncProcess<unknown, unknown, Message, Message>;
+          return child as unknown as AsyncProcess<A, S, IM, OM>;
         },
-      };
-      actorCtxMap.set(ctx.id, self as any);
+      } as ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>;
+      actorCtxMap.set(ctx.id, self);
 
       if (assembly.hooks) {
         const h = assembly.hooks;
-        if (h.onStart) ph.onStart.push((s: unknown) => (h.onStart as any)!.call(self as any, s));
-        if (h.onMessage) ph.onMessage.push((m: any, s: any) => h.onMessage!.call(self as any, m, s));
-        if (h.onEmit) ph.onEmit.push((m: any) => h.onEmit!.call(self as any, m));
-        if (h.onChildExit) ph.onChildExit.push((n: string) => h.onChildExit!.call(self as any, n));
-        if (h.onStopRequested) ph.onStopRequested.push(() => h.onStopRequested!.call(self as any));
-        if (h.onEnd) ph.onEnd.push((r: unknown) => h.onEnd!.call(self as any, r));
-        if (h.onError) ph.onError.push((e: unknown) => h.onError!.call(self as any, e));
+        if (h.onStart) ph.onStart.push((s: ExposedState) => h.onStart!.call(self, s));
+        if (h.onMessage) ph.onMessage.push((m: any, s: any) => h.onMessage!.call(self, m, s));
+        if (h.onEmit) ph.onEmit.push((m: any) => h.onEmit!.call(self, m));
+        if (h.onChildExit) ph.onChildExit.push((n: string) => h.onChildExit!.call(self, n));
+        if (h.onStopRequested) ph.onStopRequested.push(() => h.onStopRequested!.call(self));
+        if (h.onEnd) ph.onEnd.push((r: unknown) => h.onEnd!.call(self, r));
+        if (h.onError) ph.onError.push((e: unknown) => h.onError!.call(self, e));
       }
-      for (const [k, v] of decorated) { (self as any)[k] = v; }
+      for (const [k, v] of decorated) { (self as Record<string, unknown>)[k] = v; }
 
-      if (assembly.setup) { rawState = await assembly.setup.call(self as any, args); }
+      if (assembly.setup) { rawState = await assembly.setup.call(self, args); }
       else if (typeof assembly.initialState === "function") { rawState = (assembly.initialState as any)(args, ctx); }
       else if (assembly.initialState !== undefined) { rawState = assembly.initialState; }
       else { throw new Error("ActorConfig: setup() or initialState is required"); }
-      (self as any).state = rawState;
-      exposedState = assembly.expose ? assembly.expose(rawState) : (rawState as any);
-      if (assembly.onStart) { await assembly.onStart.call(self as any, args);
-        exposedState = assembly.expose ? assembly.expose(rawState) : (rawState as any); }
+      self.state = rawState;
+      exposedState = assembly.expose ? assembly.expose(rawState) : (rawState as unknown as ExposedState);
+      if (assembly.onStart) { await assembly.onStart.call(self, args);
+        exposedState = assembly.expose ? assembly.expose(rawState) : (rawState as unknown as ExposedState); }
       for (const h of ph.onStart) { try { await h(exposedState) } catch {} }
       yield exposedState;
-      if (assembly.afterStart) { await assembly.afterStart.call(self as any); }
+      if (assembly.afterStart) { await assembly.afterStart.call(self); }
 
       yield* runDispatchAsync<WithSender<InMsg | ExitMessage>>(ctx.pname, async (stamped) => {
         const [msg, sender] = stamped;
         if (msg.type === "STOP") {
           for (const h of ph.onStopRequested) { try { await h() } catch {} }
-          if (assembly.onStopRequested) { await assembly.onStopRequested.call(self as any); if (!done) stopRequested = true; }
+          if (assembly.onStopRequested) { await assembly.onStopRequested.call(self); if (!done) stopRequested = true; }
           else { exitReason = "stopped"; done = true; }
           return;
         }
         if (stopRequested && !done) {
-          if (assembly.onStopRequested) { await assembly.onStopRequested.call(self as any); if (!done) stopRequested = true; }
+          if (assembly.onStopRequested) { await assembly.onStopRequested.call(self); if (!done) stopRequested = true; }
         }
         if (msg.type === "EXIT") {
           const childName = sender.fromName;
-          if (childName && (self.$child as any)[childName]) delete (self.$child as any)[childName];
+          if (childName && self.$child[childName]) delete self.$child[childName];
           for (const h of ph.onChildExit) { try { await h(childName) } catch {} }
-          if (assembly.onChildExit) await assembly.onChildExit.call(self as any, childName, msg as ExitMessage);
+          if (assembly.onChildExit) await assembly.onChildExit.call(self, childName, msg as ExitMessage);
         }
         let hookStopped = false;
         if (msg.type !== "STOP" && msg.type !== "EXIT") {
@@ -158,17 +166,17 @@ export function defineActor<
         if (msg.type !== "STOP" && !hookStopped) {
           const handler = assembly.handlers[msg.type as keyof Handlers] as HandlerFn<InMsg>;
           if (handler) {
-            try { await handler.call(self as any, msg as InMsg, sender); }
+            try { await handler.call(self, msg as InMsg, sender); }
             catch (e) { for (const eh of ph.onError) { try { eh(e) } catch {} } throw e; }
           } else if (assembly.onUnhandled) {
-            try { await assembly.onUnhandled.call(self as any, msg as InMsg, sender); }
+            try { await assembly.onUnhandled.call(self, msg as InMsg, sender); }
             catch (e) { for (const eh of ph.onError) { try { eh(e) } catch {} } throw e; }
           }
         }
       }, () => done);
 
       for (const h of ph.onEnd) { try { await h(exitReason) } catch {} }
-      if (assembly.onEnd) await assembly.onEnd.call(self as any, exitReason);
+      if (assembly.onEnd) await assembly.onEnd.call(self, exitReason);
     };
   }
 
