@@ -184,15 +184,16 @@ export function defineActor<
 
         // Build tree-prefixed name: parent:child
         const treeName = `${ctx.pname}:${childName}`;
-        const child = ctx.fork(resolved, treeName)(childArgs!);
+        let child: AsyncProcess<unknown, unknown, Message, Message>;
+        if (childDef) {
+          // Route through spawnAsChild so attachReflection fires.
+          child = (childDef as any).spawnAsChild(ctx, childArgs, treeName) as AsyncProcess<unknown, unknown, Message, Message>;
+        } else {
+          child = ctx.fork(resolved, treeName)(childArgs!) as unknown as AsyncProcess<unknown, unknown, Message, Message>;
+        }
         // Store under the resolved name for $child lookup and EXIT matching.
-        self.$child[child.pname] = child as unknown as AsyncProcess<
-          unknown,
-          unknown,
-          Message,
-          Message
-        >;
-        return child;
+        self.$child[child.pname] = child;
+        return child as any;
       },
       
     };

@@ -1,9 +1,9 @@
-// ── treeIntrospection Plugin Tests ───────────────────────────────────────
+// ── inspect Plugin Tests ─────────────────────────────────────────────────
 
 import { describe, it, expect } from 'vitest';
 import { defineActor, defineMessages } from '../define-actor.js';
 import type { Message } from '../types.js';
-import { treeIntrospection, type TreeNode } from './tree-introspection.js';
+import { inspect, type TreeNode } from './tree-introspection.js';
 
 // ── messages ─────────────────────────────────────────────────────────────
 
@@ -13,49 +13,52 @@ const Pout = defineMessages<PokeMsg>();
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-function makeActor(name?: string, opts?: Parameters<typeof treeIntrospection>[0]) {
-  return defineActor({
-    name,
-    inMessages: Pin,
-    outMessages: Pout,
-    initialState: () => ({ count: 0 }),
-    plugins: [treeIntrospection(opts)],
-    handlers: {
-      POKE() { this.state.count++; },
-    },
-  });
+function refl(proc: any): Record<string, Function> {
+  return proc.$reflection as Record<string, Function>;
 }
 
 // ── tests ────────────────────────────────────────────────────────────────
 
-describe('treeIntrospection', () => {
+describe('inspect', () => {
   describe('getTree', () => {
-    it('returns pname, parentName, children, status, info', async () => {
-      const Actor = makeActor('test-actor');
+    it('returns pname, parentName, children, status', async () => {
+      const Actor = defineActor({
+        name: 'test-actor',
+        inMessages: Pin,
+        outMessages: Pout,
+        initialState: () => ({ count: 0 }),
+        plugins: [inspect()],
+        handlers: { POKE() { this.state.count++; } },
+      });
+
       const proc = Actor.spawn({});
       await proc.ready();
 
-      const tree: TreeNode = await (proc.$reflection as Record<string, Function>)['treeIntrospection.getTree']();
+      const tree: TreeNode = await refl(proc)['inspect.getTree']();
       expect(tree.pname).toBe('test-actor');
       expect(tree.parentName).toBeNull();
       expect(tree.children).toEqual([]);
       expect(tree.status).toBe('running');
-      expect(tree.info).toEqual({});
 
       proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
       await proc.wait();
     });
 
-    it('reports children when actor has forked children', async () => {
-      const Child = makeActor('child');
+    it('returns recursive child trees', async () => {
+      const Leaf = defineActor({
+        name: 'leaf',
+        inMessages: Pin, outMessages: Pout,
+        initialState: () => ({}),
+        plugins: [inspect()],
+        handlers: { POKE() {} },
+      });
       const Parent = defineActor({
         name: 'parent',
-        inMessages: Pin,
-        outMessages: Pout,
+        inMessages: Pin, outMessages: Pout,
         initialState: () => ({}),
-        plugins: [treeIntrospection()],
+        plugins: [inspect()],
         async setup(this: any) {
-          this.fork(Child, 'kid');
+          this.fork(Leaf, 'kid');
           return {};
         },
         handlers: { POKE() {} },
@@ -64,31 +67,32 @@ describe('treeIntrospection', () => {
       const proc = Parent.spawn({});
       await proc.ready();
 
-      const tree: TreeNode = await (proc.$reflection as Record<string, Function>)['treeIntrospection.getTree']();
+      const tree: TreeNode = await refl(proc)['inspect.getTree']();
       expect(tree.children.length).toBeGreaterThanOrEqual(1);
-      expect(tree.children.some((c: string) => c.includes('kid'))).toBe(true);
+      const child = tree.children.find((c: TreeNode) => c.pname.includes('kid'));
+      expect(child).toBeDefined();
+      expect(child!.status).toBe('running');
+      expect(child!.parentName).toBe('parent');
 
       proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
       await proc.wait();
     });
 
-    it('reports parentName from ctx.parentName', async () => {
-      const Child = defineActor({
-        name: 'leaf',
-        inMessages: Pin,
-        outMessages: Pout,
+    it('marks children without inspect as "no introspection"', async () => {
+      const Plain = defineActor({
+        name: 'plain',
+        inMessages: Pin, outMessages: Pout,
         initialState: () => ({}),
-        plugins: [treeIntrospection()],
+        plugins: [], // block inheritance
         handlers: { POKE() {} },
       });
       const Parent = defineActor({
         name: 'root',
-        inMessages: Pin,
-        outMessages: Pout,
+        inMessages: Pin, outMessages: Pout,
         initialState: () => ({}),
-        plugins: [treeIntrospection()],
+        plugins: [inspect()],
         async setup(this: any) {
-          this.fork(Child, 'leaf-child');
+          this.fork(Plain, 'plain-child');
           return {};
         },
         handlers: { POKE() {} },
@@ -97,36 +101,48 @@ describe('treeIntrospection', () => {
       const proc = Parent.spawn({});
       await proc.ready();
 
-      const getTree = (proc.$reflection as Record<string, Function>)['treeIntrospection.getTree'];
-      expect(typeof getTree).toBe('function');
-      const tree = await getTree();
+      const tree: TreeNode = await refl(proc)['inspect.getTree']();
       expect(tree.children.length).toBeGreaterThanOrEqual(1);
-      expect(tree.children.some((c: string) => c.includes('leaf-child'))).toBe(true);
+      const child = tree.children[0];
+      expect(child.status).toBe('no introspection');
+      expect(child.children).toEqual([]);
 
       proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
       await proc.wait();
     });
 
-    it('extraInfo adds to the info bag', async () => {
-      const Actor = defineActor({
-        name: 'extra-test',
-        inMessages: Pin,
-        outMessages: Pout,
-        initialState: () => ({ count: 42 }),
-        plugins: [treeIntrospection({
-          extraInfo(this: any) {
-            return { count: this.state.count, uptime: 100 };
-          },
-        })],
+    it('prefix filters nodes by pname', async () => {
+      const Child = defineActor({
+        name: 'worker',
+        inMessages: Pin, outMessages: Pout,
+        initialState: () => ({}),
+        plugins: [inspect()],
+        handlers: { POKE() {} },
+      });
+      const Parent = defineActor({
+        name: 'main',
+        inMessages: Pin, outMessages: Pout,
+        initialState: () => ({}),
+        plugins: [inspect()],
+        async setup(this: any) {
+          this.fork(Child, 'w1');
+          return {};
+        },
         handlers: { POKE() {} },
       });
 
-      const proc = Actor.spawn({});
+      const proc = Parent.spawn({});
       await proc.ready();
 
-      const tree: TreeNode = await (proc.$reflection as Record<string, Function>)['treeIntrospection.getTree']();
-      expect(tree.info.count).toBe(42);
-      expect(tree.info.uptime).toBe(100);
+      // No prefix — full tree
+      const full: TreeNode = await refl(proc)['inspect.getTree']();
+      expect(full.pname).toBe('main');
+      expect(full.children.length).toBeGreaterThanOrEqual(1);
+
+      // Prefix that matches child
+      const filtered: TreeNode = await refl(proc)['inspect.getTree']('main:w1');
+      expect(filtered.pname).toBe('main');
+      expect(filtered.children.length).toBeGreaterThanOrEqual(1);
 
       proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
       await proc.wait();
@@ -135,65 +151,48 @@ describe('treeIntrospection', () => {
     it('does not clobber across spawns', async () => {
       const Actor = defineActor({
         name: 'clobber-test',
-        inMessages: Pin,
-        outMessages: Pout,
+        inMessages: Pin, outMessages: Pout,
         initialState: () => ({ label: 'default' }),
-        plugins: [treeIntrospection({
-          extraInfo(this: any) {
-            return { label: this.state.label };
-          },
-        })],
+        plugins: [inspect()],
         handlers: { POKE() {} },
       });
 
-      // Can't pass args to spawn with defineActor easily — use initialState
       const proc1 = Actor.spawn({});
+      const proc2 = Actor.spawn({});
       await proc1.ready();
+      await proc2.ready();
 
-      const t1: TreeNode = await (proc1.$reflection as Record<string, Function>)['treeIntrospection.getTree']();
-      expect(t1.info.label).toBe('default');
+      const t1: TreeNode = await refl(proc1)['inspect.getTree']();
+      const t2: TreeNode = await refl(proc2)['inspect.getTree']();
+      expect(t1.pname).toBe('clobber-test');
+      expect(t2.pname).toBe('clobber-test');
 
       proc1.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
+      proc2.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
       await proc1.wait();
+      await proc2.wait();
     });
   });
 
   describe('getState', () => {
-    it('returns serializable state snapshot', async () => {
-      const Actor = makeActor('state-test');
-      const proc = Actor.spawn({});
-      await proc.ready();
-
-      // Modify state
-      proc.send!({ type: 'POKE' }, { fromName: 't', fromId: Symbol('t') });
-      await new Promise((r) => setTimeout(r, 30));
-
-      const state = await (proc.$reflection as Record<string, Function>)['treeIntrospection.getState']();
-      expect(state).toEqual({ count: 1 });
-
-      proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
-      await proc.wait();
-    });
-
-    it('returns fallback string for non-serializable state', async () => {
+    it('returns raw state', async () => {
       const Actor = defineActor({
-        name: 'circular-test',
-        inMessages: Pin,
-        outMessages: Pout,
-        initialState: () => {
-          const obj: any = {};
-          obj.self = obj; // circular
-          return obj;
+        name: 'state-test',
+        inMessages: Pin, outMessages: Pout,
+        initialState: () => ({ count: 0 }),
+        plugins: [inspect()],
+        handlers: {
+          POKE() { this.state.count++; },
         },
-        plugins: [treeIntrospection()],
-        handlers: { POKE() {} },
       });
 
       const proc = Actor.spawn({});
       await proc.ready();
+      proc.send!({ type: 'POKE' }, { fromName: 't', fromId: Symbol('t') });
+      await new Promise((r) => setTimeout(r, 30));
 
-      const state = await (proc.$reflection as Record<string, Function>)['treeIntrospection.getState']();
-      expect(state).toBe('(state not serializable)');
+      const state = await refl(proc)['inspect.getState']();
+      expect(state).toEqual({ count: 1 });
 
       proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
       await proc.wait();
@@ -202,16 +201,20 @@ describe('treeIntrospection', () => {
 
   describe('stop', () => {
     it('calls agreeToStop and causes the actor to exit', async () => {
-      const Actor = makeActor('stop-test');
+      const Actor = defineActor({
+        name: 'stop-test',
+        inMessages: Pin, outMessages: Pout,
+        initialState: () => ({}),
+        plugins: [inspect()],
+        handlers: { POKE() {} },
+      });
+
       const proc = Actor.spawn({});
       await proc.ready();
 
-      await (proc.$reflection as Record<string, Function>)['treeIntrospection.stop']();
-      // agreeToStop sets done=true, but the actor needs a message to
-      // advance the dispatch loop and check the flag.
+      await refl(proc)['inspect.stop']();
       proc.send!({ type: 'POKE' }, { fromName: 't', fromId: Symbol('t') });
       await proc.wait();
-      // If we got here without timeout, the actor stopped.
     });
   });
 });

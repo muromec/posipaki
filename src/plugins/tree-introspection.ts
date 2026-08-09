@@ -1,24 +1,29 @@
-// ── treeIntrospection Plugin ─────────────────────────────────────────────
+// ── inspect Plugin ───────────────────────────────────────────────────────
 //
 // Registers reflection methods for actor tree introspection.
 // Built on the Actor Reflection RPC mechanism.
 //
 // Usage:
 //
-//   import { treeIntrospection } from 'posipaki/plugins/tree-introspection';
+//   import { inspect } from 'posipaki/plugins/tree-introspection';
 //   const MyActor = defineActor({
-//     plugins: [treeIntrospection()],
+//     plugins: [inspect()],
 //     ...
 //   });
 //
 // Access via proc.$reflection:
 //
-//   const tree = await rootProc.$reflection['treeIntrospection.getTree']();
-//   // { pname, parentName, children: string[], status, info }
+//   const tree = await rootProc.$reflection['inspect.getTree']();
+//   // TreeNode { pname, parentName, children: TreeNode[], status }
 //
-//   const state = await proc.$reflection['treeIntrospection.getState']();
+//   const state = await proc.$reflection['inspect.getState']();
 //
-//   await proc.$reflection['treeIntrospection.stop']();
+//   await proc.$reflection['inspect.stop']();
+//
+// Filtering:
+//
+//   const subtree = await proc.$reflection['inspect.getTree']('openai:');
+//   // Only includes nodes whose pname starts with 'openai:'
 //
 
 import type { ActorPlugin } from '../hooks.js';
@@ -31,52 +36,49 @@ export interface TreeNode {
   pname: string;
   /** Parent actor name, or null for the root. */
   parentName: string | null;
-  /** Child actor names (not recursive — walk children to get their subtrees). */
-  children: string[];
+  /** Child subtrees (recursive). */
+  children: TreeNode[];
   /** Actor status. */
-  status: 'running' | 'unknown';
-  /** Extensible info bag. Plugins or actors can add custom fields. */
-  info: Record<string, unknown>;
-}
-
-/** Options for treeIntrospection. */
-export interface TreeIntrospectionOpts {
-  /**
-   * Extra fields to include in every TreeNode's `info` bag.
-   * Called at query time with the full ActorContext as `this`.
-   */
-  extraInfo?: (this: any) => Record<string, unknown>;
+  status: 'running' | 'no introspection';
 }
 
 // ── plugin ───────────────────────────────────────────────────────────────
 
-export function treeIntrospection(opts?: TreeIntrospectionOpts): ActorPlugin {
+export function inspect(): ActorPlugin {
   return {
-    name: 'treeIntrospection',
+    name: 'inspect',
     install(self) {
-      self.reflection.register('getTree', function () {
-        const children = Object.keys(this.$child);
-        const info: Record<string, unknown> = {};
-        if (opts?.extraInfo) {
-          try {
-            Object.assign(info, opts.extraInfo.call(this));
-          } catch { /* ignore errors in user-provided extra info */ }
+      self.reflection.register('getTree', async function (prefix?: string) {
+        const children: TreeNode[] = [];
+        for (const child of Object.values(this.$child)) {
+          const childRefl = (child.$reflection as Record<string, Function>);
+          if (typeof childRefl['inspect.getTree'] === 'function') {
+            const sub = await childRefl['inspect.getTree'](prefix) as TreeNode;
+            if (!prefix || sub.pname.startsWith(prefix)) {
+              children.push(sub);
+            }
+          } else {
+            const name = child.pname;
+            if (!prefix || name.startsWith(prefix)) {
+              children.push({
+                pname: name,
+                parentName: this.name,
+                children: [],
+                status: 'no introspection',
+              });
+            }
+          }
         }
         return {
           pname: this.name,
           parentName: this.ctx.parentName,
           children,
           status: 'running' as const,
-          info,
-        };
+        } satisfies TreeNode;
       });
 
       self.reflection.register('getState', function () {
-        try {
-          return JSON.parse(JSON.stringify(this.state));
-        } catch {
-          return '(state not serializable)';
-        }
+        return this.state;
       });
 
       self.reflection.register('stop', function () {
