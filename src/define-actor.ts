@@ -209,18 +209,27 @@ export function defineActor<
           : []);
 
     let currentPluginName: string | null = null;
+    const asyncInstalls: Promise<void>[] = [];
     for (const p of resolvedPlugs) {
       let pvtErr: unknown = null;
       currentPluginName = p.name;
       try {
-        await p.install(self as unknown as ActorContext<unknown, unknown, Message, Message, MethodOptions, HandlerOptions<Message>>);
+        const result = p.install(self as unknown as ActorContext<unknown, unknown, Message, Message, MethodOptions, HandlerOptions<Message>>);
+        if (result instanceof Promise) {
+          asyncInstalls.push(result.catch((e: unknown) => {
+            console.error(`[${ctx.pname}] plugin "${p.name}" install failed:`, e);
+          }));
+        }
       } catch (e) {
         pvtErr = e;
       }
-      // Also catch sync throws from non-async install functions.
+      // Also catch sync throws.
       if (pvtErr) {
         console.error(`[${ctx.pname}] plugin "${p.name}" install failed:`, pvtErr);
       }
+    }
+    if (asyncInstalls.length > 0) {
+      await Promise.all(asyncInstalls);
     }
 
     // ── register config.hooks (after plugins, so plugins fire first) ─
