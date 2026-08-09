@@ -1,3 +1,4 @@
+/* eslint-disable unicorn/consistent-function-scoping */
 import { describe, it, expect } from 'vitest';
 import type { ActorPlugin } from "./actor-types.js";
 import { debugLogger } from "./plugins/debug-logger.js";
@@ -17,7 +18,7 @@ describe('actor reflection', () => {
       handlers: {},
     });
 
-    const proc = actor.spawn(undefined!);
+    const proc = await actor.spawn(undefined!);
     await proc.ready();
 
     const count: number = await proc.$reflection.getCount();
@@ -37,7 +38,7 @@ describe('actor reflection', () => {
       handlers: {},
     });
 
-    const proc = actor.spawn(undefined!);
+    const proc = await actor.spawn(undefined!);
     await proc.ready();
 
     const name: string = await proc.$reflection.getName();
@@ -59,13 +60,13 @@ describe('actor reflection', () => {
         },
       },
       async setup() {
-        this.fork(child, 'worker');
+        await this.fork(child, 'worker');
         return {};
       },
       handlers: {},
     });
 
-    const proc = parent.spawn(undefined!);
+    const proc = await parent.spawn(undefined!);
     await proc.ready();
 
     const names: string[] = await proc.$reflection.getChildNames();
@@ -74,13 +75,11 @@ describe('actor reflection', () => {
   });
 
   it('plugin registers reflection via self.reflection.register()', async () => {
-    const testPlugin: ActorPlugin = {
-      name: 'testPlugin',
-      install(self) {
-        self.reflection.register('getCount', function () {
-          return (this.state as Record<string, unknown>).count;
-        });
-      },
+    const testPlugin: ActorPlugin = async (config: any) => {
+      config.pluginReflection!.set('testPlugin.getCount', function (this: any) {
+        return (this.state as Record<string, unknown>).count;
+      });
+      return config;
     };
 
     const actor = defineActor({
@@ -91,7 +90,7 @@ describe('actor reflection', () => {
       handlers: {},
     });
 
-    const proc = actor.spawn(undefined!);
+    const proc = await actor.spawn(undefined!);
     await proc.ready();
 
     const count: number = await (proc.$reflection as Record<string, Function>)['testPlugin.getCount']();
@@ -100,13 +99,11 @@ describe('actor reflection', () => {
 
 
   it('plugin reflection works with async setup and multiple plugins', async () => {
-    const testPlugin: ActorPlugin = {
-      name: 'testPlugin',
-      install(self) {
-        self.reflection.register('getCount', function () {
-          return (this.state as Record<string, unknown>).count;
-        });
-      },
+    const testPlugin: ActorPlugin = async (config: any) => {
+      config.pluginReflection!.set('testPlugin.getCount', function (this: any) {
+        return (this.state as Record<string, unknown>).count;
+      });
+      return config;
     };
 
     const actor = defineActor({
@@ -119,7 +116,7 @@ describe('actor reflection', () => {
       handlers: {},
     });
 
-    const proc = actor.spawn(undefined!);
+    const proc = await actor.spawn(undefined!);
     await proc.ready();
 
     // debugLogger should have decorated this.log
@@ -130,14 +127,11 @@ describe('actor reflection', () => {
 
 
 
-
   it('one plugin registers two methods', async () => {
-    const plug: ActorPlugin = {
-      name: 'plug',
-      install(self) {
-        self.reflection.register('ping', function () { return 'a'; });
-        self.reflection.register('pong', function () { return 'b'; });
-      },
+    const plug: ActorPlugin = async (config: any) => {
+      config.pluginReflection!.set('plug.ping', function (this: any) { return 'a'; });
+      config.pluginReflection!.set('plug.pong', function (this: any) { return 'b'; });
+      return config;
     };
 
     const actor = defineActor({
@@ -146,7 +140,7 @@ describe('actor reflection', () => {
       handlers: {},
     });
 
-    const proc = actor.spawn(undefined!);
+    const proc = await actor.spawn(undefined!);
     await proc.ready();
 
     const refl = proc.$reflection as Record<string, Function>;
@@ -155,17 +149,13 @@ describe('actor reflection', () => {
   });
 
   it('two plugins both register reflection', async () => {
-    const plugA: ActorPlugin = {
-      name: 'plugA',
-      install(self) {
-        self.reflection.register('ping', function () { return 'a'; });
-      },
+    const plugA: ActorPlugin = async (config: any) => {
+      config.pluginReflection!.set('plugA.ping', function (this: any) { return 'a'; });
+      return config;
     };
-    const plugB: ActorPlugin = {
-      name: 'plugB',
-      install(self) {
-        self.reflection.register('pong', function () { return 'b'; });
-      },
+    const plugB: ActorPlugin = async (config: any) => {
+      config.pluginReflection!.set('plugB.pong', function (this: any) { return 'b'; });
+      return config;
     };
 
     const actor = defineActor({
@@ -174,7 +164,7 @@ describe('actor reflection', () => {
       handlers: {},
     });
 
-    const proc = actor.spawn(undefined!);
+    const proc = await actor.spawn(undefined!);
     await proc.ready();
 
     const refl = proc.$reflection as Record<string, Function>;
@@ -183,11 +173,9 @@ describe('actor reflection', () => {
   });
 
   it('two plugins: debugLogger + testPlugin, sync setup', async () => {
-    const testPlugin: ActorPlugin = {
-      name: 'testPlugin',
-      install(self) {
-        self.reflection.register('ping', function () { return 'pong'; });
-      },
+    const testPlugin: ActorPlugin = async (config: any) => {
+      config.pluginReflection!.set('testPlugin.ping', function (this: any) { return 'pong'; });
+      return config;
     };
 
     const actor = defineActor({
@@ -199,7 +187,7 @@ describe('actor reflection', () => {
       handlers: {},
     });
 
-    const proc = actor.spawn(undefined!);
+    const proc = await actor.spawn(undefined!);
     await proc.ready();
 
     const refl = proc.$reflection as Record<string, Function>;
@@ -208,13 +196,11 @@ describe('actor reflection', () => {
   });
 
   it('plugin-registered reflection does not clobber across spawns', async () => {
-    const testPlugin: ActorPlugin = {
-      name: 'testPlugin',
-      install(self) {
-        self.reflection.register('getCount', function () {
-          return (this.state as Record<string, unknown>).count;
-        });
-      },
+    const testPlugin: ActorPlugin = async (config: any) => {
+      config.pluginReflection!.set('testPlugin.getCount', function (this: any) {
+        return (this.state as Record<string, unknown>).count;
+      });
+      return config;
     };
 
     const actor = defineActor({
@@ -225,8 +211,8 @@ describe('actor reflection', () => {
       handlers: {},
     });
 
-    const proc1 = actor.spawn({ count: 10 });
-    const proc2 = actor.spawn({ count: 20 });
+    const proc1 = await actor.spawn({ count: 10 });
+    const proc2 = await actor.spawn({ count: 20 });
     await proc1.ready();
     await proc2.ready();
 

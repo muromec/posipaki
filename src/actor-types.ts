@@ -48,13 +48,14 @@ export interface ActorDefinition<
   /** Raw plugin config (array or transform). Resolved at fork time. @internal */
   pvtPluginsRaw?: ActorPlugin[] | PluginTransform;
   /** Spawn this actor as a standalone process. */
-  spawn(args: Args): AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
+  spawn(args: Args): Promise<AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>>;
   /** Spawn this actor as a child of the calling process. */
   spawnAsChild(
     ctx: ProcessCtx<any, any, any, any>,
     args: Args,
     name?: string,
-  ): AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
+    parentPlugins?: ActorPlugin[],
+  ): Promise<AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>>;
 }
 
 export interface ActorHooksConfig<
@@ -178,6 +179,9 @@ export interface ActorConfig<
 
   $reflectionMethods?: ReflectionMethods &
     ThisType<ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>>;
+  pluginHooks?: { onMessage: Function[]; onEmit: Function[]; onChildExit: Function[]; onStart: Function[]; onStopRequested: Function[]; onError: Function[]; onEnd: Function[]; };
+  pluginReflection?: Map<string, Function>;
+  pluginDecorators?: Map<string, unknown>;
 }
 
 // ── stop propagation sentinel ────────────────────────────────────────────
@@ -203,15 +207,8 @@ export type OnErrorHook = (err: unknown) => void;
 
 // ── plugin types ─────────────────────────────────────────────────────────
 
-/** A reusable unit of actor behaviour, installed at fork time. */
-export interface ActorPlugin<
-  InMsg extends Message = Message,
-  OutMsg extends Message = Message,
-  State = unknown,
-> {
-  name: string;
-  install(self: ActorContext<unknown, State, InMsg, OutMsg, MethodOptions, HandlerOptions<InMsg>>): void | Promise<void>;
-}
+/** A reusable unit of actor behaviour. */
+export type ActorPlugin = (config: ActorConfig<any, any, any, any, any, any, any>) => ActorConfig<any, any, any, any, any, any, any> | Promise<ActorConfig<any, any, any, any, any, any, any>>;
 
 /** Transform parent plugins into child plugins. */
 export type PluginTransform = (parentPlugins: ActorPlugin[]) => ActorPlugin[];
@@ -264,7 +261,7 @@ export type ActorContext<
     fn: AsyncProcessFn<A, S, IM, OM> | ActorDefinition<A, S, IM, OM, H>,
     name?: string,
     args?: A,
-  ): AsyncProcess<A, S, IM, OM>;
+  ): AsyncProcess<A, S, IM, OM> | Promise<AsyncProcess<A, S, IM, OM>>;
 
   ctx: ProcessCtx<Args, InternalState, InMsg, OutMsg>;
 };

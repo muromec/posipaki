@@ -43,7 +43,7 @@ describe('hooks.onMessage', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
     await new Promise(r => setTimeout(r, 50));
@@ -71,7 +71,7 @@ describe('hooks.onMessage', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', value: 1 }, { fromName: 'caller', fromId: Symbol('caller') });
     await new Promise(r => setTimeout(r, 50));
@@ -106,7 +106,7 @@ describe('stopPropagation', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
     await new Promise(r => setTimeout(r, 50));
@@ -142,7 +142,7 @@ describe('hooks.onEmit', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
     await new Promise(r => setTimeout(r, 50));
@@ -173,7 +173,7 @@ describe('hooks.onEmit', () => {
       outMessages: PokeOut,
       expose: (s: any) => s,
       initialState: () => ({ pongs: 0 }),
-      onStart(this: any) { this.fork(Child, undefined, {}); },
+      async onStart(this: any) { await this.fork(Child, undefined, {}); },
       handlers: {
         POKE() {},
 
@@ -181,7 +181,7 @@ describe('hooks.onEmit', () => {
       },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 100));
 
@@ -219,13 +219,13 @@ describe('hooks.onChildExit', () => {
           this.state.exits.push(name);
         },
       },
-      onStart(this: any) {
-        this.fork(Child, undefined, {});
+      async onStart(this: any) {
+        await this.fork(Child, undefined, {});
       },
       handlers: { POKE() {}, PONG() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 200)); // wait for child to exit
 
@@ -257,12 +257,12 @@ describe('hooks.onChildExit', () => {
       hooks: {
         onChildExit(this: any) { this.state.exits++; },
       },
-      onStart(this: any) { this.fork(Child, undefined, {}); },
+      async onStart(this: any) { await this.fork(Child, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
       // No onChildExit method — hooks alone should fire
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 200));
 
@@ -291,7 +291,7 @@ describe('hooks.onStart / onEnd', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 50));
     expect(proc.state!.order).toEqual(["method", "hook"]);
@@ -316,7 +316,7 @@ describe('hooks.onStart / onEnd', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     await proc.wait();
@@ -344,7 +344,7 @@ describe('hooks.onStopRequested', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     await proc.wait();
@@ -375,7 +375,7 @@ describe('hooks.onError', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
 
@@ -404,7 +404,7 @@ describe('hooks — adversarial', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
 
@@ -428,7 +428,7 @@ describe('hooks — adversarial', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
     await new Promise(r => setTimeout(r, 50));
@@ -459,7 +459,7 @@ describe('hooks — adversarial', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
     await new Promise(r => setTimeout(r, 100));

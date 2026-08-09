@@ -45,7 +45,7 @@ describe('defineActor name propagation', () => {
     expect(Actor.config.name).toBeUndefined();
   });
 
-  it('spawn uses config.name as default process name', () => {
+  it('spawn uses config.name as default process name', async () => {
     const Actor = defineActor({
       name: 'root-actor',
       inMessages: PokeIn,
@@ -55,12 +55,12 @@ describe('defineActor name propagation', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     expect(proc.pname).toBe('root-actor');
     proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
   });
 
-  it('spawn falls back to "actor" when name not set', () => {
+  it('spawn falls back to "actor" when name not set', async () => {
     const Actor = defineActor({
       inMessages: PokeIn,
       outMessages: PokeOut,
@@ -69,7 +69,7 @@ describe('defineActor name propagation', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     expect(proc.pname).toBe('actor');
     proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
   });
@@ -94,14 +94,14 @@ describe('tree prefixing', () => {
       outMessages: PokeOut,
       expose: (s: any) => s,
       initialState: () => ({ childPname: '' }),
-      onStart(this: any) {
-        const child = this.fork(Child, 'my-child', {});
+      async onStart(this: any) {
+        const child = await this.fork(Child, 'my-child', {});
         this.state.childPname = child.pname;
       },
       handlers: { POKE() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     expect(proc.state!.childPname).toBe('parent:my-child');
     proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
@@ -124,15 +124,15 @@ describe('tree prefixing', () => {
       outMessages: PokeOut,
       expose: (s: any) => s,
       initialState: () => ({ childPname: '' }),
-      onStart(this: any) {
+      async onStart(this: any) {
         // No name — should pick up 'child' from the definition
-        const child = this.fork(Child, undefined, {});
+        const child = await this.fork(Child, undefined, {});
         this.state.childPname = child.pname;
       },
       handlers: { POKE() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     expect(proc.state!.childPname).toBe('parent:child');
     proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
@@ -170,9 +170,9 @@ describe('tree prefixing', () => {
       outMessages: PokeOut,
       expose: (s: any) => s,
       initialState: () => ({ gc: null as any }),
-      onStart(this: any) {
+      async onStart(this: any) {
         // self.fork with name from definition
-        this.state.gc = this.fork(Grandchild, undefined, {});
+        this.state.gc = await this.fork(Grandchild, undefined, {});
       },
       handlers: { POKE() {} },
     });
@@ -183,13 +183,13 @@ describe('tree prefixing', () => {
       outMessages: PokeOut,
       expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
-      onStart(this: any) {
-        this.state.c = this.fork(Child, undefined, {});
+      async onStart(this: any) {
+        this.state.c = await this.fork(Child, undefined, {});
       },
       handlers: { POKE() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
 
     const childProc = proc.state!.c;
@@ -224,14 +224,14 @@ describe('tree prefixing', () => {
       outMessages: PokeOut,
       expose: (s: any) => s,
       initialState: () => ({ childPname: '' }),
-      onStart(this: any) {
-        const child = this.fork(Child, 'override', {});
+      async onStart(this: any) {
+        const child = await this.fork(Child, 'override', {});
         this.state.childPname = child.pname;
       },
       handlers: { POKE() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     expect(proc.state!.childPname).toBe('parent:override');
     proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
@@ -258,16 +258,16 @@ describe('tree naming — adversarial', () => {
       outMessages: PokeOut,
       expose: (s: any) => s,
       initialState: () => ({ w1: '', w2: '' }),
-      onStart(this: any) {
-        const c1 = this.fork(Worker, 'w1', {});
-        const c2 = this.fork(Worker, 'w2', {});
+      async onStart(this: any) {
+        const c1 = await this.fork(Worker, 'w1', {});
+        const c2 = await this.fork(Worker, 'w2', {});
         this.state.w1 = c1.pname;
         this.state.w2 = c2.pname;
       },
       handlers: { POKE() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     expect(proc.state!.w1).toBe('parent:w1');
     expect(proc.state!.w2).toBe('parent:w2');
@@ -296,8 +296,8 @@ describe('tree naming — adversarial', () => {
         outMessages: PokeOut,
         expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
-        onStart(this: any) {
-          this.state.c = this.fork(child, undefined, {});
+        async onStart(this: any) {
+          this.state.c = await this.fork(child, undefined, {});
         },
         handlers: { POKE() {} },
       });
@@ -310,13 +310,13 @@ describe('tree naming — adversarial', () => {
       outMessages: PokeOut,
       expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
-      onStart(this: any) {
-        this.state.c = this.fork(current, undefined, {});
+      async onStart(this: any) {
+        this.state.c = await this.fork(current, undefined, {});
       },
       handlers: { POKE() {} },
     });
 
-    const proc = Root.spawn({});
+    const proc = await Root.spawn({});
     await proc.ready();
     expect(proc.state!.c.pname).toBe('root:level-1');
 
@@ -342,8 +342,8 @@ describe('tree naming — adversarial', () => {
       outMessages: PokeOut,
       expose: (s: any) => s,
       initialState: () => ({ exitCount: 0 }),
-      onStart(this: any) {
-        this.fork(Child, undefined, {});
+      async onStart(this: any) {
+        await this.fork(Child, undefined, {});
       },
       onChildExit(this: any, name: string) {
         this.state.exitCount++;
@@ -352,7 +352,7 @@ describe('tree naming — adversarial', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     // Wait for child to start and then automatically exit (no handlers, generator finishes)
     await new Promise(r => setTimeout(r, 100));

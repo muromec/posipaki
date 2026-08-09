@@ -93,9 +93,9 @@ describe("defineRemoteActor — return shape", () => {
     expect(typeof def.actor.spawn).toBe("function");
   });
 
-  it("actor.spawn returns an AsyncProcess", () => {
+  it("actor.spawn returns an AsyncProcess", async () => {
     const { actor } = defineRemoteActor(makeDummyActor(), TEST_URL);
-    const proc = actor.spawn({});
+    const proc = await actor.spawn({});
     expect(proc).toBeDefined();
     expect(typeof proc.send).toBe("function");
     expect(typeof proc.wait).toBe("function");

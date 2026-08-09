@@ -45,7 +45,7 @@ function recordFactory(calls: DebugCall[]): (name: string) => Logger {
 }
 
 async function sendAndStop(
-  proc: ReturnType<ReturnType<typeof makeActor>['spawn']>,
+  proc: Awaited<ReturnType<ReturnType<typeof makeActor>["spawn"]>>,
   msg: PokeMsg | NopMsg,
 ) {
   await proc.ready();
@@ -67,44 +67,44 @@ describe('debugLogger', () => {
     it('* matches everything', async () => {
       process.env.DEBUG = '*';
       const Actor = makeActor('some-actor', calls, { factory: recordFactory(calls) });
-      await sendAndStop(Actor.spawn({}), { type: 'POKE', value: 1 });
+      await sendAndStop(await Actor.spawn({}), { type: 'POKE', value: 1 });
       expect(calls.some((c) => c.name === 'some-actor')).toBe(true);
     });
 
     it('prefix:* matches subtree', async () => {
       process.env.DEBUG = 'openai:*';
       const Actor = makeActor('openai:connector', calls, { factory: recordFactory(calls) });
-      await sendAndStop(Actor.spawn({}), { type: 'POKE', value: 1 });
+      await sendAndStop(await Actor.spawn({}), { type: 'POKE', value: 1 });
       expect(calls.some((c) => c.name === 'openai:connector')).toBe(true);
     });
 
     it('exact name match', async () => {
       process.env.DEBUG = 'openai:connector';
       const Actor = makeActor('openai:connector', calls, { factory: recordFactory(calls) });
-      await sendAndStop(Actor.spawn({}), { type: 'POKE', value: 1 });
+      await sendAndStop(await Actor.spawn({}), { type: 'POKE', value: 1 });
       expect(calls.some((c) => c.name === 'openai:connector')).toBe(true);
     });
 
     it('non-matching actor is skipped', async () => {
       process.env.DEBUG = 'openai:connector';
       const Actor = makeActor('openai:tools', calls, { factory: recordFactory(calls) });
-      await sendAndStop(Actor.spawn({}), { type: 'POKE', value: 1 });
+      await sendAndStop(await Actor.spawn({}), { type: 'POKE', value: 1 });
       expect(calls.some((c) => c.name === 'openai:tools')).toBe(false);
     });
 
     it('multiple comma-separated patterns', async () => {
       process.env.DEBUG = 'openai:connector,reflector:*';
-      await sendAndStop(makeActor('openai:connector', calls, { factory: recordFactory(calls) }).spawn({}), { type: 'POKE', value: 1 });
+      await sendAndStop(await makeActor('openai:connector', calls, { factory: recordFactory(calls) }).spawn({}), { type: 'POKE', value: 1 });
       expect(calls.some((c) => c.name === 'openai:connector')).toBe(true);
       calls.length = 0;
-      await sendAndStop(makeActor('reflector:openai', calls, { factory: recordFactory(calls) }).spawn({}), { type: 'POKE', value: 1 });
+      await sendAndStop(await makeActor('reflector:openai', calls, { factory: recordFactory(calls) }).spawn({}), { type: 'POKE', value: 1 });
       expect(calls.some((c) => c.name === 'reflector:openai')).toBe(true);
     });
 
     it('empty DEBUG skips everything', async () => {
       delete process.env.DEBUG;
       const Actor = makeActor('anything', calls, { factory: recordFactory(calls) });
-      await sendAndStop(Actor.spawn({}), { type: 'POKE', value: 1 });
+      await sendAndStop(await Actor.spawn({}), { type: 'POKE', value: 1 });
       expect(calls.length).toBe(0);
     });
   });
@@ -113,7 +113,7 @@ describe('debugLogger', () => {
     it('silences listed message types', async () => {
       process.env.DEBUG = '*';
       const Actor = makeActor('ignore-test', calls, { ignore: ['POKE'], factory: recordFactory(calls) });
-      const proc = Actor.spawn({});
+      const proc = await Actor.spawn({});
       await proc.ready();
       proc.send!({ type: 'POKE', value: 1 }, { fromName: 't', fromId: Symbol('t') });
       await new Promise((r) => setTimeout(r, 20));
@@ -143,7 +143,7 @@ describe('debugLogger', () => {
           NOP() {},
         },
       });
-      const proc = Actor.spawn({});
+      const proc = await Actor.spawn({});
       await proc.ready();
       proc.send!({ type: 'POKE', value: 1 }, { fromName: 't', fromId: Symbol('t') });
       await new Promise((r) => setTimeout(r, 30));
@@ -166,7 +166,7 @@ describe('debugLogger', () => {
           error: () => {},
         }),
       });
-      await sendAndStop(Actor.spawn({}), { type: 'POKE', value: 1 });
+      await sendAndStop(await Actor.spawn({}), { type: 'POKE', value: 1 });
       expect(customCalls.length).toBeGreaterThan(0);
       expect(customCalls[0]).toContain('custom:custom-test:');
     });
@@ -176,7 +176,7 @@ describe('debugLogger', () => {
     it('does not interfere with normal operation', async () => {
       process.env.DEBUG = '*';
       const Actor = makeActor('test-int', calls, { factory: recordFactory(calls) });
-      const proc = Actor.spawn({});
+      const proc = await Actor.spawn({});
       await proc.ready();
       proc.send!({ type: 'POKE', value: 1 }, { fromName: 't', fromId: Symbol('t') });
       await new Promise((r) => setTimeout(r, 50));

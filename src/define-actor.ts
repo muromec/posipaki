@@ -3,457 +3,204 @@
 // Compiles a declarative config into an AsyncProcessFn.  Built on top of
 // the existing runDispatchAsync / spawnAsync primitives.
 //
-// See docs/proposals/define-actor-proposal.md for the full design.
+// Phase 2: assembly outside the generator, async spawn.
 
 import { runDispatchAsync, spawnAsync } from "./process.async.js";
-import type {
-  WithSender,
-  AsyncProcessFn,
-  Message,
-  ExitMessage,
-  ProcessCtx,
-} from "./types.js";
+import type { WithSender, AsyncProcessFn, Message, ExitMessage, ProcessCtx } from "./types.js";
 import type { AsyncProcess } from "./process.async.js";
 import type {
-  ActorDefinition,
-  ActorConfig,
-  ActorContext,
-  MethodOptions,
-  ActorMessages,
-  HandlerOptions,
-  HandlerFn,
+  ActorDefinition, ActorConfig, ActorContext, MethodOptions, ActorMessages, HandlerOptions, HandlerFn,
 } from "./actor-types.js";
-import { HookRegistry, STOP_SENTINEL } from "./hooks.js";
+import { STOP_SENTINEL } from "./hooks.js";
 import type { ActorPlugin } from "./hooks.js";
-import type { HookResult, OnMessageHook, OnEmitHook, OnChildExitHook, OnStartHook, OnStopRequestedHook, OnEndHook, OnErrorHook } from "./hooks.js";
+import type { HookResult } from "./hooks.js";
 
-// ═══════════════════════════════════════════════════════════════════════════════
-// Implementation
-// ═══════════════════════════════════════════════════════════════════════════════
-
-export function defineMessages<
-  OutMsg extends Message = Message,
->(): ActorMessages<OutMsg> {
+export function defineMessages<OutMsg extends Message = Message>(): ActorMessages<OutMsg> {
   return undefined as unknown as ActorMessages<OutMsg>;
 }
 
-export function defineActor<
-  Args,
-  InternalState,
-  ExposedState,
-  InMsg extends Message,
-  OutMsg extends Message,
-  Methods extends MethodOptions,
-  Handlers extends HandlerOptions<InMsg>,
-  ReflectionMethods = {},
->(
-  config: ActorConfig<
-    Args,
-    InternalState,
-    ExposedState,
-    InMsg,
-    OutMsg,
-    Methods,
-    Handlers,
-    ReflectionMethods
-  >,
-): ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers, ReflectionMethods> {
-  // ── internal helpers ──────────────────────────────────────────────
+function resolvePlugins(
+  config: ActorConfig<any, any, any, any, any, any, any>,
+  parentPlugins?: ActorPlugin[],
+): ActorPlugin[] {
+  const raw = config.plugins;
+  if (!raw) return parentPlugins ? [...parentPlugins] : [];
+  if (Array.isArray(raw)) return [...raw];
+  return raw(parentPlugins ?? []);
+}
 
-  /** Extract pvtResolvedPlugins from an async process function
-   *  (set by the parent's fork() for plugin inheritance). */
-  // eslint-disable-next-line unicorn/consistent-function-scoping
-  const getResolvedPlugins = (f: unknown): ActorPlugin[] | undefined => {
-    const withPlugins = f as { pvtResolvedPlugins?: ActorPlugin[] };
-    return withPlugins.pvtResolvedPlugins;
-  };
+async function assembleActor(
+  config: ActorConfig<any, any, any, any, any, any, any>,
+  plugins: ActorPlugin[],
+): Promise<ActorConfig<any, any, any, any, any, any, any>> {
+  if (!config.pluginHooks) config.pluginHooks = { onMessage:[],onEmit:[],onChildExit:[],onStart:[],onStopRequested:[],onError:[],onEnd:[] };
+  if (!config.pluginReflection) config.pluginReflection = new Map();
+  if (!config.pluginDecorators) config.pluginDecorators = new Map();
 
-  /** Stash resolved plugins on a function for the child to read. */
-  // eslint-disable-next-line unicorn/consistent-function-scoping
-  const stashPlugins = (f: unknown, plugs: ActorPlugin[]): void => {
-    (f as { pvtResolvedPlugins?: ActorPlugin[] }).pvtResolvedPlugins = plugs;
-  };
-
-  // Internal generator receives WithSender<InMsg> so sender identity
-  // is directly accessible in the dispatch loop with zero casts.
-  // Promise that resolves with the ActorContext after yield.
-  // Reflection methods await this so they get the real `this` context.
-  const actorCtxMap = new Map<symbol, ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>>();
-  const pvtRegisteredReflection = new Map<symbol, Map<string, Function>>();
-
-  const fn = async function* (
-    ctx: ProcessCtx<Args, ExposedState, InMsg, OutMsg>,
-    args: Args,
-  ): AsyncGenerator<ExposedState | null, void, WithSender<InMsg>> {
-    let done = false;
-    let exitReason: unknown;
-    let stopRequested = false;
-
-    // State resolved below after self is built.
-    let rawState: InternalState = undefined as unknown as InternalState;
-    let exposedState: ExposedState = undefined as unknown as ExposedState;
-
-    // ── hooks ──────────────────────────────────────────────────────────
-    const pvtHooks = new HookRegistry<any, any, any>();
-
-    const decorated = new Map<string, unknown>();
-
-    // Build the actor context.
-    const self: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers
-    > = {
-      ctx: ctx as ProcessCtx<Args, InternalState, InMsg, OutMsg>,
-      ...((config.methods || {}) as Methods),
-      state: rawState,
-      name: ctx.pname,
-      id: ctx.id,
-      emit(msg) {
-        // Fire onEmit hooks before the actual emit.
-        for (const hookFn of pvtHooks.onEmit) {
-          try { hookFn(msg); } catch { /* ignore — errors bubble through onError */ }
-        }
-        ctx.toParent(msg);
-      },
-      agreeToStop() {
-        exitReason = "stopped";
-        done = true;
-      },
-      exit(reason) {
-        exitReason = reason;
-        done = true;
-      },
-      $child: {},
-      // ── registration API ─────────────────────────────────────
-      hooks: {
-        onMessage: (h: OnMessageHook<any>) => { pvtHooks.onMessage.push(h); },
-        onEmit: (h: OnEmitHook<any>) => { pvtHooks.onEmit.push(h); },
-        onChildExit: (h: OnChildExitHook) => { pvtHooks.onChildExit.push(h); },
-        onStart: (h: OnStartHook<unknown>) => { pvtHooks.onStart.push(h); },
-        onStopRequested: (h: OnStopRequestedHook) => { pvtHooks.onStopRequested.push(h); },
-        onError: (h: OnErrorHook) => { pvtHooks.onError.push(h); },
-        onEnd: (h: OnEndHook) => { pvtHooks.onEnd.push(h); },
-      },
-      reflection: {
-        register(name: string, method: (this: ActorContext<unknown, unknown, Message, Message, MethodOptions, HandlerOptions<Message>>) => unknown) {
-          let methods = pvtRegisteredReflection.get(ctx.id);
-          if (!methods) {
-            methods = new Map();
-            pvtRegisteredReflection.set(ctx.id, methods);
-          }
-          methods.set(`${currentPluginName}.${name}`, method as Function);
-        },
-      },
-      decorate: (key: string, value: unknown) => {
-        if (key in self) throw new Error(`decorate: key "${key}" conflicts with built-in`);
-        if (decorated.has(key)) throw new Error(`decorate: key "${key}" already decorated`);
-        decorated.set(key, value);
-      },
-      fork(childFn, name, childArgs) {
-        // Unwrap ActorDefinition, derive name.
-        const resolved = typeof childFn === "function" ? childFn : childFn.fn;
-        const childDef =
-          typeof childFn === "object" ? childFn : null;
-        const childName = name
-          ?? childDef?.name
-          ?? `child-${Object.keys(self.$child).length}`;
-
-        // ── plugin inheritance ───────────────────────────────────────
-        // Resolve parent's installed plugins.
-        const parentPlugs: ActorPlugin[] = config.plugins
-          ? (typeof config.plugins === "function" ? config.plugins([]) : config.plugins)
-          : [];
-
-        // Merge with child's raw config.
-        const childRaw = childDef?.pvtPluginsRaw;
-        let childPlugs: ActorPlugin[];
-        if (!childRaw) {
-          childPlugs = [...parentPlugs];
-        } else if (Array.isArray(childRaw)) {
-          childPlugs = [...childRaw];
-        } else {
-          childPlugs = childRaw(parentPlugs);
-        }
-
-        // Stash resolved list on the child's config before fork.
-        stashPlugins(resolved, childPlugs);
-
-        // Build tree-prefixed name: parent:child
-        const treeName = `${ctx.pname}:${childName}`;
-        const child = childDef
-          ? childDef.spawnAsChild(ctx, childArgs!, treeName)
-          : ctx.fork(resolved, treeName)(childArgs!);
-        // Store under the resolved name for $child lookup and EXIT matching.
-        self.$child[child.pname] = child as unknown as AsyncProcess<
-          unknown,
-          unknown,
-          Message,
-          Message
-        >;
-        return child;
-      },
-      
-    };
-    actorCtxMap.set(ctx.id, self);
-
-    // ── install plugins ──────────────────────────────────────────────
-    // On child actors, pvtResolvedPlugins is set by the parent's fork().
-    // On root actors, use config.plugins directly.
-    const resolvedPlugs = getResolvedPlugins(fn)
-      ?? (config.plugins
-          ? (typeof config.plugins === "function" ? config.plugins([]) : config.plugins)
-          : []);
-
-    let currentPluginName: string | null = null;
-    const asyncInstalls: Array<{ name: string; promise: Promise<void> }> = [];
-    for (const p of resolvedPlugs) {
-      let pvtErr: unknown = null;
-      currentPluginName = p.name;
-      try {
-        const result = p.install(self as unknown as ActorContext<unknown, unknown, Message, Message, MethodOptions, HandlerOptions<Message>>);
-        if (result instanceof Promise) {
-          asyncInstalls.push({ name: p.name, promise: result });
-        }
-      } catch (e) {
-        pvtErr = e;
-      }
-      if (pvtErr) {
-        console.error(`[${ctx.pname}] plugin "${p.name}" install failed:`, pvtErr);
-      }
-    }
-    // Await async installs sequentially so currentPluginName is correct
-    // for each one.  Promise.all would run them in parallel.
-    for (const { name, promise } of asyncInstalls) {
-      currentPluginName = name;
-      try {
-        await promise;
-      } catch (e: unknown) {
-        console.error(`[${ctx.pname}] plugin "${name}" install failed:`, e);
-      }
-    }
-
-    // ── register config.hooks (after plugins, so plugins fire first) ─
-    if (config.hooks) {
-      const h = config.hooks;
-      if (h.onStart)    pvtHooks.onStart.push((state) => h.onStart!.call(self, state));
-      if (h.onMessage)  pvtHooks.onMessage.push((msg, sender) => h.onMessage!.call(self, msg, sender));
-      if (h.onEmit)     pvtHooks.onEmit.push((msg) => h.onEmit!.call(self, msg));
-      if (h.onChildExit) pvtHooks.onChildExit.push((name) => h.onChildExit!.call(self, name));
-      if (h.onStopRequested) pvtHooks.onStopRequested.push(() => h.onStopRequested!.call(self));
-      if (h.onEnd)      pvtHooks.onEnd.push((reason) => h.onEnd!.call(self, reason));
-      if (h.onError)    pvtHooks.onError.push((err) => h.onError!.call(self, err));
-    }
-
-    // ── merge decorated properties onto self ───────────────────────
-    for (const [key, value] of decorated) {
-      (self as Record<string, unknown>)[key] = value;
-    }
-
-    // ── resolve state (setup or initialState) ────────────────────
-    if (config.setup) {
-      rawState = await config.setup.call(self, args);
-    } else if (typeof config.initialState === "function") {
-      rawState = (config.initialState as (a: Args, ictx: typeof ctx) => InternalState)(args, ctx);
-    } else if (config.initialState !== undefined) {
-      rawState = config.initialState;
-    } else {
-      throw new Error("ActorConfig: setup() or initialState is required");
-    }
-    (self as { state: unknown }).state = rawState;
-    exposedState = config.expose
-      ? config.expose(rawState)
-      : (rawState as unknown as ExposedState);
-
-    // Call onStart with args (legacy — use setup() for new code).
-    if (config.onStart) {
-      await config.onStart.call(self, args);
-      exposedState = config.expose
-        ? config.expose(rawState)
-        : (rawState as unknown as ExposedState);
-    }
-
-    // Fire hooks.onStart.
-    for (const hookFn of pvtHooks.onStart) {
-      try { await hookFn(exposedState); } catch {}
-    }
-
-    yield exposedState;
-
-
-    // ── afterStart ──────────────────────────────────────────────────
-    if (config.afterStart) { await config.afterStart.call(self); }
-
-    // Dispatch loop..
-    yield* runDispatchAsync<WithSender<InMsg | ExitMessage>>(
-      ctx.pname,
-      async (stamped) => {
-        const [msg, sender] = stamped;
-
-        // ── Built-in STOP handling ──────────────────────────────────
-        if (msg.type === "STOP") {
-          for (const hookFn of pvtHooks.onStopRequested) {
-            try { await hookFn(); } catch {}
-          }
-          if (config.onStopRequested) {
-            await config.onStopRequested.call(self);
-            if (!done) {
-              stopRequested = true;
-            }
-          } else {
-            // Default: agree immediately.
-            exitReason = "stopped";
-            done = true;
-          }
-          return;
-        }
-
-        // ── Re-offer deferred STOP ──────────────────────────────────
-        if (stopRequested && !done) {
-          if (config.onStopRequested) {
-            await config.onStopRequested.call(self);
-            if (!done) {
-              stopRequested = true;
-            }
-          }
-        }
-
-        // ── Built-in EXIT handling ──────────────────────────────────
-        if (msg.type === "EXIT") {
-          const childName = sender.fromName;
-
-          if (childName && self.$child[childName]) {
-            // Recognized child — consume EXIT here.
-            delete self.$child[childName];
-          }
-          for (const hookFn of pvtHooks.onChildExit) {
-            try { await hookFn(childName); } catch {}
-          }
-          if (config.onChildExit) {
-            await config.onChildExit.call(self, childName, msg as ExitMessage);
-          }
-          // Unrecognized EXIT — fall through to handlers/onUnhandled.
-        }
-
-        // ── onMessage hooks ────────────────────────────────────────
-        let hookStopped = false;
-        if (msg.type !== "STOP" && msg.type !== "EXIT") {
-          for (const hookFn of pvtHooks.onMessage) {
-            try {
-              const result: HookResult = await hookFn(msg, sender);
-              if (result === STOP_SENTINEL) { hookStopped = true; break; }
-            } catch (e) {
-              // Error in hook: fire onError hooks, then continue.
-              for (const errFn of pvtHooks.onError) {
-                try { errFn(e); } catch {}
-              }
-            }
-          }
-        }
-
-        // ── Named handlers ──────────────────────────────────────────
-        if (msg.type !== "STOP" && !hookStopped) {
-          const handler = config.handlers[
-            msg.type as keyof Handlers
-          ] as HandlerFn<InMsg>;
-          if (handler) {
-            try {
-              await handler.call(self, msg as InMsg, sender);
-            } catch (e) {
-              for (const hookFn of pvtHooks.onError) {
-                try { hookFn(e); } catch {}
-              }
-              throw e; // rethrow to trigger exit
-            }
-          } else if (config.onUnhandled) {
-            try {
-              await config.onUnhandled.call(self, msg as InMsg, sender);
-            } catch (e) {
-              for (const hookFn of pvtHooks.onError) {
-                try { hookFn(e); } catch {}
-              }
-              throw e; // rethrow to trigger exit
-            }
-          }
-          // No onUnhandled: silently drop.
-        }
-
-        if (done) return;
-      },
-      () => done,
-    );
-
-    // Fire hooks.onEnd before the actor's onEnd.
-    for (const hookFn of pvtHooks.onEnd) {
-      try { await hookFn(exitReason ?? "done"); } catch {}
-    }
-
-    // Call onEnd.
-    if (config.onEnd) {
-      await config.onEnd.call(self, exitReason ?? "done");
-    }
-    actorCtxMap.delete(ctx.id);
-    pvtRegisteredReflection.delete(ctx.id);
-  };
-
-  type ReflectableProcess = { id: symbol; $reflection: Record<string, Function> };
-
-  function attachReflection(proc: ReflectableProcess): void {
-    const merged = new Map<string, Function>();
-    if (config.$reflectionMethods) {
-      for (const [key, method] of Object.entries(config.$reflectionMethods)) {
-        merged.set(key, method as Function);
-      }
-    }
-    const pluginMethods = pvtRegisteredReflection.get(proc.id);
-    if (pluginMethods) {
-      for (const [key, method] of pluginMethods) {
-        merged.set(key, method);
-      }
-    }
-    const refl = proc.$reflection as Record<string, Function>;
-    for (const [key, method] of merged) {
-      refl[key] = async (...methodArgs: unknown[]) => {
-        return method.call(actorCtxMap.get(proc.id)!, ...methodArgs);
-      };
+  for (const p of plugins) {
+    try {
+      config = await p(config);
+    } catch (e: unknown) {
+      console.error(`[assembleActor] plugin "${(p as Function).name || '?'}" failed:`, e);
     }
   }
+  return config;
+}
+
+export function defineActor<
+  Args, InternalState, ExposedState, InMsg extends Message, OutMsg extends Message,
+  Methods extends MethodOptions, Handlers extends HandlerOptions<InMsg>, ReflectionMethods = {},
+>(
+  config: ActorConfig<Args, InternalState, ExposedState, InMsg, OutMsg, Methods, Handlers, ReflectionMethods>,
+): ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers, ReflectionMethods> {
+
+  const actorCtxMap = new Map<symbol, ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>>();
+
+  function makeRuntime(
+    assembly: ActorConfig<Args, InternalState, ExposedState, InMsg, OutMsg, Methods, Handlers, ReflectionMethods>,
+  ): AsyncProcessFn<Args, ExposedState, InMsg, OutMsg> {
+    return async function* (ctx, args): AsyncGenerator<ExposedState | null, void, WithSender<InMsg>> {
+      let done = false; let exitReason: unknown; let stopRequested = false;
+      let rawState: InternalState = undefined as unknown as InternalState;
+      let exposedState: ExposedState = undefined as unknown as ExposedState;
+
+      const ph = assembly.pluginHooks ?? { onMessage:[],onEmit:[],onChildExit:[],onStart:[],onStopRequested:[],onError:[],onEnd:[] };
+      const pd = assembly.pluginDecorators ?? new Map();
+      const decorated = new Map(pd);
+
+      const self = {
+        ctx: ctx as any, ...((assembly.methods || {}) as Methods),
+        state: rawState, name: ctx.pname, id: ctx.id,
+        emit(msg: any) { for (const h of ph.onEmit) { try { h(msg) } catch {} } ctx.toParent(msg); },
+        agreeToStop() { exitReason = "stopped"; done = true; },
+        exit(reason: unknown) { exitReason = reason; done = true; },
+        $child: {},
+        hooks: {
+          onMessage: (h: any) => ph.onMessage.push(h), onEmit: (h: any) => ph.onEmit.push(h),
+          onChildExit: (h: any) => ph.onChildExit.push(h), onStart: (h: any) => ph.onStart.push(h),
+          onStopRequested: (h: any) => ph.onStopRequested.push(h), onError: (h: any) => ph.onError.push(h),
+          onEnd: (h: any) => ph.onEnd.push(h),
+        },
+        reflection: { register(name: string, method: any) { (assembly.pluginReflection ?? new Map()).set(`runtime.${name}`, method); } },
+        decorate: (key: string, value: unknown) => {
+          if (key in self) throw new Error(`decorate: key "${key}" conflicts with built-in`);
+          if (decorated.has(key)) throw new Error(`decorate: key "${key}" already decorated`);
+          decorated.set(key, value);
+        },
+        async fork(childFn: any, name: any, childArgs: any) {
+          const childDef = typeof childFn === "object" ? childFn : null;
+          const childName = name ?? childDef?.name ?? `child-${Object.keys(self.$child).length}`;
+          const treeName = `${ctx.pname}:${childName}`;
+          let child: AsyncProcess<unknown, unknown, Message, Message>;
+          if (childDef) {
+            const parentPlugs = (assembly.plugins
+              ? (typeof assembly.plugins === "function" ? assembly.plugins([]) : assembly.plugins)
+              : []) as ActorPlugin[];
+            child = await childDef.spawnAsChild(ctx, childArgs!, treeName, parentPlugs) as any;
+          } else {
+            const resolvedFn = typeof childFn === "function" ? childFn : childFn.fn;
+            child = ctx.fork(resolvedFn, treeName)(childArgs!) as any;
+          }
+          (self.$child as any)[child.pname] = child;
+          return child;
+        },
+      };
+      actorCtxMap.set(ctx.id, self as any);
+
+      if (assembly.hooks) {
+        const h = assembly.hooks;
+        if (h.onStart) ph.onStart.push((s: unknown) => (h.onStart as any)!.call(self as any, s));
+        if (h.onMessage) ph.onMessage.push((m: any, s: any) => h.onMessage!.call(self as any, m, s));
+        if (h.onEmit) ph.onEmit.push((m: any) => h.onEmit!.call(self as any, m));
+        if (h.onChildExit) ph.onChildExit.push((n: string) => h.onChildExit!.call(self as any, n));
+        if (h.onStopRequested) ph.onStopRequested.push(() => h.onStopRequested!.call(self as any));
+        if (h.onEnd) ph.onEnd.push((r: unknown) => h.onEnd!.call(self as any, r));
+        if (h.onError) ph.onError.push((e: unknown) => h.onError!.call(self as any, e));
+      }
+      for (const [k, v] of decorated) { (self as any)[k] = v; }
+
+      if (assembly.setup) { rawState = await assembly.setup.call(self as any, args); }
+      else if (typeof assembly.initialState === "function") { rawState = (assembly.initialState as any)(args, ctx); }
+      else if (assembly.initialState !== undefined) { rawState = assembly.initialState; }
+      else { throw new Error("ActorConfig: setup() or initialState is required"); }
+      (self as any).state = rawState;
+      exposedState = assembly.expose ? assembly.expose(rawState) : (rawState as any);
+      if (assembly.onStart) { await assembly.onStart.call(self as any, args);
+        exposedState = assembly.expose ? assembly.expose(rawState) : (rawState as any); }
+      for (const h of ph.onStart) { try { await h(exposedState) } catch {} }
+      yield exposedState;
+      if (assembly.afterStart) { await assembly.afterStart.call(self as any); }
+
+      yield* runDispatchAsync<WithSender<InMsg | ExitMessage>>(ctx.pname, async (stamped) => {
+        const [msg, sender] = stamped;
+        if (msg.type === "STOP") {
+          for (const h of ph.onStopRequested) { try { await h() } catch {} }
+          if (assembly.onStopRequested) { await assembly.onStopRequested.call(self as any); if (!done) stopRequested = true; }
+          else { exitReason = "stopped"; done = true; }
+          return;
+        }
+        if (stopRequested && !done) {
+          if (assembly.onStopRequested) { await assembly.onStopRequested.call(self as any); if (!done) stopRequested = true; }
+        }
+        if (msg.type === "EXIT") {
+          const childName = sender.fromName;
+          if (childName && (self.$child as any)[childName]) delete (self.$child as any)[childName];
+          for (const h of ph.onChildExit) { try { await h(childName) } catch {} }
+          if (assembly.onChildExit) await assembly.onChildExit.call(self as any, childName, msg as ExitMessage);
+        }
+        let hookStopped = false;
+        if (msg.type !== "STOP" && msg.type !== "EXIT") {
+          for (const h of ph.onMessage) {
+            try { const r: HookResult = await h(msg, sender); if (r === STOP_SENTINEL) { hookStopped = true; break; } }
+            catch (e) { for (const eh of ph.onError) { try { eh(e) } catch {} } }
+          }
+        }
+        if (msg.type !== "STOP" && !hookStopped) {
+          const handler = assembly.handlers[msg.type as keyof Handlers] as HandlerFn<InMsg>;
+          if (handler) {
+            try { await handler.call(self as any, msg as InMsg, sender); }
+            catch (e) { for (const eh of ph.onError) { try { eh(e) } catch {} } throw e; }
+          } else if (assembly.onUnhandled) {
+            try { await assembly.onUnhandled.call(self as any, msg as InMsg, sender); }
+            catch (e) { for (const eh of ph.onError) { try { eh(e) } catch {} } throw e; }
+          }
+        }
+      }, () => done);
+
+      for (const h of ph.onEnd) { try { await h(exitReason) } catch {} }
+      if (assembly.onEnd) await assembly.onEnd.call(self as any, exitReason);
+    };
+  }
+
+  type ReflectableProcess = { id: symbol; $reflection: Record<string, Function> };
+  function attachReflection(proc: ReflectableProcess, assembly: ActorConfig<any, any, any, any, any, any, any>): void {
+    const merged = new Map<string, Function>();
+    if (assembly.$reflectionMethods) for (const [k, m] of Object.entries(assembly.$reflectionMethods)) merged.set(k, m as Function);
+    if (assembly.pluginReflection) for (const [k, m] of assembly.pluginReflection) merged.set(k, m);
+    const refl = proc.$reflection as Record<string, Function>;
+    for (const [k, m] of merged) refl[k] = async (...a: unknown[]) => m.call(actorCtxMap.get(proc.id)!, ...a);
+  }
+
+  const legacyFn = makeRuntime(config as any) as unknown as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>;
 
   return {
-    fn: fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
-    name: config.name,
-    pvtPluginsRaw: config.plugins,
-    config: config as unknown as ActorConfig<
-      Args,
-      InternalState,
-      ExposedState,
-      InMsg,
-      OutMsg,
-      {},
-      Handlers
-    >,
-    spawn(args: Args) {
-      const proc = spawnAsync(
-        fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
-        config.name ?? "actor",
-      )(args);
-      attachReflection(proc);
-      return proc as AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
+    fn: legacyFn, name: config.name, pvtPluginsRaw: config.plugins,
+    config: config as any,
+    async spawn(args: Args) {
+      const plugs = resolvePlugins(config);
+      const assembly = await assembleActor(config, plugs);
+      const runtime = makeRuntime(assembly as any);
+      const proc = spawnAsync(runtime, assembly.name ?? "actor")(args);
+      attachReflection(proc, assembly);
+      return proc as any;
     },
-    spawnAsChild(
-      ctx: ProcessCtx<any, any, any, any>,
-      args: Args,
-      name?: string,
-    ) {
-      const proc = ctx.fork(
-        fn as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>,
-        name ?? config.name ?? 'child',
-      )(args);
-      attachReflection(proc);
-      return proc as AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
+    async spawnAsChild(ctx: ProcessCtx<any, any, any, any>, args: Args, name?: string, parentPlugins?: ActorPlugin[]) {
+      const plugs = resolvePlugins(config, parentPlugins);
+      const assembly = await assembleActor(config, plugs);
+      const runtime = makeRuntime(assembly as any);
+      const proc = ctx.fork(runtime, name ?? assembly.name ?? "child")(args);
+      attachReflection(proc, assembly);
+      return proc as any;
     },
   };
 }

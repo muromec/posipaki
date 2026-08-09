@@ -17,7 +17,7 @@ describe("setup()", () => {
       setup() { return { count: 42 }; },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(proc.state as any).toEqual({ count: 42 });
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -35,7 +35,7 @@ describe("setup()", () => {
       },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(proc.state as any).toEqual({ count: 99 });
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -50,7 +50,7 @@ describe("setup()", () => {
       setup() { return { count: 5 }; },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(proc.state as any).toEqual({ count: 5 });
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -65,7 +65,7 @@ describe("setup()", () => {
       setup(_args: { start: number }) { return { count: 7 }; },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({ start: 7 });
+    const proc = await Actor.spawn({ start: 7 });
     await proc.ready();
     expect(proc.state as any).toEqual({ count: 7 });
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -85,12 +85,12 @@ describe("setup()", () => {
       inMessages: defineMessages<CounterIn>(),
       outMessages: defineMessages<CounterOut>(),
       async setup(this: any) {
-        const child = this.fork(Child, "kid", {});
+        const child = await this.fork(Child, "kid", {});
         return { childPname: child.pname };
       },
       handlers: { POKE() {} },
     });
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     expect((proc.state as any).childPname).toBeTruthy();
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -109,7 +109,7 @@ describe("setup()", () => {
       },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     // Emits during setup go to toParent before ready()
     await proc.ready();
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -125,7 +125,7 @@ describe("setup()", () => {
       initialState: () => ({ count: 999 }),
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(proc.state as any).toEqual({ count: 1 });
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -141,7 +141,7 @@ describe("setup()", () => {
       expose: (s) => ({ c: s.internal }),
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(proc.state as any).toEqual({ c: 10 });
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -162,7 +162,7 @@ describe("afterStart()", () => {
       afterStart(this: any) { this.state.events.push("after"); },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 20));
     expect((proc.state as any).events).toContain("after");
@@ -180,7 +180,7 @@ describe("afterStart()", () => {
       afterStart(this: any) { this.state.events.push("after"); },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 20));
     expect((proc.state as any).events).toContain("after");
@@ -201,7 +201,7 @@ describe("afterStart()", () => {
       },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 30));
     expect((proc.state as any).events).toContain("async-after");
@@ -221,7 +221,7 @@ describe("legacy initialState + onStart", () => {
       initialState: () => ({ count: 0 }),
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(proc.state as any).toEqual({ count: 0 });
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -236,7 +236,7 @@ describe("legacy initialState + onStart", () => {
       initialState: { count: 10 },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(proc.state as any).toEqual({ count: 10 });
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -252,7 +252,7 @@ describe("legacy initialState + onStart", () => {
       onStart(this: any) { this.state.started = true; },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(proc.state as any).toEqual({ count: 0, started: true });
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -271,7 +271,7 @@ describe("legacy initialState + onStart", () => {
       },
       handlers: { POKE() {} },
     });
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(proc.state as any).toEqual({ count: 0, loaded: true });
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });
@@ -291,13 +291,13 @@ describe("legacy initialState + onStart", () => {
       inMessages: defineMessages<CounterIn>(),
       outMessages: defineMessages<CounterOut>(),
       initialState: () => ({ count: 0, childPname: "" }),
-      onStart(this: any) {
-        const child = this.fork(Child, "my-child", {});
+      async onStart(this: any) {
+        const child = await this.fork(Child, "my-child", {});
         this.state.childPname = child.pname;
       },
       handlers: { POKE() {} },
     });
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     expect((proc.state as any).childPname).toBeTruthy();
     proc.send({ type: "STOP" }, { fromName: "t", fromId: Symbol() });

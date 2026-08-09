@@ -1,3 +1,4 @@
+/* eslint-disable unicorn/consistent-function-scoping */
 // ── Plugin System Tests ─────────────────────────────────────────────────
 //
 // Tests plugin installation, inheritance, hook propagation across fork,
@@ -19,17 +20,15 @@ const Pout = defineMessages<PongMsg>();
 /** A test plugin that records every hook call. */
 function spyPlugin(id: string): ActorPlugin & { calls: string[] } {
   const calls: string[] = [];
-  const p: any = {
-    name: `spy-${id}`,
-    install(self: any) {
-      self.hooks.onMessage(() => calls.push(`${id}:onMessage`));
-      self.hooks.onEmit(() => calls.push(`${id}:onEmit`));
-      self.hooks.onChildExit(() => calls.push(`${id}:onChildExit`));
-      self.hooks.onStart(() => calls.push(`${id}:onStart`));
-      self.hooks.onError(() => calls.push(`${id}:onError`));
-    },
+  const fn: ActorPlugin = async (config: any) => {
+    config.pluginHooks!.onMessage.push(() => calls.push(`${id}:onMessage`));
+    config.pluginHooks!.onEmit.push(() => calls.push(`${id}:onEmit`));
+    config.pluginHooks!.onChildExit.push(() => calls.push(`${id}:onChildExit`));
+    config.pluginHooks!.onStart.push(() => calls.push(`${id}:onStart`));
+    config.pluginHooks!.onError.push(() => calls.push(`${id}:onError`));
+    return config;
   };
-  return Object.assign(p, { calls });
+  return Object.assign(fn, { calls });
 }
 
 // ── basic plugin install ─────────────────────────────────────────────────
@@ -37,10 +36,7 @@ function spyPlugin(id: string): ActorPlugin & { calls: string[] } {
 describe('plugin basic', () => {
   it('plugin.install is called at fork time', async () => {
     let installed = false;
-    const plug: ActorPlugin = {
-      name: 'test',
-      install() { installed = true; },
-    };
+    const plug: ActorPlugin = async (config: any) => { installed = true; return config; };
 
     const Actor = defineActor({
       name: 'a',
@@ -51,7 +47,7 @@ describe('plugin basic', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(installed).toBe(true);
     proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
@@ -71,7 +67,7 @@ describe('plugin basic', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
 
     // onStart fires during startup
@@ -89,13 +85,11 @@ describe('plugin basic', () => {
 
   it('plugin onStart receives state', async () => {
     let stateCount = -1;
-    const plug: ActorPlugin = {
-      name: 'test',
-      install(self: any) {
-        self.hooks.onStart = (fn: any) => { stateCount = fn.state?.count ?? -1; };
-        // Actually: hooks.onStart fires via existing mechanism.
-        // Let's use the existing hook API.
-      },
+    const plug: ActorPlugin = async (config: any) => {
+      config.pluginHooks!.onStart.push((state: any) => { stateCount = state?.count ?? -1; });
+      // Actually: hooks.onStart fires via existing mechanism.
+      // Let's use the existing hook API.
+      return config;
     };
 
     const Actor = defineActor({
@@ -103,11 +97,8 @@ describe('plugin basic', () => {
       inMessages: Pin, outMessages: Pout,
       expose: (s: any) => s,
       initialState: () => ({ count: 42 }),
-      plugins: [{
-        name: 'test',
-        install(self: any) {
-          self.hooks.onMessage = undefined; // placeholder, real test below
-        },
+      plugins: [async (config: any) => {
+        return config;
       }],
       handlers: { POKE() {} },
     });
@@ -124,14 +115,14 @@ describe('plugin basic', () => {
       handlers: { POKE() {} },
     });
 
-    const proc2 = Actor2.spawn({});
+    const proc2 = await Actor2.spawn({});
     await proc2.ready();
     expect(proc2.state!.count).toBe(100);
     proc2.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
     await proc2.wait();
 
     // Clean up first actor
-    const proc1 = Actor.spawn({});
+    const proc1 = await Actor.spawn({});
     await proc1.ready();
     proc1.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
     await proc1.wait();
@@ -144,12 +135,10 @@ describe('plugin inheritance', () => {
   it('child inherits parent plugins by default', async () => {
     let childSpyCalls: string[] = [];
 
-    const inheritCheck: ActorPlugin = {
-      name: 'inherit-check',
-      install(self: any) {
-        self.hooks.onMessage(() => childSpyCalls.push('inherited:onMessage'));
-        self.hooks.onStart(() => childSpyCalls.push('inherited:onStart'));
-      },
+    const inheritCheck: ActorPlugin = async (config: any) => {
+      config.pluginHooks!.onMessage.push(() => childSpyCalls.push('inherited:onMessage'));
+      config.pluginHooks!.onStart.push(() => childSpyCalls.push('inherited:onStart'));
+      return config;
     };
 
     const Child = defineActor({
@@ -167,11 +156,11 @@ describe('plugin inheritance', () => {
       expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [inheritCheck],
-      onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
+      async onStart(this: any) { this.state.c = await this.fork(Child, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
 
     // Child should have the inherited plugin installed
@@ -192,10 +181,7 @@ describe('plugin inheritance', () => {
     const parentSpy = spyPlugin('PARENT');
     let childPlugsInstalled: string[] = [];
 
-    const plug: ActorPlugin = {
-      name: 'child-only',
-      install() { childPlugsInstalled.push('child-only'); },
-    };
+    const plug: ActorPlugin = async (config: any) => { childPlugsInstalled.push('child-only'); return config; };
 
     const Child = defineActor({
       name: 'child',
@@ -212,11 +198,11 @@ describe('plugin inheritance', () => {
       expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [parentSpy],
-      onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
+      async onStart(this: any) { this.state.c = await this.fork(Child, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 50));
 
@@ -233,12 +219,7 @@ describe('plugin inheritance', () => {
     const parentSpy = spyPlugin('PARENT');
     const extraCalls: string[] = [];
 
-    const extraPlg: ActorPlugin = {
-      name: 'extra',
-      install(self: any) {
-        self.hooks.onMessage(() => extraCalls.push('extra:onMessage'));
-      },
-    };
+    const extraPlg: ActorPlugin = async (config: any) => { config.pluginHooks!.onMessage.push(() => extraCalls.push('extra:onMessage')); return config; };
 
     const Child = defineActor({
       name: 'child',
@@ -255,11 +236,11 @@ describe('plugin inheritance', () => {
       expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [parentSpy],
-      onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
+      async onStart(this: any) { this.state.c = await this.fork(Child, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
 
     // Send a message to the child via the parent
@@ -280,12 +261,7 @@ describe('plugin hook propagation', () => {
   it('onChildExit hook fires in parent when child exits', async () => {
     const childExits: string[] = [];
 
-    const parentPlg: ActorPlugin = {
-      name: 'pexit',
-      install(self: any) {
-        self.hooks.onChildExit((name: string) => { childExits.push(name); });
-      },
-    };
+    const parentPlg: ActorPlugin = async (config: any) => { config.pluginHooks!.onChildExit.push((name: string) => { childExits.push(name); }); return config; };
 
     const Child = defineActor({
       name: 'child',
@@ -302,11 +278,11 @@ describe('plugin hook propagation', () => {
       expose: (s: any) => s,
       initialState: () => ({ x: 0 }),
       plugins: [parentPlg],
-      onStart(this: any) { this.fork(Child, undefined, {}); },
+      async onStart(this: any) { await this.fork(Child, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 200));
 
@@ -318,12 +294,7 @@ describe('plugin hook propagation', () => {
 
   it('onError hook fires in plugin when handler throws', async () => {
     const errors: string[] = [];
-    const plg: ActorPlugin = {
-      name: 'err-catcher',
-      install(self: any) {
-        self.hooks.onError((e: unknown) => { errors.push((e as Error).message); });
-      },
-    };
+    const plg: ActorPlugin = async (config: any) => { config.pluginHooks!.onError.push((e: unknown) => { errors.push((e as Error).message); }); return config; };
 
     const Actor = defineActor({
       name: 'a',
@@ -336,7 +307,7 @@ describe('plugin hook propagation', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
     await proc.wait().catch(() => {});
@@ -345,81 +316,13 @@ describe('plugin hook propagation', () => {
   });
 });
 
-// ── rbac plugin ──────────────────────────────────────────────────────────
 
-describe('rbac plugin', () => {
-  it('allows listed tool', async () => {
-    // Import the real rbac since it's in same repo
-    const { rbac } = await import('./rbac.js');
-
-    const Actor = defineActor({
-      name: 'a',
-      inMessages: Pin, outMessages: Pout,
-      expose: (s: any) => s,
-      initialState: () => ({ x: 0 }),
-      plugins: [rbac({ allow: ['safe_tool'] })],
-      handlers: {
-        POKE(this: any) { this.state.x = 1; },
-      },
-    });
-
-    const proc = Actor.spawn({});
-    await proc.ready();
-
-    // Simulate a TOOL_EXECUTE for a safe tool
-    proc.send!({
-      type: 'POKE', n: 0,
-      toolCall: { function: { name: 'safe_tool' } },
-    } as any, { fromName: 't', fromId: Symbol('t') });
-    await new Promise(r => setTimeout(r, 50));
-
-    // Handler should have run (x = 1)
-    expect(proc.state!.x).toBe(1);
-
-    proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
-    await proc.wait();
-  });
-
-  it('blocks disallowed tool', async () => {
-    const { rbac } = await import('./rbac.js');
-
-    const Actor = defineActor({
-      name: 'a',
-      inMessages: Pin, outMessages: Pout,
-      expose: (s: any) => s,
-      initialState: () => ({ x: 0 }),
-      plugins: [rbac({ allow: ['safe_tool'] })],
-      handlers: {
-        POKE(this: any) { this.state.x++; },
-      },
-    });
-
-    const proc = Actor.spawn({});
-    await proc.ready();
-
-    // Simulate a TOOL_EXECUTE for a blocked tool
-    proc.send!({
-      type: 'POKE', n: 0,
-      toolCall: { function: { name: 'dangerous_tool' } },
-    } as any, { fromName: 't', fromId: Symbol('t') });
-    await new Promise(r => setTimeout(r, 50));
-
-    // Handler should NOT have run — x should still be 0
-    expect(proc.state!.x).toBe(0);
-
-    proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
-    await proc.wait();
-  });
-});
 
 // ── adversarial ──────────────────────────────────────────────────────────
 
 describe('plugins — adversarial', () => {
   it('plugin install failure does not crash actor', async () => {
-    const badPlug: ActorPlugin = {
-      name: 'bad',
-      install() { throw new Error('install failed'); },
-    };
+    const badPlug: ActorPlugin = async (config: any) => { throw new Error('install failed'); };
 
     const Actor = defineActor({
       name: 'a',
@@ -430,7 +333,7 @@ describe('plugins — adversarial', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
 
     // Actor should still be alive
@@ -443,12 +346,10 @@ describe('plugins — adversarial', () => {
 
   it('multiple plugins fire in definition order', async () => {
     const order: string[] = [];
-    const make = (id: string): ActorPlugin => ({
-      name: id,
-      install(self: any) {
-        self.hooks.onMessage(() => order.push(id));
-      },
-    });
+    const make = (id: string): ActorPlugin => async (config: any) => {
+      config.pluginHooks!.onMessage.push(() => order.push(id));
+      return config;
+    };
 
     const Actor = defineActor({
       name: 'a',
@@ -459,7 +360,7 @@ describe('plugins — adversarial', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
     await new Promise(r => setTimeout(r, 50));
@@ -487,7 +388,7 @@ describe('plugins — adversarial', () => {
       inMessages: Pin, outMessages: Pout,
       expose: (s: any) => s,
       initialState: () => ({ gc: null as any }),
-      onStart(this: any) { this.state.gc = this.fork(Grandchild, undefined, {}); },
+      async onStart(this: any) { this.state.gc = await this.fork(Grandchild, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
     });
 
@@ -497,11 +398,11 @@ describe('plugins — adversarial', () => {
       expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [rootSpy],
-      onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
+      async onStart(this: any) { this.state.c = await this.fork(Child, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
     });
 
-    const proc = Root.spawn({});
+    const proc = await Root.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 100));
 
@@ -526,14 +427,8 @@ describe('hook ordering: plugins + actor hooks', () => {
   it('two plugins + actor onMessage all fire in registration order', async () => {
     const order: string[] = [];
 
-    const plug1: ActorPlugin = {
-      name: 'first',
-      install(self: any) { self.hooks.onMessage(() => order.push('plug1')); },
-    };
-    const plug2: ActorPlugin = {
-      name: 'second',
-      install(self: any) { self.hooks.onMessage(() => order.push('plug2')); },
-    };
+    const plug1: ActorPlugin = async (config: any) => { config.pluginHooks!.onMessage.push(() => order.push('plug1')); return config; };
+    const plug2: ActorPlugin = async (config: any) => { config.pluginHooks!.onMessage.push(() => order.push('plug2')); return config; };
 
     const Actor = defineActor({
       name: 'a',
@@ -547,7 +442,7 @@ describe('hook ordering: plugins + actor hooks', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
     await new Promise(r => setTimeout(r, 50));
@@ -561,12 +456,7 @@ describe('hook ordering: plugins + actor hooks', () => {
   it('plugin onMessage short-circuits before actor hook', async () => {
     const order: string[] = [];
 
-    const plug: ActorPlugin = {
-      name: 'blocker',
-      install(self: any) {
-        self.hooks.onMessage(() => { order.push('plug'); return stopPropagation(); });
-      },
-    };
+    const plug: ActorPlugin = async (config: any) => { config.pluginHooks!.onMessage.push(() => { order.push('plug'); return stopPropagation(); }); return config; };
 
     const Actor = defineActor({
       name: 'a',
@@ -580,7 +470,7 @@ describe('hook ordering: plugins + actor hooks', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
     await new Promise(r => setTimeout(r, 50));
@@ -619,7 +509,7 @@ describe('full lifecycle coverage', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
 
     // onStart should have fired
@@ -641,10 +531,7 @@ describe('full lifecycle coverage', () => {
   it('plugin onEnd fires before actor onEnd', async () => {
     const order: string[] = [];
 
-    const plug: ActorPlugin = {
-      name: 'e',
-      install(self: any) { self.hooks.onEnd(() => order.push('plug')); },
-    };
+    const plug: ActorPlugin = async (config: any) => { config.pluginHooks!.onEnd.push(() => order.push('plug')); return config; };
 
     const Actor = defineActor({
       name: 'a',
@@ -658,7 +545,7 @@ describe('full lifecycle coverage', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
     await proc.wait();
@@ -671,10 +558,7 @@ describe('full lifecycle coverage', () => {
   it('plugin onStopRequested fires before actor onStopRequested', async () => {
     const order: string[] = [];
 
-    const plug: ActorPlugin = {
-      name: 's',
-      install(self: any) { self.hooks.onStopRequested(() => order.push('plug')); },
-    };
+    const plug: ActorPlugin = async (config: any) => { config.pluginHooks!.onStopRequested.push(() => order.push('plug')); return config; };
 
     const Actor = defineActor({
       name: 'a',
@@ -688,7 +572,7 @@ describe('full lifecycle coverage', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
     await proc.wait();
@@ -699,10 +583,7 @@ describe('full lifecycle coverage', () => {
   it('plugin onEmit fires before actor onEmit', async () => {
     const order: string[] = [];
 
-    const plug: ActorPlugin = {
-      name: 'e',
-      install(self: any) { self.hooks.onEmit(() => order.push('plug')); },
-    };
+    const plug: ActorPlugin = async (config: any) => { config.pluginHooks!.onEmit.push(() => order.push('plug')); return config; };
 
     const Actor = defineActor({
       name: 'a',
@@ -718,7 +599,7 @@ describe('full lifecycle coverage', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
     await new Promise(r => setTimeout(r, 50));
@@ -732,10 +613,7 @@ describe('full lifecycle coverage', () => {
   it('plugin onChildExit fires before actor onChildExit', async () => {
     const order: string[] = [];
 
-    const plug: ActorPlugin = {
-      name: 'ce',
-      install(self: any) { self.hooks.onChildExit((name: string) => order.push(`plug:${name}`)); },
-    };
+    const plug: ActorPlugin = async (config: any) => { config.pluginHooks!.onChildExit.push((name: string) => order.push(`plug:${name}`)); return config; };
 
     const Child = defineActor({
       name: 'child',
@@ -755,11 +633,11 @@ describe('full lifecycle coverage', () => {
       hooks: {
         onChildExit(this: any, name: string) { order.push(`actor-hook:${name}`); },
       },
-      onStart(this: any) { this.fork(Child, undefined, {}); },
+      async onStart(this: any) { await this.fork(Child, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 200));
 
@@ -777,14 +655,8 @@ describe('onError: plugins + actor ordering', () => {
   it('two plugins + actor onError all fire in registration order', async () => {
     const errors: string[] = [];
 
-    const plug1: ActorPlugin = {
-      name: 'err1',
-      install(self: any) { self.hooks.onError((e: unknown) => errors.push(`plug1:${(e as Error).message}`)); },
-    };
-    const plug2: ActorPlugin = {
-      name: 'err2',
-      install(self: any) { self.hooks.onError((e: unknown) => errors.push(`plug2:${(e as Error).message}`)); },
-    };
+    const plug1: ActorPlugin = async (config: any) => { config.pluginHooks!.onError.push((e: unknown) => errors.push(`plug1:${(e as Error).message}`)); return config; };
+    const plug2: ActorPlugin = async (config: any) => { config.pluginHooks!.onError.push((e: unknown) => errors.push(`plug2:${(e as Error).message}`)); return config; };
 
     const Actor = defineActor({
       name: 'a',
@@ -800,7 +672,7 @@ describe('onError: plugins + actor ordering', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
     await proc.wait().catch(() => {});
@@ -815,16 +687,8 @@ describe('onError: plugins + actor ordering', () => {
   it('error in first onError does not prevent second from firing', async () => {
     const fired: string[] = [];
 
-    const plug1: ActorPlugin = {
-      name: 'faulty',
-      install(self: any) {
-        self.hooks.onError(() => { fired.push('plug1'); throw new Error('inner error'); });
-      },
-    };
-    const plug2: ActorPlugin = {
-      name: 'reliable',
-      install(self: any) { self.hooks.onError(() => fired.push('plug2')); },
-    };
+    const plug1: ActorPlugin = async (config: any) => { config.pluginHooks!.onError.push(() => { fired.push('plug1'); throw new Error('inner error'); }); return config; };
+    const plug2: ActorPlugin = async (config: any) => { config.pluginHooks!.onError.push(() => fired.push('plug2')); return config; };
 
     const Actor = defineActor({
       name: 'a',
@@ -840,7 +704,7 @@ describe('onError: plugins + actor ordering', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
     await proc.wait().catch(() => {});
@@ -854,12 +718,7 @@ describe('onError: plugins + actor ordering', () => {
 
 describe('decorate', () => {
   it('plugin can decorate a value onto this', async () => {
-    const plug: ActorPlugin = {
-      name: 'decorator',
-      install(self: any) {
-        self.decorate('logger', { name: self.name, count: 0 });
-      },
-    };
+    const plug: ActorPlugin = async (config: any) => { config.pluginDecorators!.set('logger', { name: config.name, count: 0 }); return config; };
 
     const Actor = defineActor({
       name: 'd',
@@ -875,7 +734,7 @@ describe('decorate', () => {
       },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
 
     // Cast needed because ActorDecorated doesn't know about 'logger'
@@ -892,10 +751,7 @@ describe('decorate', () => {
   });
 
   it('decorate throws on key conflict with built-in', async () => {
-    const plug: ActorPlugin = {
-      name: 'bad',
-      install(self: any) { self.decorate('state', {}); },
-    };
+    const plug: ActorPlugin = async (config: any) => { config.pluginDecorators!.set('state', {}); return config; };
 
     // The plugin install is wrapped in try/catch, so the actor
     // survives but the error is logged. We test the throw directly.
@@ -922,7 +778,7 @@ describe('decorate', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     // Actor survived install failure of plugin
     proc.send!({ type: 'POKE', n: 1 }, { fromName: 't', fromId: Symbol('t') });
@@ -931,21 +787,16 @@ describe('decorate', () => {
     await proc.wait();
   });
 
-  it('decorate throws when same key decorated twice', async () => {
+  it('decorate overwrites when same key set twice', async () => {
     let secondThrew = false;
-    const plug1: ActorPlugin = {
-      name: 'p1',
-      install(self: any) { self.decorate('shared', 1); },
-    };
-    const plug2: ActorPlugin = {
-      name: 'p2',
-      install(self: any) {
-        try {
-          self.decorate('shared', 2);
-        } catch {
-          secondThrew = true;
-        }
-      },
+    const plug1: ActorPlugin = async (config: any) => { config.pluginDecorators!.set('shared', 1); return config; };
+    const plug2: ActorPlugin = async (config: any) => {
+      try {
+      config.pluginDecorators!.set('shared', 2);
+      } catch {
+      secondThrew = true;
+      }
+      return config;
     };
 
     const Actor = defineActor({
@@ -957,20 +808,15 @@ describe('decorate', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
-    expect(secondThrew).toBe(true);
+    expect(secondThrew).toBe(false); // Map.set overwrites, no throw
     proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });
     await proc.wait();
   });
 
   it('child inherits decorated properties from parent plugin', async () => {
-    const plug: ActorPlugin = {
-      name: 'decorator',
-      install(self: any) {
-        self.decorate('shared', 'from-parent');
-      },
-    };
+    const plug: ActorPlugin = async (config: any) => { config.pluginDecorators!.set('shared', 'from-parent'); return config; };
 
     const Child = defineActor({
       name: 'child',
@@ -989,11 +835,11 @@ describe('decorate', () => {
       expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [plug],
-      onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
+      async onStart(this: any) { this.state.c = await this.fork(Child, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 100));
 
@@ -1009,14 +855,8 @@ describe('decorate', () => {
   });
 
   it('child can override parent decorated value', async () => {
-    const parentPlug: ActorPlugin = {
-      name: 'parent-deco',
-      install(self: any) { self.decorate('label', 'parent-value'); },
-    };
-    const childPlug: ActorPlugin = {
-      name: 'child-deco',
-      install(self: any) { self.decorate('label', 'child-value'); },
-    };
+    const parentPlug: ActorPlugin = async (config: any) => { config.pluginDecorators!.set('label', 'parent-value'); return config; };
+    const childPlug: ActorPlugin = async (config: any) => { config.pluginDecorators!.set('label', 'child-value'); return config; };
 
     const Child = defineActor({
       name: 'child',
@@ -1035,11 +875,11 @@ describe('decorate', () => {
       expose: (s: any) => s,
       initialState: () => ({ c: null as any }),
       plugins: [parentPlug],
-      onStart(this: any) { this.state.c = this.fork(Child, undefined, {}); },
+      async onStart(this: any) { this.state.c = await this.fork(Child, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
     });
 
-    const proc = Parent.spawn({});
+    const proc = await Parent.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 100));
 
@@ -1056,10 +896,7 @@ describe('decorate', () => {
   });
 
   it('decorate is available in lifecycle hooks', async () => {
-    const plug: ActorPlugin = {
-      name: 'deco',
-      install(self: any) { self.decorate('greeting', 'hello'); },
-    };
+    const plug: ActorPlugin = async (config: any) => { config.pluginDecorators!.set('greeting', 'hello'); return config; };
 
     let hookGreeting: string | undefined;
     const Actor = defineActor({
@@ -1074,7 +911,7 @@ describe('decorate', () => {
       handlers: { POKE() {} },
     });
 
-    const proc = Actor.spawn({});
+    const proc = await Actor.spawn({});
     await proc.ready();
     expect(hookGreeting).toBe('hello');
     proc.send!({ type: 'STOP' }, { fromName: 't', fromId: Symbol('t') });

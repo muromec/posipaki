@@ -31,7 +31,7 @@ describe('inspect', () => {
         handlers: { POKE() { this.state.count++; } },
       });
 
-      const proc = Actor.spawn({});
+      const proc = await Actor.spawn({});
       await proc.ready();
 
       const tree: TreeNode = await refl(proc)['inspect.getTree']();
@@ -58,13 +58,13 @@ describe('inspect', () => {
         initialState: () => ({}),
         plugins: [inspect()],
         async setup(this: any) {
-          this.fork(Leaf, 'kid');
+          await this.fork(Leaf, 'kid');
           return {};
         },
         handlers: { POKE() {} },
       });
 
-      const proc = Parent.spawn({});
+      const proc = await Parent.spawn({});
       await proc.ready();
 
       const tree: TreeNode = await refl(proc)['inspect.getTree']();
@@ -92,13 +92,13 @@ describe('inspect', () => {
         initialState: () => ({}),
         plugins: [inspect()],
         async setup(this: any) {
-          this.fork(Plain, 'plain-child');
+          await this.fork(Plain, 'plain-child');
           return {};
         },
         handlers: { POKE() {} },
       });
 
-      const proc = Parent.spawn({});
+      const proc = await Parent.spawn({});
       await proc.ready();
 
       const tree: TreeNode = await refl(proc)['inspect.getTree']();
@@ -125,13 +125,13 @@ describe('inspect', () => {
         initialState: () => ({}),
         plugins: [inspect()],
         async setup(this: any) {
-          this.fork(Child, 'w1');
+          await this.fork(Child, 'w1');
           return {};
         },
         handlers: { POKE() {} },
       });
 
-      const proc = Parent.spawn({});
+      const proc = await Parent.spawn({});
       await proc.ready();
 
       // No prefix — full tree
@@ -157,8 +157,8 @@ describe('inspect', () => {
         handlers: { POKE() {} },
       });
 
-      const proc1 = Actor.spawn({});
-      const proc2 = Actor.spawn({});
+      const proc1 = await Actor.spawn({});
+      const proc2 = await Actor.spawn({});
       await proc1.ready();
       await proc2.ready();
 
@@ -186,7 +186,7 @@ describe('inspect', () => {
         },
       });
 
-      const proc = Actor.spawn({});
+      const proc = await Actor.spawn({});
       await proc.ready();
       proc.send!({ type: 'POKE' }, { fromName: 't', fromId: Symbol('t') });
       await new Promise((r) => setTimeout(r, 30));
@@ -209,7 +209,7 @@ describe('inspect', () => {
         handlers: { POKE() {} },
       });
 
-      const proc = Actor.spawn({});
+      const proc = await Actor.spawn({});
       await proc.ready();
 
       await refl(proc)['inspect.stop']();
