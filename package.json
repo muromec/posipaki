@@ -41,6 +41,10 @@
       "types": "./dist/plugins/rbac.d.ts",
       "default": "./dist/plugins/rbac.js"
     },
+    "./plugins/tree-introspection": {
+      "types": "./dist/plugins/tree-introspection.d.ts",
+      "default": "./dist/plugins/tree-introspection.js"
+    },
     "./hooks": {
       "types": "./dist/hooks.d.ts",
       "default": "./dist/hooks.js"

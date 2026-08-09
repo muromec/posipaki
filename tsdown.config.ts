@@ -10,6 +10,7 @@ export default defineConfig({
     "src/plugins/debug-logger.ts",
     "src/plugins/timeout-guard.ts",
     "src/plugins/rbac.ts",
+    "src/plugins/tree-introspection.ts",
     "src/remote/index.ts",
   ],
   format: ["esm"],
