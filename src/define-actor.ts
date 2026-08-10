@@ -63,16 +63,16 @@ async function assembleActor<C>(
 
 type Hook<T, I extends unknown[], O> = (this: T, ...args: I) => O;
 
-function callHook<T, I extends unknown[], O>(
+async function callHook<T, I extends unknown[], O>(
   fn: Hook<T, I, O> | undefined,
   eh: ((e: unknown) => unknown) | undefined,
   thisArg: T,
   ...args: I
-): O | undefined {
+): Promise<O | undefined> {
   if (fn) {
-    try { return fn.call(thisArg, ...args); }
+    try { return await fn.call(thisArg, ...args); }
     catch (e) {
-      if (eh) { eh(e); }
+      if (eh) { try { await eh(e); } catch {} }
       else { throw e; }
     }
   }
@@ -130,7 +130,6 @@ export function defineActor<
     ): AsyncGenerator<ExposedState | null, void, WithSender<InMsg>> {
       let done = false;
       let exitReason: unknown;
-      let stopRequested = false;
       let rawState: InternalState = undefined as unknown as InternalState;
       let exposedState: ExposedState = undefined as unknown as ExposedState;
 
@@ -142,8 +141,8 @@ export function defineActor<
         state: rawState,
         name: ctx.pname,
         id: ctx.id,
-        emit(msg: OutMsg) {
-          callHook(assembly.onEmit, undefined, self, msg, { fromName: ctx.pname, fromId: ctx.id });
+        async emit(msg: OutMsg) {
+          await callHook(assembly.onEmit, undefined, self, msg, { fromName: ctx.pname, fromId: ctx.id });
           ctx.toParent(msg);
         },
         agreeToStop() {
@@ -238,25 +237,19 @@ export function defineActor<
           if (msg.type === "STOP") {
             if (assembly.onStopRequested) {
               await callHook(assembly.onStopRequested, assembly.onError, self);
-              if (!done) stopRequested = true;
+              // Hook may call agreeToStop(). If not, actor keeps running.
             } else {
               exitReason = "stopped";
               done = true;
             }
             return;
           }
-          if (stopRequested && !done) {
-            if (assembly.onStopRequested) {
-              await callHook(assembly.onStopRequested, assembly.onError, self);
-              if (!done) stopRequested = true;
-            }
-          }
           if (msg.type === "EXIT") {
             const childName = sender.fromName;
             if (childName && self.$child[childName]) {
               delete self.$child[childName];
             }
-            callHook(
+            await callHook(
               assembly.onChildExit,
               assembly.onError,
               self,
@@ -287,7 +280,7 @@ export function defineActor<
         () => done,
       );
 
-      callHook(assembly.onEnd, assembly.onError, self, exitReason);
+      await callHook(assembly.onEnd, assembly.onError, self, exitReason);
     };
   }
 
