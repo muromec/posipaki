@@ -25,7 +25,6 @@ import type {
 } from "./actor-types.js";
 import { STOP_SENTINEL } from "./actor-types.js";
 import type { ActorPlugin } from "./hooks.js";
-import type { HookResult } from "./actor-types.js";
 
 export function defineMessages<
   OutMsg extends Message = Message,

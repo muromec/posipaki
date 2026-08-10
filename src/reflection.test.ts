@@ -1,6 +1,7 @@
 /* eslint-disable unicorn/consistent-function-scoping */
 import { describe, it, expect } from 'vitest';
 import type { ActorPlugin } from "./actor-types.js";
+import { mergeConfigs } from "./hooks.js";
 import { debugLogger } from "./plugins/debug-logger.js";
 import { defineActor } from './define-actor';
 
@@ -74,12 +75,16 @@ describe('actor reflection', () => {
     expect(names[0]).toMatch(/worker/);
   });
 
-  it('plugin registers reflection via self.reflection.register()', async () => {
+  it('plugin registers reflection via mergeConfigs', async () => {
     const testPlugin: ActorPlugin = async (config: any) => {
-      config.pluginReflection!.set('testPlugin.getCount', function (this: any) {
-        return (this.state as Record<string, unknown>).count;
+      return mergeConfigs(config, {
+        $reflectionMethods: {
+          ...config.$reflectionMethods,
+          'testPlugin.getCount': function (this: any) {
+            return (this.state as Record<string, unknown>).count;
+          },
+        },
       });
-      return config;
     };
 
     const actor = defineActor({
@@ -100,10 +105,14 @@ describe('actor reflection', () => {
 
   it('plugin reflection works with async setup and multiple plugins', async () => {
     const testPlugin: ActorPlugin = async (config: any) => {
-      config.pluginReflection!.set('testPlugin.getCount', function (this: any) {
-        return (this.state as Record<string, unknown>).count;
+      return mergeConfigs(config, {
+        $reflectionMethods: {
+          ...config.$reflectionMethods,
+          'testPlugin.getCount': function (this: any) {
+            return (this.state as Record<string, unknown>).count;
+          },
+        },
       });
-      return config;
     };
 
     const actor = defineActor({
@@ -129,9 +138,13 @@ describe('actor reflection', () => {
 
   it('one plugin registers two methods', async () => {
     const plug: ActorPlugin = async (config: any) => {
-      config.pluginReflection!.set('plug.ping', function (this: any) { return 'a'; });
-      config.pluginReflection!.set('plug.pong', function (this: any) { return 'b'; });
-      return config;
+      return mergeConfigs(config, {
+        $reflectionMethods: {
+          ...config.$reflectionMethods,
+          'plug.ping': function (this: any) { return 'a'; },
+          'plug.pong': function (this: any) { return 'b'; },
+        },
+      });
     };
 
     const actor = defineActor({
@@ -150,12 +163,20 @@ describe('actor reflection', () => {
 
   it('two plugins both register reflection', async () => {
     const plugA: ActorPlugin = async (config: any) => {
-      config.pluginReflection!.set('plugA.ping', function (this: any) { return 'a'; });
-      return config;
+      return mergeConfigs(config, {
+        $reflectionMethods: {
+          ...config.$reflectionMethods,
+          'plugA.ping': function (this: any) { return 'a'; },
+        },
+      });
     };
     const plugB: ActorPlugin = async (config: any) => {
-      config.pluginReflection!.set('plugB.pong', function (this: any) { return 'b'; });
-      return config;
+      return mergeConfigs(config, {
+        $reflectionMethods: {
+          ...config.$reflectionMethods,
+          'plugB.pong': function (this: any) { return 'b'; },
+        },
+      });
     };
 
     const actor = defineActor({
@@ -174,8 +195,12 @@ describe('actor reflection', () => {
 
   it('two plugins: debugLogger + testPlugin, sync setup', async () => {
     const testPlugin: ActorPlugin = async (config: any) => {
-      config.pluginReflection!.set('testPlugin.ping', function (this: any) { return 'pong'; });
-      return config;
+      return mergeConfigs(config, {
+        $reflectionMethods: {
+          ...config.$reflectionMethods,
+          'testPlugin.ping': function (this: any) { return 'pong'; },
+        },
+      });
     };
 
     const actor = defineActor({
@@ -197,10 +222,14 @@ describe('actor reflection', () => {
 
   it('plugin-registered reflection does not clobber across spawns', async () => {
     const testPlugin: ActorPlugin = async (config: any) => {
-      config.pluginReflection!.set('testPlugin.getCount', function (this: any) {
-        return (this.state as Record<string, unknown>).count;
+      return mergeConfigs(config, {
+        $reflectionMethods: {
+          ...config.$reflectionMethods,
+          'testPlugin.getCount': function (this: any) {
+            return (this.state as Record<string, unknown>).count;
+          },
+        },
       });
-      return config;
     };
 
     const actor = defineActor({
