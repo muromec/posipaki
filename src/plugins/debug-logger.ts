@@ -1,4 +1,5 @@
 import type { ActorPlugin } from '../hooks.js';
+import { mergeConfigs } from '../hooks.js';
 import type { ActorConfig, HandlerOptions } from '../actor-types.js';
 import type { Message } from '../types.js';
 
@@ -21,12 +22,21 @@ export function debugLogger(opts?: DebugLoggerOpts): ActorPlugin {
   return async (config: ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>) => {
     const name: string = config.name ?? 'actor';
     const pats = patterns(); const log = factory(name);
-    config.pluginDecorators!.set('log', log);
-    if (!matches(name, pats)) return config;
-    config.pluginHooks!.onMessage.push((msg: any) => { if (!ignoreSet.has(msg.type)) log.debug(`${name} ← ${msg.type}`, msg); });
-    config.pluginHooks!.onEmit.push((msg: any) => log.debug(`${name} → ${msg.type}`, msg));
-    config.pluginHooks!.onChildExit.push((childName: string) => log.debug(`child ${childName} exited`));
-    config.pluginHooks!.onError.push((err: unknown) => log.error(`${(err as Error).message ?? err}`));
-    return config;
+
+    // Always decorate this.log — even when DEBUG is empty
+    let result = mergeConfigs(config, {
+      methods: { ...config.methods, log } as typeof config.methods,
+    });
+
+    if (matches(name, pats)) {
+      result = mergeConfigs(result, {
+        onMessage(msg: any) { if (!ignoreSet.has(msg.type)) log.debug(`${name} ← ${msg.type}`, msg); },
+        onEmit(msg: any) { log.debug(`${name} → ${msg.type}`, msg); },
+        onChildExit(childName: string) { log.debug(`child ${childName} exited`); },
+        onError(err: unknown) { log.error(`${(err as Error).message ?? err}`); },
+      });
+    }
+
+    return result;
   };
 }
