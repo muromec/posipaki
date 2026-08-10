@@ -3,16 +3,16 @@
 // Tests for defineActor hooks: onMessage, onEmit, onChildExit, onError,
 // onStart, onEnd, onStopRequested, and stopPropagation().
 
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect } from 'vitest';
 import { defineActor, defineMessages } from './define-actor.js';
-import { stopPropagation, type HookResult, type OnMessageHook } from './hooks.js';
+import { stopPropagation, mergeConfigs } from './hooks.js';
 import type { Message, SenderInfo } from './types.js';
+import type { OnMessageHook } from './actor-types.js';
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
 interface PokeMsg extends Message { type: 'POKE'; value: number; }
 interface PongMsg extends Message { type: 'PONG'; value: number; }
-// Broad union for parents that receive multiple message types
 type BroadMsg = PokeMsg | PongMsg;
 
 const PokeIn  = defineMessages<PokeMsg>();
@@ -29,15 +29,13 @@ describe('hooks.onMessage', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      hooks: {
-        onMessage(this: any, msg) {
-          order.push(`hook:${msg.type}`);
-        },
+      onMessage(msg) {
+        order.push(`hook:${msg.type}`);
       },
       handlers: {
-        POKE(this: any) {
+        POKE() {
           order.push('handler:POKE');
         },
       },
@@ -61,12 +59,10 @@ describe('hooks.onMessage', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      hooks: {
-        onMessage(this: any, _msg, sender) {
-          capturedSender = sender;
-        },
+      onMessage(_msg, sender) {
+        capturedSender = sender;
       },
       handlers: { POKE() {} },
     });
@@ -94,12 +90,10 @@ describe('stopPropagation', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      hooks: {
-        onMessage() {
-          return stopPropagation();
-        },
+      onMessage() {
+        return stopPropagation();
       },
       handlers: {
         POKE() { handlerRan = true; },
@@ -128,15 +122,13 @@ describe('hooks.onEmit', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      hooks: {
-        onEmit(this: any, msg) {
-          emitted.push(msg.type);
-        },
+      onEmit(msg) {
+        emitted.push(msg.type);
       },
       handlers: {
-        POKE(this: any) {
+        POKE() {
           this.emit({ type: 'PONG', value: 99 });
         },
       },
@@ -158,10 +150,9 @@ describe('hooks.onEmit', () => {
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      onStart(this: any) {
-        // Emit PONG as soon as the child starts — the parent should receive it.
+      onStart() {
         this.emit({ type: 'PONG', value: 1 });
       },
       handlers: { POKE() {} },
@@ -171,13 +162,12 @@ describe('hooks.onEmit', () => {
       name: 'parent',
       inMessages: BroadIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ pongs: 0 }),
-      async onStart(this: any) { await this.fork(Child, undefined, {}); },
+      async onStart() { await this.fork(Child, undefined, {}); },
       handlers: {
         POKE() {},
-
-        PONG(this: any) { this.state.pongs++; },
+        PONG() { this.state.pongs++; },
       },
     });
 
@@ -196,15 +186,13 @@ describe('hooks.onEmit', () => {
 
 describe('hooks.onChildExit', () => {
   it('fires when a child exits', async () => {
-    let exitName: string | null = null;
-
     const Child = defineActor({
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      onStart(this: any) { this.exit(); },
+      onStart() { this.exit(); },
       handlers: { POKE() {} },
     });
 
@@ -212,14 +200,12 @@ describe('hooks.onChildExit', () => {
       name: 'parent',
       inMessages: BroadIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ exits: [] as string[] }),
-      hooks: {
-        onChildExit(this: any, name) {
-          this.state.exits.push(name);
-        },
+      onChildExit(name) {
+        this.state.exits.push(name);
       },
-      async onStart(this: any) {
+      async onStart() {
         await this.fork(Child, undefined, {});
       },
       handlers: { POKE() {}, PONG() {} },
@@ -227,7 +213,7 @@ describe('hooks.onChildExit', () => {
 
     const proc = await Parent.spawn({});
     await proc.ready();
-    await new Promise(r => setTimeout(r, 200)); // wait for child to exit
+    await new Promise(r => setTimeout(r, 200));
 
     expect(proc.state!.exits).toContain('parent:child');
 
@@ -236,15 +222,13 @@ describe('hooks.onChildExit', () => {
   });
 
   it('fires even when no onChildExit method exists', async () => {
-    let exitCount = 0;
-
     const Child = defineActor({
       name: 'child',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      onStart(this: any) { this.exit(); },
+      onStart() { this.exit(); },
       handlers: { POKE() {} },
     });
 
@@ -252,14 +236,11 @@ describe('hooks.onChildExit', () => {
       name: 'parent',
       inMessages: BroadIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ exits: 0 }),
-      hooks: {
-        onChildExit(this: any) { this.state.exits++; },
-      },
-      async onStart(this: any) { await this.fork(Child, undefined, {}); },
+      onChildExit() { this.state.exits++; },
+      async onStart() { await this.fork(Child, undefined, {}); },
       handlers: { POKE() {}, PONG() {} },
-      // No onChildExit method — hooks alone should fire
     });
 
     const proc = await Parent.spawn({});
@@ -273,46 +254,51 @@ describe('hooks.onChildExit', () => {
   });
 });
 
-// ── onStart / onEnd hooks ────────────────────────────────────────────────
+// ── onStart / onEnd ordering (plugin chain via mergeConfigs) ─────────────
 
 describe('hooks.onStart / onEnd', () => {
-  it('onStart hook fires after the onStart method', async () => {
-    // Use state to track order since hooks have access to this.state
+  it('plugin onStart fires before actor onStart', async () => {
+    const order: string[] = [];
+
     const Actor = defineActor({
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ order: [] as string[] }),
-      hooks: {
-        onStart(this: any) { this.state.order.push('hook'); },
-      },
-      onStart(this: any) { this.state.order.push('method'); },
+      expose: (s) => s,
+      initialState: () => ({ count: 0 }),
+      onStart() { order.push('actor'); },
+      plugins: [
+        (cfg) => mergeConfigs(cfg, {
+          onStart() { order.push('plugin'); },
+        }),
+      ],
       handlers: { POKE() {} },
     });
 
     const proc = await Actor.spawn({});
     await proc.ready();
     await new Promise(r => setTimeout(r, 50));
-    expect(proc.state!.order).toEqual(["method", "hook"]);
+    expect(order).toEqual(['plugin', 'actor']);
 
     proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     await proc.wait();
   });
 
-  it('onEnd hook fires before the onEnd method', async () => {
+  it('plugin onEnd fires before actor onEnd', async () => {
     const order: string[] = [];
 
     const Actor = defineActor({
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      hooks: {
-        onEnd() { order.push('hook'); },
-      },
-      onEnd() { order.push('method'); },
+      onEnd() { order.push('actor'); },
+      plugins: [
+        (cfg) => mergeConfigs(cfg, {
+          onEnd() { order.push('plugin'); },
+        }),
+      ],
       handlers: { POKE() {} },
     });
 
@@ -321,26 +307,28 @@ describe('hooks.onStart / onEnd', () => {
     proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     await proc.wait();
 
-    expect(order).toEqual(['hook', 'method']);
+    expect(order).toEqual(['plugin', 'actor']);
   });
 });
 
-// ── onStopRequested hooks ────────────────────────────────────────────────
+// ── onStopRequested ordering (plugin chain via mergeConfigs) ─────────────
 
 describe('hooks.onStopRequested', () => {
-  it('fires before the onStopRequested method', async () => {
+  it('plugin onStopRequested fires before actor onStopRequested', async () => {
     const order: string[] = [];
 
     const Actor = defineActor({
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      hooks: {
-        onStopRequested() { order.push('hook'); },
-      },
-      onStopRequested() { order.push('method'); this.agreeToStop(); },
+      onStopRequested() { order.push('actor'); this.agreeToStop(); },
+      plugins: [
+        (cfg) => mergeConfigs(cfg, {
+          onStopRequested() { order.push('plugin'); },
+        }),
+      ],
       handlers: { POKE() {} },
     });
 
@@ -349,7 +337,7 @@ describe('hooks.onStopRequested', () => {
     proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     await proc.wait();
 
-    expect(order).toEqual(['hook', 'method']);
+    expect(order).toEqual(['plugin', 'actor']);
   });
 });
 
@@ -363,12 +351,10 @@ describe('hooks.onError', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      hooks: {
-        onError(this: any, err) {
-          capturedError = (err as Error).message;
-        },
+      onError(err) {
+        capturedError = (err as Error).message;
       },
       handlers: {
         POKE() { throw new Error('BOOM'); },
@@ -378,11 +364,32 @@ describe('hooks.onError', () => {
     const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
-
-    // Wait for exit
-    await proc.wait().catch(() => {});
+    await new Promise(r => setTimeout(r, 50));
 
     expect(capturedError).toBe('BOOM');
+
+    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
+    await proc.wait();
+  });
+
+  it('handler throw without onError kills the actor', async () => {
+    const Actor = defineActor({
+      name: 'test',
+      inMessages: PokeIn,
+      outMessages: PokeOut,
+      expose: (s) => s,
+      initialState: () => ({ count: 0 }),
+      // No onError — throw should propagate and crash the process
+      handlers: {
+        POKE() { throw new Error('BOOM'); },
+      },
+    });
+
+    const proc = await Actor.spawn({});
+    await proc.ready();
+    proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
+
+    await expect(proc.wait()).rejects.toThrow();
   });
 });
 
@@ -394,11 +401,9 @@ describe('hooks — adversarial', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      hooks: {
-        onError() { throw new Error('error in error handler'); },
-      },
+      onError() { throw new Error('error in error handler'); },
       handlers: {
         POKE() { throw new Error('original error'); },
       },
@@ -407,7 +412,9 @@ describe('hooks — adversarial', () => {
     const proc = await Actor.spawn({});
     await proc.ready();
     proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
+    await new Promise(r => setTimeout(r, 50));
 
+    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     await proc.wait().catch(() => {});
   });
 
@@ -418,11 +425,10 @@ describe('hooks — adversarial', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      hooks: {
-        onMessage() { throw new Error('hook error'); },
-      },
+      onMessage() { throw new Error('hook error'); },
+      onError() {},
       handlers: {
         POKE() { handlerRan = true; },
       },
@@ -446,14 +452,12 @@ describe('hooks — adversarial', () => {
       name: 'test',
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s: any) => s,
+      expose: (s) => s,
       initialState: () => ({ count: 0 }),
-      hooks: {
-        onMessage: (async () => {
-          await new Promise(r => setTimeout(r, 10));
-          return stopPropagation();
-        }) as OnMessageHook<PokeMsg>,
-      },
+      onMessage: (async () => {
+        await new Promise(r => setTimeout(r, 10));
+        return stopPropagation();
+      }) as OnMessageHook<PokeMsg>,
       handlers: {
         POKE() { handlerRan = true; },
       },

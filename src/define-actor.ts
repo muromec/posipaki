@@ -23,7 +23,9 @@ import type {
   HandlerOptions,
   HandlerFn,
 } from "./actor-types.js";
+import { STOP_SENTINEL } from "./actor-types.js";
 import type { ActorPlugin } from "./hooks.js";
+import type { HookResult } from "./actor-types.js";
 
 export function defineMessages<
   OutMsg extends Message = Message,
@@ -32,48 +34,23 @@ export function defineMessages<
 }
 
 function resolvePlugins(
-  config: ActorConfig<
-    unknown,
-    unknown,
-    Message,
-    Message,
-    Message,
-    {},
-    HandlerOptions<Message>
-  >,
+  raw: ActorPlugin[] | ((parents: ActorPlugin[]) => ActorPlugin[]) | undefined,
   parentPlugins?: ActorPlugin[],
 ): ActorPlugin[] {
-  const raw = config.plugins;
   if (!raw) return parentPlugins ? [...parentPlugins] : [];
   if (Array.isArray(raw)) return [...raw];
   return raw(parentPlugins ?? []);
 }
 
-async function assembleActor(
-  config: ActorConfig<
-    unknown,
-    unknown,
-    Message,
-    Message,
-    Message,
-    {},
-    HandlerOptions<Message>
-  >,
+async function assembleActor<C>(
+  config: C,
   plugins: ActorPlugin[],
-): Promise<
-  ActorConfig<
-    unknown,
-    unknown,
-    Message,
-    Message,
-    Message,
-    {},
-    HandlerOptions<Message>
-  >
-> {
+): Promise<C> {
+  // Work with the default ActorPlugin type internally, cast back on return
+  let cur: ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>> = config as unknown as ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>;
   for (const p of plugins) {
     try {
-      config = await p(config);
+      cur = await p(cur);
     } catch (e: unknown) {
       console.error(
         `[assembleActor] plugin "${(p as Function).name || "?"}" failed:`,
@@ -81,7 +58,7 @@ async function assembleActor(
       );
     }
   }
-  return config;
+  return cur as unknown as C;
 }
 
 type Hook<T, I extends unknown[], O> = (this: T, ...args: I) => O;
@@ -91,16 +68,15 @@ function callHook<T, I extends unknown[], O>(
   eh: ((e: unknown) => unknown) | undefined,
   thisArg: T,
   ...args: I
-): (F extends Hook<T, I, O> ? O : undefined) | undefined {
+): O | undefined {
   if (fn) {
-    try {
-      return fn.call(thisArg, ...args);
-    } catch (e) {
-      if (eh) {
-        eh(e);
-      }
+    try { return fn.call(thisArg, ...args); }
+    catch (e) {
+      if (eh) { eh(e); }
+      else { throw e; }
     }
   }
+  return undefined;
 }
 
 export function defineActor<
@@ -167,7 +143,7 @@ export function defineActor<
         name: ctx.pname,
         id: ctx.id,
         emit(msg: OutMsg) {
-          callHook(assembly.onEmit, undefined, self, msg);
+          callHook(assembly.onEmit, undefined, self, msg, { fromName: ctx.pname, fromId: ctx.id });
           ctx.toParent(msg);
         },
         agreeToStop() {
@@ -184,17 +160,6 @@ export function defineActor<
         >,
         decorators: {},
         reflection: {},
-        /* FIXME:
-        decorate: (key: string, value: unknown) => {
-          if (key in self) {
-            throw new Error(`decorate: key "${key}" conflicts with built-in`);
-          }
-          if (decorated.has(key)) {
-            throw new Error(`decorate: key "${key}" already decorated`);
-          }
-          decorated.set(key, value);
-        },
-        */
         fork: async <
           A,
           S,
@@ -218,7 +183,7 @@ export function defineActor<
             const parentPlugs = (
               assembly.plugins
                 ? typeof assembly.plugins === "function"
-                  ? assembly.plugins([]) // BUG: we lose track of (grand)parent plugins
+                  ? assembly.plugins([])
                   : assembly.plugins
                 : []
             ) as ActorPlugin[];
@@ -251,7 +216,7 @@ export function defineActor<
       if (assembly.setup) {
         rawState = await assembly.setup.call(self, args);
       } else if (typeof assembly.initialState === "function") {
-        rawState = (assembly.initialState as any)(args, ctx);
+        rawState = (assembly.initialState as (this: any, args: Args) => InternalState).call(self, args);
       } else if (assembly.initialState !== undefined) {
         rawState = assembly.initialState;
       } else {
@@ -261,9 +226,10 @@ export function defineActor<
       exposedState = assembly.expose
         ? assembly.expose(rawState)
         : (rawState as unknown as ExposedState);
-      callHook(assembly.onStart, assembly.onError, self, args);
+      await callHook(assembly.onStart, assembly.onError, self, args);
+      exposedState = assembly.expose ? assembly.expose(rawState) : (rawState as unknown as ExposedState);
       yield exposedState;
-      callHook(assembly.afterStart, assembly.onError, self);
+      await callHook(assembly.afterStart, assembly.onError, self);
 
       yield* runDispatchAsync<WithSender<InMsg | ExitMessage>>(
         ctx.pname,
@@ -271,7 +237,7 @@ export function defineActor<
           const [msg, sender] = stamped;
           if (msg.type === "STOP") {
             if (assembly.onStopRequested) {
-              await assembly.onStopRequested.call(self);
+              await callHook(assembly.onStopRequested, assembly.onError, self);
               if (!done) stopRequested = true;
             } else {
               exitReason = "stopped";
@@ -281,7 +247,7 @@ export function defineActor<
           }
           if (stopRequested && !done) {
             if (assembly.onStopRequested) {
-              await assembly.onStopRequested.call(self);
+              await callHook(assembly.onStopRequested, assembly.onError, self);
               if (!done) stopRequested = true;
             }
           }
@@ -298,16 +264,12 @@ export function defineActor<
               msg as ExitMessage,
             );
           }
-          if (msg.type !== "STOP" && msg.type !== "EXIT") {
-            callHook(
-              assembly.onMessage,
-              assembly.onError,
-              self,
-              msg as InMsg,
-              sender,
-            );
+          let hookStopped = false;
+          if (msg.type !== "STOP" && msg.type !== "EXIT" && assembly.onMessage) {
+            const result = await callHook(assembly.onMessage as any, assembly.onError, self, msg as InMsg, sender);
+            if (result === STOP_SENTINEL) hookStopped = true;
           }
-          if (msg.type !== "STOP") {
+          if (msg.type !== "STOP" && !hookStopped) {
             const handler =
               (assembly.handlers[
                 msg.type as keyof Handlers
@@ -335,46 +297,19 @@ export function defineActor<
   };
   function attachReflection(
     proc: ReflectableProcess,
-    assembly: ActorConfig<
-      unknown,
-      unknown,
-      Message,
-      Message,
-      Message,
-      {},
-      HandlerOptions<Message>
-    >,
+    reflectionMethods: Record<string, Function> | undefined,
   ): void {
-    const merged = new Map<string, Function>();
-    if (assembly.$reflectionMethods) {
-      for (const [k, m] of Object.entries(assembly.$reflectionMethods)) {
-        merged.set(k, m as Function);
-      }
-    }
-
+    if (!reflectionMethods) return;
     const refl = proc.$reflection as Record<string, Function>;
-    for (const [k, m] of merged) {
+    for (const [k, m] of Object.entries(reflectionMethods)) {
       refl[k] = async (...a: unknown[]) => {
-        m.call(actorCtxMap.get(proc.id)!, ...a);
+        return m.call(actorCtxMap.get(proc.id)!, ...a);
       };
     }
   }
 
-  const generatorFn = makeRuntime(
-    config as any as ActorConfig<
-      Args,
-      InternalState,
-      ExposedState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods
-    >,
-  ) as unknown as AsyncProcessFn<Args, ExposedState, InMsg, OutMsg>;
-
   return {
-    fn: generatorFn,
+    fn: makeRuntime(config),
     name: config.name,
     pvtPluginsRaw: config.plugins,
     config: config as unknown as ActorConfig<
@@ -391,12 +326,12 @@ export function defineActor<
     ): Promise<
       AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>
     > {
-      const plugs = resolvePlugins(config);
+      const plugs = resolvePlugins(config.plugins);
       const assembly = await assembleActor(config, plugs);
       const runtime = makeRuntime(assembly);
       const proc = spawnAsync(runtime, assembly.name ?? "actor")(args);
-      attachReflection(proc, assembly);
-      return proc;
+      attachReflection(proc, assembly.$reflectionMethods as Record<string, Function> | undefined);
+      return proc as unknown as AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
     },
     async spawnAsChild(
       ctx: ProcessCtx<any, any, any, any>,
@@ -404,11 +339,11 @@ export function defineActor<
       name?: string,
       parentPlugins?: ActorPlugin[],
     ) {
-      const plugs = resolvePlugins(config, parentPlugins);
+      const plugs = resolvePlugins(config.plugins, parentPlugins);
       const assembly = await assembleActor(config, plugs);
       const runtime = makeRuntime(assembly);
       const proc = ctx.fork(runtime, name ?? assembly.name ?? "child")(args);
-      attachReflection(proc, assembly);
+      attachReflection(proc, assembly.$reflectionMethods as Record<string, Function> | undefined);
       return proc as unknown as AsyncProcess<
         Args,
         ExposedState,

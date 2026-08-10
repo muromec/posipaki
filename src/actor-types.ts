@@ -83,22 +83,22 @@ export interface ActorHooksConfig<
   onEmit?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     msg: OutMsg,
-  ) => void;
+  ) => HookResult | Promise<HookResult>;
   onChildExit?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     name: string,
-  ) => void | Promise<void>;
+  ) => HookResult | Promise<HookResult>;
   onStopRequested?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
-  ) => void | Promise<void>;
+  ) => HookResult | Promise<HookResult>;
   onEnd?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     reason: unknown,
-  ) => void | Promise<void>;
+  ) => HookResult | Promise<HookResult>;
   onError?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     err: unknown,
-  ) => void;
+  ) => HookResult | Promise<HookResult>;
 }
 
 export interface ActorConfig<
@@ -154,33 +154,33 @@ export interface ActorConfig<
   onStart?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     args: Args,
-  ) => void | Promise<void>;
+  ) => HookResult | Promise<HookResult>;
 
   onStopRequested?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
-  ) => void | Promise<void>;
+  ) => HookResult | Promise<HookResult>;
 
   onEnd?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     reason?: unknown,
-  ) => void | Promise<void>;
+  ) => HookResult | Promise<HookResult>;
 
   onError?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     error?: unknown,
-  ) => void | Promise<void>;
+  ) => HookResult | Promise<HookResult>;
 
   onEmit?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     msg: OutMsg,
     sender: SenderInfo,
-  ) => void;
+  ) => HookResult | Promise<HookResult>;
 
   onMessage?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     msg: InMsg,
     sender: SenderInfo,
-  ) => void | Promise<void>;
+  ) => HookResult | Promise<HookResult>;
 
   onUnhandled?: (
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
@@ -192,7 +192,7 @@ export interface ActorConfig<
     this: ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>,
     name: string,
     reason: ExitMessage,
-  ) => void | Promise<void>;
+  ) => HookResult | Promise<HookResult>;
 
   handlers: Handlers &
     ThisType<
@@ -222,51 +222,23 @@ export const stopPropagation = (): typeof STOP_SENTINEL => STOP_SENTINEL;
 /** Return type of onMessage hooks: void (continue) or sentinel (stop). */
 export type HookResult = void | typeof STOP_SENTINEL;
 
-export type OnStartHook<State> = (state: State) => void | Promise<void>;
+export type OnStartHook<State> = (state: State) => HookResult | Promise<HookResult>;
 export type OnMessageHook<InMsg extends Message> = (
   msg: InMsg,
   sender: SenderInfo,
 ) => HookResult | Promise<HookResult>;
-export type OnEmitHook<OutMsg extends Message> = (msg: OutMsg) => void;
-export type OnChildExitHook = (name: string) => void | Promise<void>;
-export type OnStopRequestedHook = () => void | Promise<void>;
-export type OnEndHook = (reason: unknown) => void | Promise<void>;
-export type OnErrorHook = (err: unknown) => void;
+export type OnEmitHook<OutMsg extends Message> = (msg: OutMsg) => HookResult | Promise<HookResult>;
+export type OnChildExitHook = (name: string) => HookResult | Promise<HookResult>;
+export type OnStopRequestedHook = () => HookResult | Promise<HookResult>;
+export type OnEndHook = (reason: unknown) => HookResult | Promise<HookResult>;
+export type OnErrorHook = (err: unknown) => HookResult | Promise<HookResult>;
 
 // ── plugin types ─────────────────────────────────────────────────────────
 
 /** A reusable unit of actor behaviour. */
-export type ActorPlugin = (
-  config: ActorConfig<
-    unknown,
-    unknown,
-    Message,
-    Message,
-    Message,
-    {},
-    HandlerOptions<Message>
-  >,
-) =>
-  | ActorConfig<
-      unknown,
-      unknown,
-      Message,
-      Message,
-      Message,
-      {},
-      HandlerOptions<Message>
-    >
-  | Promise<
-      ActorConfig<
-        unknown,
-        unknown,
-        Message,
-        Message,
-        Message,
-        {},
-        HandlerOptions<Message>
-      >
-    >;
+export type ActorPlugin<C = ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>> = (
+  config: C,
+) => C | Promise<C>;
 
 /** Transform parent plugins into child plugins. */
 export type PluginTransform = (parentPlugins: ActorPlugin[]) => ActorPlugin[];
