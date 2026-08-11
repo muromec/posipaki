@@ -15,7 +15,6 @@ export { Process, spawn, runDispatch };
 export { AsyncProcess, spawnAsync, runDispatchAsync, asyncify };
 
 export type {
-  SpawnedFrom,
   Message,
   WithSender,
   WithoutSender,
@@ -32,8 +31,8 @@ export type {
 
 export { defineActor, defineMessages } from "./define-actor.js";
 export type {
-  SpawnedFrom,
   ActorDefinition,
+  SpawnedFrom,
   ActorConfig,
   ActorContext,
   MethodOptions,
@@ -45,7 +44,6 @@ export type {
 
 export { stopPropagation, mergeConfigs, chainHook, callHook } from "./hooks.js";
 export type {
-  SpawnedFrom,
   HookResult,
   ActorPlugin,
   ActorDecorated,
