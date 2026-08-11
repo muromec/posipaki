@@ -214,3 +214,51 @@ describe.each([
     expect(doneMsg!.count).toBe(1);
   });
 });
+
+// ── spawn with toParent ────────────────────────────────────────────────
+
+describe('spawn with toParent', () => {
+  it('delivers emitted messages to the toParent callback', async () => {
+    const actor = defineActor({
+      setup: () => ({ sent: false }),
+      handlers: {
+        POKE(this: any) {
+          this.emit({ type: 'DONE', value: 1 } as any);
+        },
+      },
+    });
+
+    const received: any[] = [];
+    const proc = await actor.spawn({}, ([msg]: [any, any]) => {
+      received.push(msg);
+    });
+
+    await proc.ready();
+    proc.send({ type: 'POKE' } as any, { fromName: 't', fromId: Symbol('t') });
+    await new Promise(r => setTimeout(r, 20));
+    proc.send({ type: 'STOP' } as any, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait();
+
+    expect(received.length).toBeGreaterThanOrEqual(1);
+    expect(received[0].type).toBe("DONE");
+    expect(received[0].value).toBe(1);
+  });
+
+  it('works without toParent (backward compatible)', async () => {
+    const actor = defineActor({
+      setup: () => ({ x: 0 }),
+      handlers: {
+        POKE(this: any) { this.state.x = 1; },
+      },
+    });
+
+    const proc = await actor.spawn({});
+    await proc.ready();
+    proc.send({ type: 'POKE' } as any, { fromName: 't', fromId: Symbol('t') });
+    await new Promise(r => setTimeout(r, 20));
+    proc.send({ type: 'STOP' } as any, { fromName: 't', fromId: Symbol('t') });
+    await proc.wait();
+
+    expect(proc.state.x).toBe(1);
+  });
+});
