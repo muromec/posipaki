@@ -13,6 +13,7 @@ import { asyncify } from "./adapters.js";
 
 export { Process, spawn, runDispatch };
 export { AsyncProcess, spawnAsync, runDispatchAsync, asyncify };
+export type { AnyProcess } from "./process.async.js";
 
 export type {
   Message,
