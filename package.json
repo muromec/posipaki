@@ -45,10 +45,6 @@
       "types": "./dist/plugins/tree-introspection.d.ts",
       "default": "./dist/plugins/tree-introspection.js"
     },
-    "./hooks": {
-      "types": "./dist/hooks.d.ts",
-      "default": "./dist/hooks.js"
-    },
     "./remote": {
       "types": "./dist/remote/index.d.ts",
       "default": "./dist/remote/index.js"

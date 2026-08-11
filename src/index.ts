@@ -41,10 +41,11 @@ export type {
 
 // ── hooks ─────────────────────────────────────────────────────────────────
 
-export { stopPropagation } from "./hooks.js";
+export { stopPropagation, mergeConfigs, chainHook, callHook } from "./hooks.js";
 export type {
   HookResult,
   ActorPlugin,
   ActorDecorated,
+  ActorReflection,
   PluginTransform,
 } from "./hooks.js";
