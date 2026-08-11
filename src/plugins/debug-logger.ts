@@ -61,8 +61,6 @@ export function debugLogger(opts?: DebugLoggerOpts): ActorPlugin {
 
     // Always decorate this.log — even when DEBUG is empty
     let result = mergeConfigs(config, {
-      // FIXME: decorate is bugged
-      // needs to <think>
       methods: { ...config.methods },
       $decorate: { log },
     });
