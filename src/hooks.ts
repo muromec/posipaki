@@ -4,42 +4,18 @@
 // Hooks are additive — multiple callbacks can register for the same hook
 // point, and they fire in registration order.
 
-import type { Message } from './types.js';
-import {
-  STOP_SENTINEL,
-  stopPropagation,
-} from './actor-types.js';
+import { STOP_SENTINEL, stopPropagation } from "./actor-types.js";
 import type {
   HookResult,
-  OnStartHook,
-  OnMessageHook,
-  OnEmitHook,
-  OnChildExitHook,
-  OnStopRequestedHook,
-  OnEndHook,
-  OnErrorHook,
   ActorPlugin,
   PluginTransform,
-} from './actor-types.js';
+} from "./actor-types.js";
 
 // ── stop propagation sentinel ────────────────────────────────────────────
 
-/** Returned by onMessage hooks to prevent further dispatch. */
-// ── hook registry ────────────────────────────────────────────────────────
-
-export class HookRegistry<State, InMsg extends Message, OutMsg extends Message> {
-  onStart: Array<OnStartHook<State>> = [];
-  onMessage: Array<OnMessageHook<InMsg>> = [];
-  onEmit: Array<OnEmitHook<OutMsg>> = [];
-  onChildExit: Array<OnChildExitHook> = [];
-  onStopRequested: Array<OnStopRequestedHook> = [];
-  onEnd: Array<OnEndHook> = [];
-  onError: Array<OnErrorHook> = [];
-}
-
 // Re-exports from actor-types.ts (backward compatibility)
 export { STOP_SENTINEL, stopPropagation };
-export type { HookResult, OnStartHook, OnMessageHook, OnEmitHook, OnChildExitHook, OnStopRequestedHook, OnEndHook, OnErrorHook, ActorPlugin, PluginTransform };
+export type { HookResult, ActorPlugin, PluginTransform };
 
 // ── type augmentation (Fastify-style) ────────────────────────────────────
 
@@ -56,6 +32,7 @@ export type { HookResult, OnStartHook, OnMessageHook, OnEmitHook, OnChildExitHoo
  *   }
  */
 export interface ActorDecorated {}
+export interface ActorReflection {}
 
 // ── chainHook ────────────────────────────────────────────────────────────
 
@@ -74,7 +51,9 @@ export interface ActorDecorated {}
  * @returns a composed hook suitable for ActorConfig
  */
 export function chainHook<TThis, TArgs extends unknown[]>(
-  existing: ((this: TThis, ...args: TArgs) => HookResult | Promise<HookResult>) | undefined,
+  existing:
+    | ((this: TThis, ...args: TArgs) => HookResult | Promise<HookResult>)
+    | undefined,
   plugin: (this: TThis, ...args: TArgs) => HookResult | Promise<HookResult>,
 ): (this: TThis, ...args: TArgs) => HookResult | Promise<HookResult> {
   if (!existing) return plugin;
@@ -105,21 +84,55 @@ export function chainHook<TThis, TArgs extends unknown[]>(
  * @param overlay - new hook implementations to prepend
  * @returns a new config with hooks chained
  */
-export function mergeConfigs<T>(
-  base: T,
-  overlay: Partial<T>,
-): T {
+export function mergeConfigs<T extends {}>(base: T, overlay: Partial<T>): T {
   const result = { ...base } as Record<string, unknown>;
   for (const key of Object.keys(overlay as Record<string, unknown>)) {
     const val = (overlay as Record<string, unknown>)[key];
-    if (typeof val === 'function' && /^on[A-Z]/.test(key)) {
+    if (typeof val === "function" && /^(on|after)[A-Z]/.test(key)) {
       result[key] = chainHook(
-        (base as Record<string, unknown>)[key] as (this: unknown, ...args: unknown[]) => HookResult | Promise<HookResult>,
-        val as (this: unknown, ...args: unknown[]) => HookResult | Promise<HookResult>,
+        (base as Record<string, unknown>)[key] as (
+          this: unknown,
+          ...args: unknown[]
+        ) => HookResult | Promise<HookResult>,
+        val as (
+          this: unknown,
+          ...args: unknown[]
+        ) => HookResult | Promise<HookResult>,
       );
     } else {
       result[key] = val;
     }
   }
+  result.$reflectionMethods = {};
+  Object.assign(
+    result.$reflectionMethods as object,
+    "$reflectionMethods" in base ? base.$reflectionMethods : {},
+    "$reflectionMethods" in overlay ? overlay.$reflectionMethods : {},
+  );
+
   return result as unknown as T;
+}
+
+export type Hook<T, I extends unknown[], O> = (this: T, ...args: I) => O;
+
+export async function callHook<T, I extends unknown[], O>(
+  fn: Hook<T, I, O> | undefined,
+  eh: ((e: unknown) => unknown) | undefined,
+  thisArg: T,
+  ...args: I
+): Promise<O | undefined> {
+  if (fn) {
+    try {
+      return await fn.call(thisArg, ...args);
+    } catch (e) {
+      if (eh) {
+        try {
+          await eh(e);
+        } catch {}
+      } else {
+        throw e;
+      }
+    }
+  }
+  return undefined;
 }

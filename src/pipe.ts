@@ -21,7 +21,7 @@ export interface PipeState<Params, Result> {
  * of the next.
  */
 function pipe<Params, Result>(
-  fns: ProcessFn<unknown, unknown, Message, Message>[],
+  fns: ProcessFn<unknown, { result: object }, Message, Message>[],
 ): ProcessFn<
   Params,
   PipeState<Params, Result>,
@@ -45,7 +45,7 @@ function pipe<Params, Result>(
     yield state;
 
     const queue = [...fns];
-    let task: AsyncProcess<any, any, any, any>;
+    let task: AsyncProcess<unknown, { result: object }, Message, Message, {}>;
 
     function spawnNext(): void {
       const fn = queue.shift()!;

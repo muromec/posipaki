@@ -3,17 +3,20 @@
 // Compiles a declarative config into an AsyncProcessFn.  Built on top of
 // the existing runDispatchAsync / spawnAsync primitives.
 //
-// Phase 2: assembly outside the generator, async spawn.
-
-import { runDispatchAsync, spawnAsync } from "./process.async.js";
+import {
+  type AsyncProcess,
+  runDispatchAsync,
+  spawnAsync,
+  AnyProcess,
+} from "./process.async.js";
 import type {
   WithSender,
   AsyncProcessFn,
   Message,
   ExitMessage,
   ProcessCtx,
+  AnyProcessCtx,
 } from "./types.js";
-import type { AsyncProcess } from "./process.async.js";
 import type {
   ActorDefinition,
   ActorConfig,
@@ -22,14 +25,34 @@ import type {
   ActorMessages,
   HandlerOptions,
   HandlerFn,
+  ReflectionOptions,
+  AnyConfig,
+  HidePrivate,
 } from "./actor-types.js";
 import { STOP_SENTINEL } from "./actor-types.js";
-import type { ActorPlugin } from "./hooks.js";
+import {
+  ActorDecorated,
+  type ActorPlugin,
+  ActorReflection,
+  callHook,
+} from "./hooks.js";
 
 export function defineMessages<
   OutMsg extends Message = Message,
 >(): ActorMessages<OutMsg> {
   return undefined as unknown as ActorMessages<OutMsg>;
+}
+
+function hidePrivate<T>(value: T): HidePrivate<T> {
+  if (
+    value &&
+    typeof value === "object" &&
+    "private" in value &&
+    "public" in value
+  ) {
+    return value.public as HidePrivate<T>;
+  }
+  return value as HidePrivate<T>;
 }
 
 function resolvePlugins(
@@ -41,12 +64,9 @@ function resolvePlugins(
   return raw(parentPlugins ?? []);
 }
 
-async function assembleActor<C>(
-  config: C,
-  plugins: ActorPlugin[],
-): Promise<C> {
+async function assembleActor<C>(config: C, plugins: ActorPlugin[]): Promise<C> {
   // Work with the default ActorPlugin type internally, cast back on return
-  let cur: ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>> = config as unknown as ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>;
+  let cur = config as AnyConfig;
   for (const p of plugins) {
     try {
       cur = await p(cur);
@@ -57,91 +77,86 @@ async function assembleActor<C>(
       );
     }
   }
-  return cur as unknown as C;
-}
-
-type Hook<T, I extends unknown[], O> = (this: T, ...args: I) => O;
-
-async function callHook<T, I extends unknown[], O>(
-  fn: Hook<T, I, O> | undefined,
-  eh: ((e: unknown) => unknown) | undefined,
-  thisArg: T,
-  ...args: I
-): Promise<O | undefined> {
-  if (fn) {
-    try { return await fn.call(thisArg, ...args); }
-    catch (e) {
-      if (eh) { try { await eh(e); } catch {} }
-      else { throw e; }
-    }
-  }
-  return undefined;
+  cur.plugins = plugins;
+  return cur as C;
 }
 
 export function defineActor<
   Args,
   InternalState,
-  ExposedState,
   InMsg extends Message,
   OutMsg extends Message,
   Methods extends MethodOptions,
   Handlers extends HandlerOptions<InMsg>,
-  ReflectionMethods = {},
+  ReflectionMethods extends ReflectionOptions,
 >(
   config: ActorConfig<
     Args,
     InternalState,
-    ExposedState,
     InMsg,
     OutMsg,
     Methods,
     Handlers,
     ReflectionMethods
   >,
-): ActorDefinition<
-  Args,
-  ExposedState,
-  InMsg,
-  OutMsg,
-  Handlers,
-  ReflectionMethods
-> {
+): ActorDefinition<Args, InternalState, InMsg, OutMsg, ReflectionMethods> {
   const actorCtxMap = new Map<
     symbol,
-    ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>
+    ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods
+    >
   >();
 
   function makeRuntime(
     assembly: ActorConfig<
       Args,
       InternalState,
-      ExposedState,
       InMsg,
       OutMsg,
       Methods,
       Handlers,
       ReflectionMethods
     >,
-  ): AsyncProcessFn<Args, ExposedState, InMsg, OutMsg> {
+  ): AsyncProcessFn<Args, HidePrivate<InternalState>, InMsg, OutMsg> {
     return async function* (
       ctx,
       args,
-    ): AsyncGenerator<ExposedState | null, void, WithSender<InMsg>> {
+    ): AsyncGenerator<
+      HidePrivate<InternalState | null>,
+      void,
+      WithSender<InMsg>
+    > {
       let done = false;
       let exitReason: unknown;
       let rawState: InternalState = undefined as unknown as InternalState;
-      let exposedState: ExposedState = undefined as unknown as ExposedState;
 
       const decorated = new Map();
-
-      const self = {
+      const self: ActorContext<
+        Args,
+        InternalState,
+        InMsg,
+        OutMsg,
+        Methods,
+        Handlers,
+        ReflectionMethods
+      > = {
         ctx: ctx as ProcessCtx<Args, InternalState, InMsg, OutMsg>,
         ...((assembly.methods || {}) as Methods),
+        ...((assembly.$decorate || {}) as ActorDecorated),
         state: rawState,
         name: ctx.pname,
         id: ctx.id,
         async emit(msg: OutMsg) {
-          await callHook(assembly.onEmit, undefined, self, msg, { fromName: ctx.pname, fromId: ctx.id });
+          await callHook(assembly.onEmit, undefined, self, msg, {
+            fromName: ctx.pname,
+            fromId: ctx.id,
+          });
           ctx.toParent(msg);
         },
         agreeToStop() {
@@ -152,59 +167,36 @@ export function defineActor<
           exitReason = reason;
           done = true;
         },
-        $child: {} as Record<
-          string,
-          AsyncProcess<unknown, unknown, Message, Message>
-        >,
+        $child: {} as Record<string, AnyProcess>,
         decorators: {},
-        reflection: {},
+        reflection: {} as ReflectionMethods,
         fork: async <
           A,
           S,
           IM extends Message,
           OM extends Message,
-          H extends HandlerOptions<IM>,
+          R extends ReflectionOptions,
         >(
-          childFn:
-            AsyncProcessFn<A, S, IM, OM> | ActorDefinition<A, S, IM, OM, H>,
+          childActor: ActorDefinition<A, S, IM, OM, R>,
           name?: string,
           childArgs?: A,
-        ): Promise<AsyncProcess<A, S, IM, OM>> => {
-          let child: AsyncProcess<A, S, IM, OM>;
-          const childDef = typeof childFn === "object" ? childFn : null;
+        ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R>> => {
+          let child: AsyncProcess<A, HidePrivate<S>, IM, OM, R>;
           const childName =
             name ??
-            childDef?.name ??
+            childActor?.name ??
             `child-${Object.keys(self.$child).length}`;
           const treeName = `${ctx.pname}:${childName}`;
-          if (childDef) {
-            const parentPlugs = (
-              assembly.plugins
-                ? typeof assembly.plugins === "function"
-                  ? assembly.plugins([])
-                  : assembly.plugins
-                : []
-            ) as ActorPlugin[];
-            child = await childDef.spawnAsChild(
-              ctx,
-              childArgs!,
-              treeName,
-              parentPlugs,
-            );
-          } else {
-            const resolvedFn =
-              typeof childFn === "function" ? childFn : childFn.fn;
-            child = ctx.fork(resolvedFn, treeName)(childArgs!);
-          }
-          self.$child[child.pname] = child as unknown as AsyncProcess<
-            unknown,
-            unknown,
-            Message,
-            Message
-          >;
-          return child as AsyncProcess<A, S, IM, OM>;
+          child = await childActor.spawnAsChild(
+            ctx as AnyProcessCtx,
+            childArgs!,
+            treeName,
+            (assembly.plugins || []) as ActorPlugin[],
+          );
+          self.$child[child.pname] = child as unknown as AnyProcess;
+          return child;
         },
-      } as ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers>;
+      };
       actorCtxMap.set(ctx.id, self);
 
       for (const [k, v] of decorated) {
@@ -212,21 +204,23 @@ export function defineActor<
       }
 
       if (assembly.setup) {
-        rawState = await assembly.setup.call(self, args);
-      } else if (typeof assembly.initialState === "function") {
-        rawState = (assembly.initialState as (this: any, args: Args) => InternalState).call(self, args);
-      } else if (assembly.initialState !== undefined) {
-        rawState = assembly.initialState;
+        rawState = await assembly.setup.call(
+          self as ActorContext<
+            Args,
+            never, // break inference cycle here
+            InMsg,
+            OutMsg,
+            Methods,
+            Handlers,
+            ReflectionMethods & ActorReflection
+          >,
+          args,
+        );
       } else {
-        throw new Error("ActorConfig: setup() or initialState is required");
+        rawState = null as InternalState;
       }
       self.state = rawState;
-      exposedState = assembly.expose
-        ? assembly.expose(rawState)
-        : (rawState as unknown as ExposedState);
-      await callHook(assembly.onStart, assembly.onError, self, args);
-      exposedState = assembly.expose ? assembly.expose(rawState) : (rawState as unknown as ExposedState);
-      yield exposedState;
+      yield hidePrivate(rawState);
       await callHook(assembly.afterStart, assembly.onError, self);
 
       yield* runDispatchAsync<WithSender<InMsg | ExitMessage>>(
@@ -257,13 +251,23 @@ export function defineActor<
             );
           }
           let hookStopped = false;
-          if (msg.type !== "STOP" && msg.type !== "EXIT" && assembly.onMessage) {
-            const result = await callHook(assembly.onMessage as any, assembly.onError, self, msg as InMsg, sender);
+          if (
+            msg.type !== "STOP" &&
+            msg.type !== "EXIT" &&
+            assembly.onMessage
+          ) {
+            const result = await callHook(
+              assembly.onMessage as any,
+              assembly.onError,
+              self,
+              msg as InMsg,
+              sender,
+            );
             if (result === STOP_SENTINEL) hookStopped = true;
           }
           if (msg.type !== "STOP" && !hookStopped) {
             const handler =
-              (assembly.handlers[
+              ((assembly.handlers || ({} as Handlers))[
                 msg.type as keyof Handlers
               ] as HandlerFn<InMsg>) || assembly.onUnhandled;
 
@@ -289,14 +293,13 @@ export function defineActor<
   };
   function attachReflection(
     proc: ReflectableProcess,
-    reflectionMethods: Record<string, Function> | undefined,
+    reflectionMethods: ReflectionMethods | undefined,
   ): void {
     if (!reflectionMethods) return;
+    const self = actorCtxMap.get(proc.id);
     const refl = proc.$reflection as Record<string, Function>;
     for (const [k, m] of Object.entries(reflectionMethods)) {
-      refl[k] = async (...a: unknown[]) => {
-        return m.call(actorCtxMap.get(proc.id)!, ...a);
-      };
+      refl[k] = m.bind(self);
     }
   }
 
@@ -304,29 +307,34 @@ export function defineActor<
     fn: makeRuntime(config),
     name: config.name,
     pvtPluginsRaw: config.plugins,
-    config: config as unknown as ActorConfig<
-      Args,
-      any,
-      ExposedState,
-      InMsg,
-      OutMsg,
-      {},
-      Handlers
-    >,
+    inMessages: config.inMessages,
+    outMessages: config.outMessages,
     async spawn(
       args: Args,
     ): Promise<
-      AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>
+      AsyncProcess<
+        Args,
+        HidePrivate<InternalState>,
+        InMsg,
+        OutMsg,
+        ReflectionMethods & ActorReflection
+      >
     > {
       const plugs = resolvePlugins(config.plugins);
       const assembly = await assembleActor(config, plugs);
       const runtime = makeRuntime(assembly);
       const proc = spawnAsync(runtime, assembly.name ?? "actor")(args);
-      attachReflection(proc, assembly.$reflectionMethods as Record<string, Function> | undefined);
-      return proc as unknown as AsyncProcess<Args, ExposedState, InMsg, OutMsg, ReflectionMethods>;
+      attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);
+      return proc as AsyncProcess<
+        Args,
+        HidePrivate<InternalState>,
+        InMsg,
+        OutMsg,
+        ReflectionMethods & ActorReflection
+      >;
     },
     async spawnAsChild(
-      ctx: ProcessCtx<any, any, any, any>,
+      ctx: AnyProcessCtx,
       args: Args,
       name?: string,
       parentPlugins?: ActorPlugin[],
@@ -335,13 +343,13 @@ export function defineActor<
       const assembly = await assembleActor(config, plugs);
       const runtime = makeRuntime(assembly);
       const proc = ctx.fork(runtime, name ?? assembly.name ?? "child")(args);
-      attachReflection(proc, assembly.$reflectionMethods as Record<string, Function> | undefined);
-      return proc as unknown as AsyncProcess<
+      attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);
+      return proc as AsyncProcess<
         Args,
-        ExposedState,
+        HidePrivate<InternalState>,
         InMsg,
         OutMsg,
-        ReflectionMethods
+        ReflectionMethods & ActorReflection
       >;
     },
   };

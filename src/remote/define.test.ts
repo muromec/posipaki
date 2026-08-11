@@ -10,13 +10,15 @@ vi.mock("./child.js", () => ({
 }));
 
 vi.mock("./host.js", () => ({
-  spawnRemote: vi.fn(() => Promise.resolve({
-    state: { pings: 0 },
-    ready: async () => {},
-    send: () => {},
-    wait: async () => ({ code: 0, state: {} }),
-    onMessage: () => {},
-  })),
+  spawnRemote: vi.fn(() =>
+    Promise.resolve({
+      state: { pings: 0 },
+      ready: async () => {},
+      send: () => {},
+      wait: async () => ({ code: 0, state: {} }),
+      onMessage: () => {},
+    }),
+  ),
 }));
 
 function makeDummyActor() {
@@ -24,9 +26,11 @@ function makeDummyActor() {
     name: "dummy",
     inMessages: defineMessages<{ type: "PING"; count: number }>(),
     outMessages: defineMessages<{ type: "PONG"; count: number }>(),
-    initialState: () => ({ pings: 0 }),
+    setup: () => ({ pings: 0 }),
     handlers: {
-      PING(msg: any) { this.emit({ type: "PONG", count: msg.count }); },
+      PING(msg: any) {
+        this.emit({ type: "PONG", count: msg.count });
+      },
     },
   });
 }
@@ -48,8 +52,12 @@ describe("defineRemoteActor — pathHash", () => {
 describe("defineRemoteActor — isRemoteRoot detection", () => {
   let savedArgv: string[];
 
-  beforeEach(() => { savedArgv = [...process.argv]; });
-  afterEach(() => { process.argv = savedArgv; });
+  beforeEach(() => {
+    savedArgv = [...process.argv];
+  });
+  afterEach(() => {
+    process.argv = savedArgv;
+  });
 
   it("isRemoteRoot is false when marker is not in argv", () => {
     process.argv = ["bun", "script.ts"];
@@ -61,7 +69,10 @@ describe("defineRemoteActor — isRemoteRoot detection", () => {
     const { createHash } = await import("node:crypto");
     const { fileURLToPath } = await import("node:url");
     const scriptPath = fileURLToPath(TEST_URL);
-    const hash = createHash("sha256").update(scriptPath).digest("hex").slice(0, 12);
+    const hash = createHash("sha256")
+      .update(scriptPath)
+      .digest("hex")
+      .slice(0, 12);
     const marker = `--remote=${hash}`;
 
     process.argv = ["bun", "script.ts", marker];
@@ -73,7 +84,10 @@ describe("defineRemoteActor — isRemoteRoot detection", () => {
     const { createHash } = await import("node:crypto");
     const { fileURLToPath } = await import("node:url");
     const scriptPath = fileURLToPath(TEST_URL);
-    const hash = createHash("sha256").update(scriptPath).digest("hex").slice(0, 12);
+    const hash = createHash("sha256")
+      .update(scriptPath)
+      .digest("hex")
+      .slice(0, 12);
     const marker = `--remote=${hash}`;
 
     process.argv = ["bun", "script.ts", marker];
@@ -115,14 +129,21 @@ describe("defineRemoteActor — return shape", () => {
 describe("defineRemoteActor — marker format", () => {
   let savedArgv: string[];
 
-  beforeEach(() => { savedArgv = [...process.argv]; });
-  afterEach(() => { process.argv = savedArgv; });
+  beforeEach(() => {
+    savedArgv = [...process.argv];
+  });
+  afterEach(() => {
+    process.argv = savedArgv;
+  });
 
   it("correct hash triggers isRemoteRoot", async () => {
     const { createHash } = await import("node:crypto");
     const { fileURLToPath } = await import("node:url");
     const scriptPath = fileURLToPath(TEST_URL);
-    const expectedHash = createHash("sha256").update(scriptPath).digest("hex").slice(0, 12);
+    const expectedHash = createHash("sha256")
+      .update(scriptPath)
+      .digest("hex")
+      .slice(0, 12);
 
     process.argv = ["bun", "script.ts", `--remote=${expectedHash}`];
     const def = defineRemoteActor(makeDummyActor(), TEST_URL);

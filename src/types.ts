@@ -60,8 +60,8 @@ export type ProcessFn<
 export type AsyncProcessFn<
   Args,
   State,
-  InMessage extends Message,
-  OutMessage extends Message,
+  InMessage extends Message = Message,
+  OutMessage extends Message = Message,
 > = (
   ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
@@ -72,8 +72,7 @@ export type AsyncProcessFn<
 /** Origin of a message — either a process context or the literal "root"
  *  (used by the system harness to inject messages from outside). */
 export type SenderOrigin =
-  | ProcessCtx<unknown, unknown, Message, Message>
-  | "root";
+  ProcessCtx<unknown, unknown, Message, Message> | "root";
 
 // ---- ProcessCtx -------------------------------------------------------------
 
@@ -89,7 +88,9 @@ export type Fork<
 > = (
   fn: AsyncProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
   pname: string,
-) => (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM>;
+) => (
+  args: ChildArgs,
+) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}>;
 
 export type ForkSync<
   ChildArgs,
@@ -99,7 +100,9 @@ export type ForkSync<
 > = (
   fn: ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
   pname: string,
-) => (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM>;
+) => (
+  args: ChildArgs,
+) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}>;
 
 /** Context injected into every running process. */
 export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
@@ -109,8 +112,8 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   parentId: symbol | null;
   sendSelf: (msg: IM | StopMessage) => void;
   toParent: ProcessMessageCb<OM>;
-} & Pick<AsyncProcess<Args, State, IM, OM>, "fork" | "forkSync">;
-
+} & Pick<AsyncProcess<Args, State, IM, OM, {}>, "fork" | "forkSync">;
+export type AnyProcessCtx = ProcessCtx<unknown, unknown, Message, Message>;
 // ---- Pipe -------------------------------------------------------------------
 
 /** State yielded by the pipe process. */

@@ -7,7 +7,15 @@ import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { FifoUtf8NlineTransport } from "./fifo.js";
-import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
+import {
+  encode,
+  decode,
+  isProto,
+  isState,
+  isMsg,
+  isExit,
+  PROTO_VERSION,
+} from "./protocol.js";
 
 const cleanupPaths: string[] = [];
 
@@ -25,9 +33,9 @@ const echoActor = defineActor({
   name: "echo",
   inMessages: defineMessages(),
   outMessages: defineMessages(),
-  initialState: () => ({ pings: 0 }),
+  setup: () => ({ pings: 0 }),
   handlers: {
-    PING(msg: any) {
+    PING(msg) {
       this.state.pings++;
       this.emit({ type: "PONG", count: msg.count });
     },
@@ -54,10 +62,14 @@ describe("runChild integration", () => {
 
     const setup = FifoUtf8NlineTransport.beginConnect(pathIn, pathOut);
 
-    const child = spawn("bun", ["run", childScriptPath, `--fifo-in=${pathIn}`, `--fifo-out=${pathOut}`], {
-      cwd: process.cwd(),
-      stdio: ["inherit", "inherit", "inherit"],
-    });
+    const child = spawn(
+      "bun",
+      ["run", childScriptPath, `--fifo-in=${pathIn}`, `--fifo-out=${pathOut}`],
+      {
+        cwd: process.cwd(),
+        stdio: ["inherit", "inherit", "inherit"],
+      },
+    );
 
     const host = await setup.transport;
 
@@ -68,9 +80,13 @@ describe("runChild integration", () => {
     expect(decode(protoLine).$proto).toBe(PROTO_VERSION);
     host.removeHandler();
 
-    await host.send(encode("$init", {
-      parentName: "test-host", parentIdName: "test-host", tools: [],
-    }));
+    await host.send(
+      encode("$init", {
+        parentName: "test-host",
+        parentIdName: "test-host",
+        tools: [],
+      }),
+    );
 
     const stateLine = await new Promise<string>((resolve) => {
       host.onMessage((line) => resolve(line));
@@ -86,28 +102,57 @@ describe("runChild integration", () => {
       if (isMsg(msg)) messages.push(msg.$msg.body);
     });
 
-    await host.send(encode("$msg", { type: "PING", fromName: "host", body: { type: "PING", count: 1 } }));
-    await host.send(encode("$msg", { type: "PING", fromName: "host", body: { type: "PING", count: 2 } }));
-    await host.send(encode("$msg", { type: "PING", fromName: "host", body: { type: "PING", count: 3 } }));
+    await host.send(
+      encode("$msg", {
+        type: "PING",
+        fromName: "host",
+        body: { type: "PING", count: 1 },
+      }),
+    );
+    await host.send(
+      encode("$msg", {
+        type: "PING",
+        fromName: "host",
+        body: { type: "PING", count: 2 },
+      }),
+    );
+    await host.send(
+      encode("$msg", {
+        type: "PING",
+        fromName: "host",
+        body: { type: "PING", count: 3 },
+      }),
+    );
     await new Promise((r) => setTimeout(r, 200));
 
     const pongs = messages.filter((m: any) => m.type === "PONG");
     expect(pongs.length).toBeGreaterThanOrEqual(1);
 
     const origHandler = host.removeHandler()!;
-    const exitResult = await new Promise<{ code: number | null; state: any }>((resolve) => {
-      const timeout = setTimeout(() => resolve({ code: null, state: null }), 3000);
-      host.onMessage((line) => {
-        const msg = decode(line);
-        if (isExit(msg)) {
-          clearTimeout(timeout);
-          resolve({ code: msg.$exit.code, state: msg.$exit.state });
-        } else if (isMsg(msg)) {
-          origHandler(line);
-        }
-      });
-      host.send(encode("$msg", { type: "STOP", fromName: "host", body: { type: "STOP", count: 0 } }));
-    });
+    const exitResult = await new Promise<{ code: number | null; state: any }>(
+      (resolve) => {
+        const timeout = setTimeout(
+          () => resolve({ code: null, state: null }),
+          3000,
+        );
+        host.onMessage((line) => {
+          const msg = decode(line);
+          if (isExit(msg)) {
+            clearTimeout(timeout);
+            resolve({ code: msg.$exit.code, state: msg.$exit.state });
+          } else if (isMsg(msg)) {
+            origHandler(line);
+          }
+        });
+        host.send(
+          encode("$msg", {
+            type: "STOP",
+            fromName: "host",
+            body: { type: "STOP", count: 0 },
+          }),
+        );
+      },
+    );
 
     expect(exitResult.code).toBe(0);
 

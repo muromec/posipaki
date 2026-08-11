@@ -41,16 +41,9 @@ export type {
 
 // ── hooks ─────────────────────────────────────────────────────────────────
 
-export { stopPropagation, HookRegistry } from "./hooks.js";
+export { stopPropagation } from "./hooks.js";
 export type {
   HookResult,
-  OnStartHook,
-  OnMessageHook,
-  OnEmitHook,
-  OnChildExitHook,
-  OnStopRequestedHook,
-  OnEndHook,
-  OnErrorHook,
   ActorPlugin,
   ActorDecorated,
   PluginTransform,

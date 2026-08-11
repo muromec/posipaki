@@ -3,64 +3,61 @@
 // Tests for defineActor hooks: onMessage, onEmit, onChildExit, onError,
 // onStart, onEnd, onStopRequested, and stopPropagation().
 
-import { describe, it, expect } from 'vitest';
-import { defineActor, defineMessages } from './define-actor.js';
-import { stopPropagation, mergeConfigs } from './hooks.js';
-import type { Message, SenderInfo } from './types.js';
-import type { OnMessageHook } from './actor-types.js';
+import { describe, it, expect } from "vitest";
+import { defineActor, defineMessages } from "./define-actor.js";
+import { stopPropagation, mergeConfigs, type HookResult } from "./hooks.js";
+import type { Message, SenderInfo } from "./types.js";
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-interface PokeMsg extends Message { type: 'POKE'; value: number; }
-interface PongMsg extends Message { type: 'PONG'; value: number; }
+interface PokeMsg extends Message {
+  type: "POKE";
+  value: number;
+}
+interface PongMsg extends Message {
+  type: "PONG";
+  value: number;
+}
 type BroadMsg = PokeMsg | PongMsg;
 
-const PokeIn  = defineMessages<PokeMsg>();
+const PokeIn = defineMessages<PokeMsg>();
 const PokeOut = defineMessages<PongMsg>();
-const BroadIn  = defineMessages<BroadMsg>();
+const BroadIn = defineMessages<BroadMsg>();
 
 // ── onMessage hooks ──────────────────────────────────────────────────────
 
-describe('hooks.onMessage', () => {
-  it('fires before the named handler', async () => {
+describe("hooks.onMessage", () => {
+  it("fires before the named handler", async () => {
     const order: string[] = [];
 
     const Actor = defineActor({
-      name: 'test',
+      name: "test",
       inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
       onMessage(msg) {
         order.push(`hook:${msg.type}`);
       },
       handlers: {
         POKE() {
-          order.push('handler:POKE');
+          order.push("handler:POKE");
         },
       },
     });
 
     const proc = await Actor.spawn({});
     await proc.ready();
-    proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
-    await new Promise(r => setTimeout(r, 50));
+    proc.send({ type: "POKE", value: 1 });
+    proc.send!({ type: "STOP" });
 
-    expect(order).toEqual(['hook:POKE', 'handler:POKE']);
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     await proc.wait();
+    expect(order).toEqual(["hook:POKE", "handler:POKE"]);
   });
 
-  it('receives sender info', async () => {
+  it("receives sender info", async () => {
     let capturedSender: SenderInfo | null = null;
 
     const Actor = defineActor({
-      name: 'test',
+      name: "test",
       inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
       onMessage(_msg, sender) {
         capturedSender = sender;
       },
@@ -69,408 +66,372 @@ describe('hooks.onMessage', () => {
 
     const proc = await Actor.spawn({});
     await proc.ready();
-    proc.send!({ type: 'POKE', value: 1 }, { fromName: 'caller', fromId: Symbol('caller') });
-    await new Promise(r => setTimeout(r, 50));
+    proc.send(
+      { type: "POKE", value: 1 },
+      { fromName: "caller", fromId: Symbol("caller") },
+    );
+    proc.send!({ type: "STOP" });
+    await proc.wait();
 
     expect(capturedSender).not.toBeNull();
-    expect(capturedSender!.fromName).toBe('caller');
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait();
+    expect(capturedSender!.fromName).toBe("caller");
   });
 });
 
 // ── stopPropagation ──────────────────────────────────────────────────────
 
-describe('stopPropagation', () => {
-  it('prevents handler from running', async () => {
+describe("stopPropagation", () => {
+  it("prevents handler from running", async () => {
     let handlerRan = false;
+    let messageRun = false;
 
     const Actor = defineActor({
-      name: 'test',
+      name: "test",
       inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
       onMessage() {
+        messageRun = true;
         return stopPropagation();
       },
       handlers: {
-        POKE() { handlerRan = true; },
-      },
-    });
-
-    const proc = await Actor.spawn({});
-    await proc.ready();
-    proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
-    await new Promise(r => setTimeout(r, 50));
-
-    expect(handlerRan).toBe(false);
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait();
-  });
-});
-
-// ── onEmit hooks ─────────────────────────────────────────────────────────
-
-describe('hooks.onEmit', () => {
-  it('fires on every emit', async () => {
-    const emitted: string[] = [];
-
-    const Actor = defineActor({
-      name: 'test',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
-      onEmit(msg) {
-        emitted.push(msg.type);
-      },
-      handlers: {
         POKE() {
-          this.emit({ type: 'PONG', value: 99 });
+          handlerRan = true;
         },
       },
     });
 
     const proc = await Actor.spawn({});
     await proc.ready();
-    proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
-    await new Promise(r => setTimeout(r, 50));
-
-    expect(emitted).toContain('PONG');
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
+    proc.send({ type: "POKE", value: 1 });
+    proc.send({ type: "STOP" });
     await proc.wait();
-  });
 
-  it('parent receives child emit via handler', async () => {
-    const Child = defineActor({
-      name: 'child',
+    expect(handlerRan).toBe(false);
+    expect(messageRun).toBe(true);
+  });
+});
+
+// ── onEmit hooks ─────────────────────────────────────────────────────────
+
+describe("hooks.onEmit", () => {
+  it("fires on every emit", async () => {
+    const emitted: string[] = [];
+
+    const Actor = defineActor({
+      name: "test",
       inMessages: PokeIn,
       outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
-      onStart() {
-        this.emit({ type: 'PONG', value: 1 });
+      onEmit(msg) {
+        emitted.push(msg.type);
+      },
+      handlers: {
+        POKE() {
+          this.emit({ type: "PONG", value: 99 });
+        },
+      },
+    });
+
+    const proc = await Actor.spawn({});
+    await proc.ready();
+    proc.send({ type: "POKE", value: 1 });
+    proc.send!({ type: "STOP" });
+
+    await proc.wait();
+    expect(emitted).toContain("PONG");
+  });
+
+  it("parent receives child emit via handler", async () => {
+    const Child = defineActor({
+      name: "child",
+      outMessages: PokeOut,
+      setup() {
+        this.emit({ type: "PONG", value: 1 });
       },
       handlers: { POKE() {} },
     });
 
     const Parent = defineActor({
-      name: 'parent',
+      name: "parent",
       inMessages: BroadIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ pongs: 0 }),
-      async onStart() { await this.fork(Child, undefined, {}); },
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return { pongs: 0 };
+      },
+      async afterStart() {},
       handlers: {
         POKE() {},
-        PONG() { this.state.pongs++; },
+        PONG() {
+          this.state.pongs++;
+        },
       },
     });
 
     const proc = await Parent.spawn({});
     await proc.ready();
-    await new Promise(r => setTimeout(r, 100));
+    proc.send!({ type: "STOP" });
+    await proc.wait();
 
     expect(proc.state!.pongs).toBe(1);
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait();
   });
 });
 
 // ── onChildExit hooks ────────────────────────────────────────────────────
 
-describe('hooks.onChildExit', () => {
-  it('fires when a child exits', async () => {
+describe("hooks.onChildExit", () => {
+  it("fires when a child exits", async () => {
     const Child = defineActor({
-      name: 'child',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
-      onStart() { this.exit(); },
-      handlers: { POKE() {} },
+      name: "child",
+      afterStart() {
+        this.exit();
+      },
+      handlers: {},
     });
 
     const Parent = defineActor({
-      name: 'parent',
-      inMessages: BroadIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ exits: [] as string[] }),
+      name: "parent",
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return { exits: [] as string[] };
+      },
       onChildExit(name) {
         this.state.exits.push(name);
+        this.exit("done");
       },
-      async onStart() {
-        await this.fork(Child, undefined, {});
-      },
-      handlers: { POKE() {}, PONG() {} },
+      handlers: {},
     });
 
     const proc = await Parent.spawn({});
-    await proc.ready();
-    await new Promise(r => setTimeout(r, 200));
-
-    expect(proc.state!.exits).toContain('parent:child');
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     await proc.wait();
-  });
-
-  it('fires even when no onChildExit method exists', async () => {
-    const Child = defineActor({
-      name: 'child',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
-      onStart() { this.exit(); },
-      handlers: { POKE() {} },
-    });
-
-    const Parent = defineActor({
-      name: 'parent',
-      inMessages: BroadIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ exits: 0 }),
-      onChildExit() { this.state.exits++; },
-      async onStart() { await this.fork(Child, undefined, {}); },
-      handlers: { POKE() {}, PONG() {} },
-    });
-
-    const proc = await Parent.spawn({});
-    await proc.ready();
-    await new Promise(r => setTimeout(r, 200));
-
-    expect(proc.state!.exits).toBeGreaterThanOrEqual(1);
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait();
+    expect(proc.state!.exits).toContain("parent:child");
   });
 });
 
 // ── onStart / onEnd ordering (plugin chain via mergeConfigs) ─────────────
 
-describe('hooks.onStart / onEnd', () => {
-  it('plugin onStart fires before actor onStart', async () => {
+describe("hooks.onStart / onEnd", () => {
+  it("plugin afterStart fires before actor afterStart", async () => {
     const order: string[] = [];
 
     const Actor = defineActor({
-      name: 'test',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
-      onStart() { order.push('actor'); },
+      name: "test",
+      afterStart() {
+        order.push("actor");
+        this.exit();
+      },
       plugins: [
-        (cfg) => mergeConfigs(cfg, {
-          onStart() { order.push('plugin'); },
-        }),
+        (cfg) =>
+          mergeConfigs(cfg, {
+            afterStart() {
+              order.push("plugin");
+            },
+          }),
       ],
-      handlers: { POKE() {} },
+      handlers: {},
     });
 
     const proc = await Actor.spawn({});
-    await proc.ready();
-    await new Promise(r => setTimeout(r, 50));
-    expect(order).toEqual(['plugin', 'actor']);
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     await proc.wait();
+
+    expect(order).toEqual(["plugin", "actor"]);
   });
 
-  it('plugin onEnd fires before actor onEnd', async () => {
+  it("plugin onEnd fires before actor onEnd", async () => {
     const order: string[] = [];
 
     const Actor = defineActor({
-      name: 'test',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
-      onEnd() { order.push('actor'); },
+      name: "test",
+      onEnd() {
+        order.push("actor");
+      },
       plugins: [
-        (cfg) => mergeConfigs(cfg, {
-          onEnd() { order.push('plugin'); },
-        }),
+        (cfg) =>
+          mergeConfigs(cfg, {
+            onEnd() {
+              order.push("plugin");
+            },
+          }),
       ],
-      handlers: { POKE() {} },
+      handlers: {},
     });
 
     const proc = await Actor.spawn({});
     await proc.ready();
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
+    proc.send({ type: "STOP" });
     await proc.wait();
 
-    expect(order).toEqual(['plugin', 'actor']);
+    expect(order).toEqual(["plugin", "actor"]);
   });
 });
 
 // ── onStopRequested ordering (plugin chain via mergeConfigs) ─────────────
 
-describe('hooks.onStopRequested', () => {
-  it('plugin onStopRequested fires before actor onStopRequested', async () => {
+describe("hooks.onStopRequested", () => {
+  it("plugin onStopRequested fires before actor onStopRequested", async () => {
     const order: string[] = [];
 
     const Actor = defineActor({
-      name: 'test',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
-      onStopRequested() { order.push('actor'); this.agreeToStop(); },
+      name: "test",
+      onStopRequested() {
+        order.push("actor");
+        this.agreeToStop();
+      },
       plugins: [
-        (cfg) => mergeConfigs(cfg, {
-          onStopRequested() { order.push('plugin'); },
-        }),
+        (cfg) =>
+          mergeConfigs(cfg, {
+            onStopRequested() {
+              order.push("plugin");
+            },
+          }),
       ],
-      handlers: { POKE() {} },
+      handlers: {},
     });
 
     const proc = await Actor.spawn({});
     await proc.ready();
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
+    proc.send!({ type: "STOP" });
     await proc.wait();
 
-    expect(order).toEqual(['plugin', 'actor']);
+    expect(order).toEqual(["plugin", "actor"]);
   });
 });
 
 // ── onError hooks ────────────────────────────────────────────────────────
 
-describe('hooks.onError', () => {
-  it('fires when a handler throws', async () => {
+describe("hooks.onError", () => {
+  it("fires when a handler throws", async () => {
     let capturedError: string | null = null;
 
     const Actor = defineActor({
-      name: 'test',
+      name: "test",
       inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
+      setup() {
+        return { count: 0 };
+      },
       onError(err) {
         capturedError = (err as Error).message;
       },
       handlers: {
-        POKE() { throw new Error('BOOM'); },
+        POKE(msg) {
+          this.state.count += msg.value;
+          throw new Error("BOOM");
+        },
       },
     });
 
     const proc = await Actor.spawn({});
+    proc.notify();
     await proc.ready();
-    proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
-    await new Promise(r => setTimeout(r, 50));
-
-    expect(capturedError).toBe('BOOM');
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
+    proc.send({ type: "POKE", value: 1 });
+    proc.send({ type: "POKE", value: 10 });
+    proc.send({ type: "STOP" });
     await proc.wait();
+
+    expect(capturedError).toBe("BOOM");
+    expect(proc.state!.count).toBe(11);
   });
 
-  it('handler throw without onError kills the actor', async () => {
+  it("handler throw without onError kills the actor", async () => {
     const Actor = defineActor({
-      name: 'test',
+      name: "test",
       inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
+      setup: () => ({ count: 0 }),
       // No onError — throw should propagate and crash the process
       handlers: {
-        POKE() { throw new Error('BOOM'); },
+        POKE(msg) {
+          this.state.count += msg.value;
+          throw new Error("BOOM");
+        },
       },
     });
 
     const proc = await Actor.spawn({});
     await proc.ready();
-    proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
+    proc.send!({ type: "POKE", value: 1 });
+    proc.send!({ type: "POKE", value: 10 });
 
     await expect(proc.wait()).rejects.toThrow();
+    expect(proc.state!.count).toBe(1);
   });
 });
 
 // ── adversarial ──────────────────────────────────────────────────────────
 
-describe('hooks — adversarial', () => {
-  it('error in onError hook does not crash the actor further', async () => {
+describe("hooks — adversarial", () => {
+  it("error in onError hook does not crash the actor further", async () => {
     const Actor = defineActor({
-      name: 'test',
+      name: "test",
       inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
-      onError() { throw new Error('error in error handler'); },
+      setup() {
+        return { count: 0 };
+      },
+      onError() {
+        throw new Error("error in error handler");
+      },
       handlers: {
-        POKE() { throw new Error('original error'); },
+        POKE(msg) {
+          this.state.count += msg.value;
+          throw new Error("original error");
+        },
       },
     });
 
     const proc = await Actor.spawn({});
     await proc.ready();
-    proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
-    await new Promise(r => setTimeout(r, 50));
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait().catch(() => {});
+    proc.send({ type: "POKE", value: 1 });
+    proc.send({ type: "POKE", value: 10 });
+    proc.send({ type: "STOP" });
+    await proc.wait();
+    expect(proc.state!.count).toBe(11);
   });
 
-  it('onMessage hook that throws does not skip handler', async () => {
+  it("onMessage hook that throws does not skip handler", async () => {
     let handlerRan = false;
 
     const Actor = defineActor({
-      name: 'test',
+      name: "test",
       inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
-      onMessage() { throw new Error('hook error'); },
+      onMessage() {
+        throw new Error("hook error");
+      },
       onError() {},
       handlers: {
-        POKE() { handlerRan = true; },
+        POKE() {
+          handlerRan = true;
+        },
       },
     });
 
     const proc = await Actor.spawn({});
     await proc.ready();
-    proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
-    await new Promise(r => setTimeout(r, 50));
+    proc.send!({ type: "POKE", value: 1 });
+    proc.send!({ type: "STOP" }, { fromName: "test", fromId: Symbol("test") });
+    await proc.wait();
 
     expect(handlerRan).toBe(true);
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait().catch(() => {});
   });
 
-  it('stopPropagation works with async hooks', async () => {
+  it("stopPropagation works with async hooks", async () => {
     let handlerRan = false;
 
     const Actor = defineActor({
-      name: 'test',
+      name: "test",
       inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s) => s,
-      initialState: () => ({ count: 0 }),
-      onMessage: (async () => {
-        await new Promise(r => setTimeout(r, 10));
+      async onMessage(): Promise<HookResult> {
+        await new Promise((r) => setTimeout(r, 0));
         return stopPropagation();
-      }) as OnMessageHook<PokeMsg>,
+      },
       handlers: {
-        POKE() { handlerRan = true; },
+        POKE() {
+          handlerRan = true;
+        },
       },
     });
 
     const proc = await Actor.spawn({});
     await proc.ready();
-    proc.send!({ type: 'POKE', value: 1 }, { fromName: 'test', fromId: Symbol('test') });
-    await new Promise(r => setTimeout(r, 100));
+    proc.send({ type: "POKE", value: 1 });
+    proc.send({ type: "STOP" });
 
-    expect(handlerRan).toBe(false);
-
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
     await proc.wait();
+    expect(handlerRan).toBe(false);
   });
 });

@@ -1,28 +1,67 @@
-import { mergeConfigs } from '../hooks.js';
-import type { ActorPlugin } from '../hooks.js';
-import type { ActorConfig, ActorContext, MethodOptions, HandlerOptions } from '../actor-types.js';
-import type { Message } from '../types.js';
-import type { AsyncProcess } from '../process.async.js';
+import { mergeConfigs } from "../hooks.js";
+import type { ActorPlugin, ActorReflection as AR } from "../hooks.js";
+import { AnyProcessCtx } from "../types.js";
 
-export interface TreeNode { pname: string; parentName: string | null; children: TreeNode[]; status: 'running' | 'no introspection'; }
+declare module "../hooks" {
+  interface ActorReflection {
+    "inspect.getTree": TreeReflectionMethods["inspect.getTree"];
+    "inspect.getState": TreeReflectionMethods["inspect.getState"];
+    "inspect.stop": TreeReflectionMethods["inspect.stop"];
+  }
+}
+
+interface TreeReflectionMethods {
+  "inspect.getTree": (prefix?: string) => TreeNode;
+  "inspect.getState": () => unknown;
+  "inspect.stop": () => void;
+}
+
+export interface TreeNode {
+  pname: string;
+  parentName: string | null;
+  children: TreeNode[];
+  status: "running" | "no introspection";
+}
 
 export function inspect(): ActorPlugin {
-  return async (config: ActorConfig<unknown, unknown, Message, Message, Message, {}, HandlerOptions<Message>>) => {
+  return async (config) => {
     return mergeConfigs(config, {
       $reflectionMethods: {
         ...config.$reflectionMethods,
-        'inspect.getTree': async function (this: ActorContext<unknown, unknown, Message, Message, MethodOptions, HandlerOptions<Message>>, prefix?: string) {
+        "inspect.getTree": function (prefix?: string) {
           const children: TreeNode[] = [];
-          for (const child of Object.values(this.$child) as AsyncProcess<unknown, unknown, Message, Message>[]) {
-            const cr = (child.$reflection as Record<string, Function>);
-            if (typeof cr['inspect.getTree'] === 'function') { const sub = await cr['inspect.getTree'](prefix) as TreeNode; if (!prefix || sub.pname.startsWith(prefix)) children.push(sub); }
-            else { const n = child.pname; if (!prefix || n.startsWith(prefix)) children.push({ pname: n, parentName: this.name, children: [], status: 'no introspection' }); }
+          for (const child of Object.values(this.$child)) {
+            const cr = child.$reflection as AR;
+            if (typeof cr["inspect.getTree"] === "function") {
+              const sub = cr["inspect.getTree"](prefix) as TreeNode;
+              if (!prefix || sub.pname.startsWith(prefix)) children.push(sub);
+            } else {
+              const n = child.pname;
+              if (!prefix || n.startsWith(prefix))
+                children.push({
+                  pname: n,
+                  parentName: this.name,
+                  children: [],
+                  status: "no introspection",
+                });
+            }
           }
-          return { pname: this.name, parentName: this.ctx.parentName, children, status: 'running' as const } satisfies TreeNode;
+          const selfCtx = this.ctx as AnyProcessCtx;
+          return {
+            pname: selfCtx.pname,
+            parentName: selfCtx.parentName,
+            children,
+            status: "running" as const,
+          } satisfies TreeNode;
         },
-        'inspect.getState': function (this: any) { return this.state; },
-        'inspect.stop': function (this: any) { this.agreeToStop(); },
-      } as typeof config.$reflectionMethods,
+        "inspect.getState": function () {
+          const state = this.state as unknown;
+          return state;
+        },
+        "inspect.stop": function () {
+          this.exit("inspector");
+        },
+      },
     });
   };
 }

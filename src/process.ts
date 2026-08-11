@@ -16,7 +16,7 @@ export function spawn<
   pname: string,
   tp?: (m: WithSender<OM>) => void,
 ): (a: A) => Process<A, S, IM, OM> {
-  return (a: A) => new Process(fn, pname, tp).start(a) as Process<A, S, IM, OM>;
+  return (a: A) => new Process(fn, pname, tp).start(a);
 }
 
 /** @deprecated Use {@link AsyncProcess} instead. Sync processes are
@@ -26,7 +26,7 @@ class Process<
   S,
   IM extends Message,
   OM extends Message,
-> extends AsyncProcess<A, S, IM, OM> {
+> extends AsyncProcess<A, S, IM, OM, {}> {
   constructor(
     fn: ProcessFn<A, S, IM, OM>,
     pname: string,

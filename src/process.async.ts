@@ -15,8 +15,14 @@ import { asyncify } from "./adapters.js";
 // ---- types ------------------------------------------------------------------
 
 /** An async iterator over process state. Receives `WithSender<InMessage | StopMessage>`. */
-type AsyncProcessGenerator<ProcessState, InMessage extends Message> =
-  AsyncGenerator<ProcessState | null, void, WithSender<InMessage | StopMessage>>;
+type AsyncProcessGenerator<
+  ProcessState,
+  InMessage extends Message,
+> = AsyncGenerator<
+  ProcessState | null,
+  void,
+  WithSender<InMessage | StopMessage>
+>;
 
 type NotifyFn = () => void;
 
@@ -63,7 +69,7 @@ export class AsyncProcess<
   State,
   InMessage extends Message,
   OutMessage extends Message,
-  ReflectionMethods = {},
+  ReflectionMethods extends object,
 > {
   /** Reflection methods.  Empty by default — defineActor fills in configured methods. */
   $reflection: ReflectionMethods = {} as ReflectionMethods;
@@ -78,8 +84,9 @@ export class AsyncProcess<
   /** Every buffered message carries sender provenance. */
   private buffer: Array<WithSender<InMessage | StopMessage>> = [];
   private nextTick: DeferredCall | null = null;
-  private children: Array<AsyncProcess<unknown, unknown, Message, Message>> =
-    [];
+  private children: Array<
+    AsyncProcess<unknown, unknown, Message, Message, {}>
+  > = [];
   private subscribers: Array<NotifyFn> = [];
   private exitWaiter: Waiter;
   private pvtIsPaused: boolean = false;
@@ -95,7 +102,8 @@ export class AsyncProcess<
   ) {
     this.pgenerator = fn;
     this.pname = pname;
-    this.toParent = toParent || (noop as ProcessMessageCb<WithSender<OutMessage>>);
+    this.toParent =
+      toParent || (noop as ProcessMessageCb<WithSender<OutMessage>>);
     this.id = Symbol(pname);
     this.state = null;
     this.exitWaiter = makeWaiter();
@@ -145,7 +153,10 @@ export class AsyncProcess<
       // enters its dispatch loop.
       const advance: WithSender<InMessage | StopMessage> = [
         { type: "__ADVANCE__" } as InMessage,
-        { fromName: "__internal__", fromId: Symbol("__internal__") } as SenderInfo,
+        {
+          fromName: "__internal__",
+          fromId: Symbol("__internal__"),
+        } as SenderInfo,
       ];
       this.pvtEatResult(this.current!.next(advance));
     });
@@ -173,9 +184,15 @@ export class AsyncProcess<
     pname: string,
   ): (
     args: ChildArgs,
-  ) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM> {
+  ) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}> {
     return (args: ChildArgs) => {
-      const child = new AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM>(
+      const child = new AsyncProcess<
+        ChildArgs,
+        ChildState,
+        ChildIM,
+        ChildOM,
+        {}
+      >(
         fn,
         pname,
         this.fromChild.bind(this) as unknown as ProcessMessageCb<
@@ -183,7 +200,13 @@ export class AsyncProcess<
         >,
       );
       this.children.push(
-        child as unknown as AsyncProcess<unknown, unknown, Message, Message>,
+        child as unknown as AsyncProcess<
+          unknown,
+          unknown,
+          Message,
+          Message,
+          {}
+        >,
       );
       child.start(args, this.pname, this.id);
       return child;
@@ -200,7 +223,7 @@ export class AsyncProcess<
     pname: string,
   ): (
     args: ChildArgs,
-  ) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM> {
+  ) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}> {
     return this.fork(asyncify(fn), pname);
   }
 
@@ -264,9 +287,15 @@ export class AsyncProcess<
   send(msg: InMessage | StopMessage, from?: SenderInfo): void;
   /** Enqueue a pre-stamped message (internal: fromChild, toAllChildren). */
   send(msgAndSender: WithSender<InMessage | StopMessage>): void;
-  send(msgOrTuple: InMessage | StopMessage | WithSender<InMessage | StopMessage>, from?: SenderInfo): void {
-    if ('type' in msgOrTuple) {
-      this.buffer.push([msgOrTuple as InMessage | StopMessage, from as SenderInfo]);
+  send(
+    msgOrTuple: InMessage | StopMessage | WithSender<InMessage | StopMessage>,
+    from?: SenderInfo,
+  ): void {
+    if ("type" in msgOrTuple) {
+      this.buffer.push([
+        msgOrTuple as InMessage | StopMessage,
+        from as SenderInfo,
+      ]);
     } else {
       this.buffer.push(msgOrTuple as WithSender<InMessage | StopMessage>);
     }
@@ -361,7 +390,7 @@ export class AsyncProcess<
     this.send(msgAndSender);
   }
 }
-
+export type AnyProcess = AsyncProcess<unknown, unknown, Message, Message, {}>;
 // ---- spawnAsync -------------------------------------------------------------
 
 /**
@@ -377,9 +406,9 @@ export function spawnAsync<
   fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
   pname: string,
   toParent?: ProcessMessageCb<WithSender<OutMessage>>,
-): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage> {
+): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage, {}> {
   return (args: Args) => {
-    const proc = new AsyncProcess<Args, State, InMessage, OutMessage>(
+    const proc = new AsyncProcess<Args, State, InMessage, OutMessage, {}>(
       fn,
       pname,
       toParent,

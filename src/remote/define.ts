@@ -9,7 +9,11 @@
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import type { Message } from "../types.js";
-import type { ActorContext, HandlerOptions } from "../actor-types.js";
+import type {
+  HandlerOptions,
+  MethodOptions,
+  ReflectionOptions,
+} from "../actor-types.js";
 import { defineActor } from "../define-actor.js";
 import { stopPropagation } from "../hooks.js";
 import type { HookResult } from "../hooks.js";
@@ -25,12 +29,12 @@ export interface RemoteActorOptions {
 
 export interface RemoteActorBundle<
   Args,
-  ExposedState,
+  State,
   InMsg extends Message,
   OutMsg extends Message,
-  Handlers extends HandlerOptions<InMsg>,
+  ReflectionMethods extends ReflectionOptions,
 > {
-  actor: ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers>;
+  actor: ActorDefinition<Args, State, InMsg, OutMsg, ReflectionMethods>;
   runRemoteRoot(): Promise<void>;
   isRemoteRoot: boolean;
 }
@@ -41,21 +45,19 @@ function pathHash(path: string): string {
 
 const MARKER_PREFIX = "--remote=";
 
-type ProxyInternalState = {
-  $remote: RemoteProxy | null;
-};
-
 export function defineRemoteActor<
   Args,
-  ExposedState,
+  State,
   InMsg extends Message,
   OutMsg extends Message,
+  Methods extends MethodOptions,
   Handlers extends HandlerOptions<InMsg>,
+  Reflection extends ReflectionOptions,
 >(
-  actor: ActorDefinition<Args, ExposedState, InMsg, OutMsg, Handlers>,
+  actor: ActorDefinition<Args, State, InMsg, OutMsg, Reflection>,
   url: string,
   opts: RemoteActorOptions = {},
-): RemoteActorBundle<Args, ExposedState, InMsg, OutMsg, Handlers> {
+): RemoteActorBundle<Args, State, InMsg, OutMsg, Reflection> {
   const scriptPath = fileURLToPath(url);
   const marker = `${MARKER_PREFIX}${pathHash(scriptPath)}`;
   const isRemoteRoot = !opts.manual && process.argv.includes(marker);
@@ -64,43 +66,48 @@ export function defineRemoteActor<
     runChild(actor.fn);
   }
 
-  type IS = ProxyInternalState;
-  type Ctx = ActorContext<Args, IS, InMsg, OutMsg, {}, Handlers>;
-
-  const proxyDef = defineActor<Args, IS, ExposedState, InMsg, OutMsg, {}, Handlers>({
-    name: actor.config.name ?? "actor",
-    inMessages: actor.config.inMessages,
-    outMessages: actor.config.outMessages,
-    expose: (s: IS): ExposedState => s.$remote?.state as ExposedState,
+  const proxyDef = defineActor<
+    Args,
+    { public: State; private: { remote: RemoteProxy<State, InMsg, OutMsg> } },
+    InMsg,
+    OutMsg,
+    Methods,
+    Handlers,
+    Reflection
+  >({
+    name: actor.name ?? "actor",
+    inMessages: actor.inMessages,
+    outMessages: actor.outMessages,
     handlers: {} as unknown as Handlers,
-    async setup(this: Ctx, args: Args): Promise<IS> {
+    async setup(args: Args) {
       const connect = opts.connector ?? defaultConnector(scriptPath);
-      const remote = await connect({
+      const remote = (await connect({
         command: [marker],
         args: args as Record<string, unknown>,
-      }) as RemoteProxy<ExposedState, InMsg, OutMsg>;
+      })) as RemoteProxy<State, InMsg, OutMsg>;
       remote.onMessage((msg: OutMsg) => {
         this.emit(msg);
       });
-      return { $remote: remote };
+      return {
+        public: remote.state,
+        private: { remote },
+      };
     },
-    hooks: {
-      async onMessage(this: Ctx, msg: InMsg): Promise<HookResult> {
-        this.state.$remote?.send(msg);
-        return stopPropagation();
-      },
-      async onStopRequested(this: Ctx) {
-        if (this.state.$remote) {
-          this.state.$remote.send({ type: "STOP" });
-          await this.state.$remote.wait();
-        }
-        this.agreeToStop();
-      },
+    async onMessage(msg: InMsg): Promise<HookResult> {
+      this.state.private.remote?.send(msg);
+      return stopPropagation();
+    },
+    async onStopRequested() {
+      if (this.state.private.remote) {
+        this.state.private.remote.send({ type: "STOP" } as InMsg);
+        await this.state.private.remote.wait();
+      }
+      this.agreeToStop();
     },
   });
 
   return {
-    actor: proxyDef,
+    actor: proxyDef as ActorDefinition<Args, State, InMsg, OutMsg, Reflection>,
     runRemoteRoot() {
       return runChild(actor.fn);
     },

@@ -65,7 +65,7 @@ const counterFn_vA = async function* counterFn(
 // ═══════════════════════════════════════════════════════════════════════════════
 
 const counterDef_vB = defineActor({
-  initialState(args: CounterArgs): CountState {
+  setup(args: CounterArgs): CountState {
     return { count: 0, max: args.max, name: this.name } as CountState;
   },
   outMessages: defineMessages<CounterOut>(),
@@ -117,7 +117,10 @@ describe.each([
     await proc.ready();
     expect(proc.state).toEqual({ count: 0, max: 3, name: "counter" });
 
-    proc.send({ type: "STOP" } as CounterIn, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "STOP" } as CounterIn, {
+      fromName: "test",
+      fromId: Symbol("test"),
+    });
     await proc.wait();
   });
 
@@ -133,7 +136,10 @@ describe.each([
 
     expect(proc.state!.count).toBe(1);
 
-    proc.send({ type: "STOP" } as CounterIn, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "STOP" } as CounterIn, {
+      fromName: "test",
+      fromId: Symbol("test"),
+    });
     await proc.wait();
   });
 
@@ -151,7 +157,10 @@ describe.each([
 
     expect(proc.state!.count).toBe(3);
 
-    proc.send({ type: "STOP" } as CounterIn, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "STOP" } as CounterIn, {
+      fromName: "test",
+      fromId: Symbol("test"),
+    });
     await proc.wait();
   });
 
@@ -200,8 +209,7 @@ describe.each([
     await proc.wait();
 
     const doneMsg = messages.find((m) => m.type === "DONE") as
-      | { type: "DONE"; count: number }
-      | undefined;
+      { type: "DONE"; count: number } | undefined;
     expect(doneMsg).toBeDefined();
     expect(doneMsg!.count).toBe(1);
   });

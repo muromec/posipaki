@@ -24,9 +24,7 @@ export async function runChild<
   State,
   InMsg extends Message,
   OutMsg extends Message,
->(
-  fn: AsyncProcessFn<Args, State, InMsg, OutMsg>,
-): Promise<void> {
+>(fn: AsyncProcessFn<Args, State, InMsg, OutMsg>): Promise<void> {
   const fifoIn = process.argv
     .find((a) => a.startsWith("--fifo-in="))
     ?.slice("--fifo-in=".length);
@@ -67,7 +65,15 @@ export async function runChild<
 
   const proc = spawnAsync(wrappedFn, "remote", (msgWithSender) => {
     const [msg, sender] = msgWithSender;
-    transport.send(encode("$msg", { type: msg.type, fromName: sender.fromName, body: msg })).catch(() => {});
+    transport
+      .send(
+        encode("$msg", {
+          type: msg.type,
+          fromName: sender.fromName,
+          body: msg,
+        }),
+      )
+      .catch(() => {});
   })(initArgs as unknown as Args);
   await proc.ready();
 
@@ -76,7 +82,9 @@ export async function runChild<
 
   // 5. Subscribe to state changes
   proc.subscribe(() => {
-    transport.send(encode("$state", proc.state as Record<string, unknown>)).catch(() => {});
+    transport
+      .send(encode("$state", proc.state as Record<string, unknown>))
+      .catch(() => {});
   });
 
   // 6. Forward incoming messages to the actor
@@ -94,8 +102,11 @@ export async function runChild<
     transport.close();
     process.exit(code);
   };
-  proc.wait().then(() => shutdown(0), (err) => {
-    console.error("child actor error:", err);
-    shutdown(1);
-  });
+  proc.wait().then(
+    () => shutdown(0),
+    (err: unknown) => {
+      console.error("child actor error:", err);
+      shutdown(1);
+    },
+  );
 }

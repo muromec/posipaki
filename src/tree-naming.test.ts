@@ -4,360 +4,294 @@
 // Tests for automatic tree naming: defineActor({ name: 'x' }), optional
 // name in fork, tree prefixing, and backward compat.
 
-import { describe, it, expect } from 'vitest';
-import { defineActor, defineMessages } from './define-actor.js';
-import { spawnAsync } from './process.async.js';
-import type { Message, ProcessCtx, AsyncProcessFn, WithSender, SenderInfo } from './types.js';
+import { describe, it, expect } from "vitest";
+import { defineActor } from "./define-actor.js";
+import { AnyProcess, spawnAsync } from "./process.async.js";
+import type { AsyncProcessFn, Message } from "./types.js";
+import { ActorDefinition } from "./actor-types.js";
 
-// ── helpers ──────────────────────────────────────────────────────────────
-
-interface PokeMsg extends Message { type: 'POKE'; value: number; }
-const PokeIn = defineMessages<PokeMsg>();
-const PokeOut = defineMessages<PokeMsg>();
-
-// ── defineActor name propagation ─────────────────────────────────────────
-
-describe('defineActor name propagation', () => {
-  it('exposes name on ActorDefinition', () => {
+describe("defineActor name propagation", () => {
+  it("exposes name on ActorDefinition", () => {
     const Actor = defineActor({
-      name: 'my-actor',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
+      name: "my-actor",
+      setup: () => ({ count: 0 }),
+      handlers: {},
     });
 
-    expect(Actor.name).toBe('my-actor');
-    expect(Actor.config.name).toBe('my-actor');
+    expect(Actor.name).toBe("my-actor");
   });
 
-  it('name is undefined when not set', () => {
+  it("name is undefined when not set", () => {
     const Actor = defineActor({
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
+      setup: () => ({ count: 0 }),
+      handlers: {},
     });
 
     expect(Actor.name).toBeUndefined();
-    expect(Actor.config.name).toBeUndefined();
   });
 
-  it('spawn uses config.name as default process name', async () => {
+  it("spawn uses config.name as default process name", async () => {
     const Actor = defineActor({
-      name: 'root-actor',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
+      name: "root-actor",
+      setup: () => ({ count: 0 }),
+      handlers: {},
     });
 
     const proc = await Actor.spawn({});
-    expect(proc.pname).toBe('root-actor');
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
+    expect(proc.pname).toBe("root-actor");
+    proc.send({ type: "STOP" });
   });
 
   it('spawn falls back to "actor" when name not set', async () => {
     const Actor = defineActor({
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
+      setup: () => ({ count: 0 }),
+      handlers: {},
     });
 
     const proc = await Actor.spawn({});
-    expect(proc.pname).toBe('actor');
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
+    expect(proc.pname).toBe("actor");
+    proc.send({ type: "STOP" });
   });
 });
 
 // ── tree prefixing ───────────────────────────────────────────────────────
 
-describe('tree prefixing', () => {
-  it('builds parent:child with explicit name via self.fork(name)', async () => {
+describe("tree prefixing", () => {
+  it("builds parent:child with explicit name via self.fork(name)", async () => {
     const Child = defineActor({
-      name: 'child',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
+      name: "child",
+      setup: () => ({ count: 0 }),
+      handlers: {},
     });
 
     const Parent = defineActor({
-      name: 'parent',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ childPname: '' }),
-      async onStart(this: any) {
-        const child = await this.fork(Child, 'my-child', {});
+      name: "parent",
+      setup: () => ({ childPname: "" }),
+      async afterStart() {
+        const child = await this.fork(Child, "my-child", {});
         this.state.childPname = child.pname;
       },
-      handlers: { POKE() {} },
+      handlers: {},
     });
 
     const proc = await Parent.spawn({});
-    await proc.ready();
-    expect(proc.state!.childPname).toBe('parent:my-child');
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait().catch(() => {});
+    proc.send({ type: "STOP" });
+    await proc.wait();
+    expect(proc.state!.childPname).toBe("parent:my-child");
   });
 
-  it('derives child name from definition when name omitted in self.fork', async () => {
+  it("derives child name from definition when name omitted in self.fork", async () => {
     const Child = defineActor({
-      name: 'child',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
+      name: "child",
+      handlers: {},
     });
 
     const Parent = defineActor({
-      name: 'parent',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ childPname: '' }),
-      async onStart(this: any) {
+      name: "parent",
+      setup: () => ({ childPname: "" }),
+      async afterStart() {
         // No name — should pick up 'child' from the definition
         const child = await this.fork(Child, undefined, {});
         this.state.childPname = child.pname;
       },
-      handlers: { POKE() {} },
+      handlers: {},
     });
 
     const proc = await Parent.spawn({});
-    await proc.ready();
-    expect(proc.state!.childPname).toBe('parent:child');
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait().catch(() => {});
+    proc.send!({ type: "STOP" });
+    await proc.wait();
+    expect(proc.state!.childPname).toBe("parent:child");
   });
 
-  it('raw generator with ctx.fork uses exact name (no prefix)', () => {
-    const rawFn: AsyncProcessFn<null, { x: number }, PokeMsg, PokeMsg> =
-      async function* () { yield { x: 1 }; };
+  it("raw generator with ctx.fork uses exact name (no prefix)", async () => {
+    const rawFn: AsyncProcessFn<null, { x: number }, never, never> =
+      async function* () {
+        yield { x: 1 };
+      };
 
-    const root = spawnAsync(rawFn, 'root')(null);
-    expect(root.pname).toBe('root');
+    const root = spawnAsync(rawFn, "root")(null);
+    expect(root.pname).toBe("root");
 
     // Low-level fork uses exact name — no tree prefix.
-    const child = root.fork(rawFn, 'worker')(null);
-    expect(child.pname).toBe('worker');
+    const child = root.fork(rawFn, "worker")(null);
+    expect(child.pname).toBe("worker");
 
-    child.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    root.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
+    child.send({ type: "STOP" });
+    root.send({ type: "STOP" });
+    await root.wait();
   });
 
-  it('three-level tree a:b:c', async () => {
+  it("three-level tree a:b:c", async () => {
     const Grandchild = defineActor({
-      name: 'grandchild',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
+      name: "grandchild",
+      handlers: {},
     });
 
     const Child = defineActor({
-      name: 'child',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ gc: null as any }),
-      async onStart(this: any) {
+      name: "child",
+      async setup() {
         // self.fork with name from definition
-        this.state.gc = await this.fork(Grandchild, undefined, {});
+        const gc = await this.fork(Grandchild, undefined, {});
+        return { gc };
       },
-      handlers: { POKE() {} },
+      handlers: {},
     });
 
     const Parent = defineActor({
-      name: 'parent',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ c: null as any }),
-      async onStart(this: any) {
-        this.state.c = await this.fork(Child, undefined, {});
+      name: "parent",
+      async setup() {
+        const child = await this.fork(Child, undefined, {});
+        return { child };
       },
-      handlers: { POKE() {} },
+      handlers: {},
     });
 
     const proc = await Parent.spawn({});
     await proc.ready();
 
-    const childProc = proc.state!.c;
+    const childProc = proc.state!.child;
     expect(childProc).not.toBeNull();
-    expect(childProc.pname).toBe('parent:child');
+    expect(childProc.pname).toBe("parent:child");
 
     await childProc.ready();
-    const grandchildProc = childProc.state.gc;
+    const grandchildProc = childProc.state!.gc;
     expect(grandchildProc).not.toBeNull();
-    expect(grandchildProc.pname).toBe('parent:child:grandchild');
+    expect(grandchildProc.pname).toBe("parent:child:grandchild");
 
-    grandchildProc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    childProc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await childProc.wait().catch(() => {});
-    await proc.wait().catch(() => {});
+    proc.send!({ type: "STOP" });
+    await proc.wait();
   });
 
-  it('explicit override with self.fork(name)', async () => {
+  it("explicit override with self.fork(name)", async () => {
     const Child = defineActor({
-      name: 'child',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
+      name: "child",
+      handlers: {},
     });
 
     const Parent = defineActor({
-      name: 'parent',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ childPname: '' }),
-      async onStart(this: any) {
-        const child = await this.fork(Child, 'override', {});
+      name: "parent",
+      setup: () => ({ childPname: "" }),
+      async afterStart() {
+        const child = await this.fork(Child, "override", {});
         this.state.childPname = child.pname;
       },
-      handlers: { POKE() {} },
+      handlers: {},
     });
 
     const proc = await Parent.spawn({});
-    await proc.ready();
-    expect(proc.state!.childPname).toBe('parent:override');
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait().catch(() => {});
+    proc.send!({ type: "STOP" });
+    await proc.wait();
+    expect(proc.state!.childPname).toBe("parent:override");
   });
 });
 
 // ── adversarial ──────────────────────────────────────────────────────────
 
-describe('tree naming — adversarial', () => {
-  it('two children with same definition get different names (disambiguation)', async () => {
+describe("tree naming — adversarial", () => {
+  it("two children with same definition get the same name", async () => {
     const Worker = defineActor({
-      name: 'worker',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
+      name: "worker",
+      setup: () => ({ count: 0 }),
+      handlers: {},
     });
 
     const Parent = defineActor({
-      name: 'parent',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ w1: '', w2: '' }),
-      async onStart(this: any) {
-        const c1 = await this.fork(Worker, 'w1', {});
-        const c2 = await this.fork(Worker, 'w2', {});
+      name: "parent",
+      setup: () => ({ w1: "", w2: "" }),
+      async afterStart() {
+        const c1 = await this.fork(Worker, undefined, {});
+        const c2 = await this.fork(Worker, undefined, {});
         this.state.w1 = c1.pname;
         this.state.w2 = c2.pname;
       },
-      handlers: { POKE() {} },
+      handlers: {},
     });
 
     const proc = await Parent.spawn({});
-    await proc.ready();
-    expect(proc.state!.w1).toBe('parent:w1');
-    expect(proc.state!.w2).toBe('parent:w2');
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait().catch(() => {});
+    proc.send({ type: "STOP" });
+    await proc.wait();
+    expect(proc.state!.w1).toBe("parent:worker");
+    expect(proc.state!.w2).toBe("parent:worker");
   });
 
-  it('deeply nested tree does not crash', async () => {
-    // 10-level chain
-    let defs: any[] = [];
-    let current = defineActor({
-      name: 'leaf',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
-    });
-    defs.push(current);
-
-    for (let i = 9; i >= 1; i--) {
-      const child = current;
-      current = defineActor({
-        name: `level-${i}`,
-        inMessages: PokeIn,
-        outMessages: PokeOut,
-        expose: (s: any) => s,
-      initialState: () => ({ c: null as any }),
-        async onStart(this: any) {
-          this.state.c = await this.fork(child, undefined, {});
-        },
-        handlers: { POKE() {} },
-      });
-      defs.push(current);
-    }
-
-    const Root = defineActor({
-      name: 'root',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ c: null as any }),
-      async onStart(this: any) {
-        this.state.c = await this.fork(current, undefined, {});
+  it("deeply nested tree does not crash", async () => {
+    const collector: string[] = [];
+    const Leaf = defineActor({
+      name: "leaf",
+      async setup({ level }: { level: number }) {
+        collector.push(this.name);
+        let nextLevel = level + 1;
+        if (nextLevel > 10) {
+          return;
+        }
+        const child = await this.fork(leaf1, `leaf-${nextLevel}`, {
+          level: nextLevel,
+        });
+        return { child };
       },
-      handlers: { POKE() {} },
+      handlers: {},
     });
+    const leaf1 = Leaf as ActorDefinition<
+      { level: number },
+      unknown,
+      Message,
+      Message,
+      {}
+    >;
 
-    const proc = await Root.spawn({});
+    const proc = await Leaf.spawn({ level: 0 });
+    expect(collector).toEqual(["leaf", "leaf:leaf-1"]);
     await proc.ready();
-    expect(proc.state!.c.pname).toBe('root:level-1');
 
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait().catch(() => {});
+    proc.send!({ type: "STOP" });
+    await proc.wait();
+    expect(collector).toEqual([
+      "leaf",
+      "leaf:leaf-1",
+      "leaf:leaf-1:leaf-2",
+      "leaf:leaf-1:leaf-2:leaf-3",
+      "leaf:leaf-1:leaf-2:leaf-3:leaf-4",
+      "leaf:leaf-1:leaf-2:leaf-3:leaf-4:leaf-5",
+      "leaf:leaf-1:leaf-2:leaf-3:leaf-4:leaf-5:leaf-6",
+      "leaf:leaf-1:leaf-2:leaf-3:leaf-4:leaf-5:leaf-6:leaf-7",
+      "leaf:leaf-1:leaf-2:leaf-3:leaf-4:leaf-5:leaf-6:leaf-7:leaf-8",
+      "leaf:leaf-1:leaf-2:leaf-3:leaf-4:leaf-5:leaf-6:leaf-7:leaf-8:leaf-9",
+      "leaf:leaf-1:leaf-2:leaf-3:leaf-4:leaf-5:leaf-6:leaf-7:leaf-8:leaf-9:leaf-10",
+    ]);
   });
 
-  it('EXIT from child is recognized under tree-prefixed name', async () => {
-    let exitReceived = false;
-
+  it("EXIT from child is recognized under tree-prefixed name", async () => {
     const Child = defineActor({
-      name: 'child',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ count: 0 }),
-      handlers: { POKE() {} },
+      name: "child",
+      setup: () => ({ count: 0 }),
+      handlers: {},
+      onStopRequested() {
+        this.agreeToStop();
+      },
     });
 
     const Parent = defineActor({
-      name: 'parent',
-      inMessages: PokeIn,
-      outMessages: PokeOut,
-      expose: (s: any) => s,
-      initialState: () => ({ exitCount: 0 }),
-      async onStart(this: any) {
+      name: "parent",
+      setup: () => ({ exitCount: 0, exitedName: "" }),
+      async afterStart() {
         await this.fork(Child, undefined, {});
       },
-      onChildExit(this: any, name: string) {
-        this.state.exitCount++;
-        expect(name).toBe('parent:child');
+      onStopRequested() {
+        this.$child["parent:child"].send({ type: "STOP" });
       },
-      handlers: { POKE() {} },
+      onChildExit(name: string) {
+        this.state.exitCount++;
+        this.state.exitedName = name;
+        this.exit("done");
+      },
+      handlers: {},
     });
 
     const proc = await Parent.spawn({});
     await proc.ready();
-    // Wait for child to start and then automatically exit (no handlers, generator finishes)
-    await new Promise(r => setTimeout(r, 100));
-    expect(proc.state!.exitCount).toBeGreaterThanOrEqual(0); // depends on timing
-    proc.send!({ type: 'STOP' }, { fromName: 'test', fromId: Symbol('test') });
-    await proc.wait().catch(() => {});
+    proc.send!({ type: "STOP" });
+    await proc.wait();
+    expect(proc.state!.exitCount).toEqual(1);
+    expect(proc.state!.exitedName).toEqual("parent:child");
   });
 });
