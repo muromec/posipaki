@@ -39,6 +39,11 @@ export type Paired<Priv, Pub> = { public: Pub; private: Priv };
 export type HidePrivate<T> =
   T extends Paired<unknown, unknown> ? T["public"] : T;
 
+export type SpawnedFrom<T extends ActorDefinition<any, any, any, any, any>> =
+  T extends ActorDefinition<infer A, infer S, infer IM, infer OM, infer R>
+    ? AsyncProcess<A, HidePrivate<S>, IM, OM, R & ActorReflection>
+    : never;
+
 export interface ActorDefinition<
   Args,
   InternalState,
