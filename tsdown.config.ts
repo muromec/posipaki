@@ -8,8 +8,6 @@ export default defineConfig({
     "src/xfetch.ts",
     "src/hooks.ts",
     "src/plugins/debug-logger.ts",
-    "src/plugins/timeout-guard.ts",
-    "src/plugins/rbac.ts",
     "src/plugins/tree-introspection.ts",
     "src/remote/index.ts",
   ],
