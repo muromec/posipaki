@@ -310,7 +310,7 @@ export function defineActor<
     inMessages: config.inMessages,
     outMessages: config.outMessages,
     async spawn(
-      args: Args,
+      args: Args, toParent?: (msg: WithSender<OutMsg>) => void
     ): Promise<
       AsyncProcess<
         Args,
@@ -323,7 +323,7 @@ export function defineActor<
       const plugs = resolvePlugins(config.plugins);
       const assembly = await assembleActor(config, plugs);
       const runtime = makeRuntime(assembly);
-      const proc = spawnAsync(runtime, assembly.name ?? "actor")(args);
+      const proc = spawnAsync(runtime, assembly.name ?? "actor", toParent)(args);
       attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);
       return proc as AsyncProcess<
         Args,

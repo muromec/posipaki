@@ -6,6 +6,7 @@
 
 import type {
   SenderInfo,
+  WithSender,
   AsyncProcessFn,
   Message,
   ProcessCtx,
@@ -25,6 +26,7 @@ export interface MethodOptions {
 export type HandlerFn<InMsg extends Message> = (
   msg: InMsg,
   sender: SenderInfo,
+  WithSender,
 ) => void | Promise<void>;
 export type HandlerOptions<InMsg extends Message> = Omit<
   {
@@ -52,7 +54,7 @@ export interface ActorDefinition<
   pvtPluginsRaw?: ActorPlugin[] | PluginTransform;
   /** Spawn this actor as a standalone process. */
   spawn(
-    args: Args,
+    args: Args, toParent?: (msg: WithSender<OutMsg>) => void
   ): Promise<
     AsyncProcess<
       Args,
@@ -124,11 +126,13 @@ export type ActorConfig<
   onEmit?: (
     msg: OutMsg,
     sender: SenderInfo,
+  WithSender,
   ) => HookResult | Promise<HookResult>;
 
   onMessage?: (
     msg: InMsg,
     sender: SenderInfo,
+  WithSender,
   ) => HookResult | Promise<HookResult>;
 
   onUnhandled?: (msg: Message, sender: SenderInfo) => void | Promise<void>;
