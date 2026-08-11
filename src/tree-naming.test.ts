@@ -68,7 +68,7 @@ describe("tree prefixing", () => {
       name: "parent",
       setup: () => ({ childPname: "" }),
       async afterStart() {
-        const child = await this.fork(Child, "my-child", {});
+        const child = await this.fork(Child, {}, { name: "my-child" });
         this.state.childPname = child.pname;
       },
       handlers: {},
@@ -91,7 +91,7 @@ describe("tree prefixing", () => {
       setup: () => ({ childPname: "" }),
       async afterStart() {
         // No name — should pick up 'child' from the definition
-        const child = await this.fork(Child, undefined, {});
+        const child = await this.fork(Child, {});
         this.state.childPname = child.pname;
       },
       handlers: {},
@@ -131,7 +131,7 @@ describe("tree prefixing", () => {
       name: "child",
       async setup() {
         // self.fork with name from definition
-        const gc = await this.fork(Grandchild, undefined, {});
+        const gc = await this.fork(Grandchild, {});
         return { gc };
       },
       handlers: {},
@@ -140,7 +140,7 @@ describe("tree prefixing", () => {
     const Parent = defineActor({
       name: "parent",
       async setup() {
-        const child = await this.fork(Child, undefined, {});
+        const child = await this.fork(Child, {});
         return { child };
       },
       handlers: {},
@@ -172,7 +172,7 @@ describe("tree prefixing", () => {
       name: "parent",
       setup: () => ({ childPname: "" }),
       async afterStart() {
-        const child = await this.fork(Child, "override", {});
+        const child = await this.fork(Child, {}, { name: "override" });
         this.state.childPname = child.pname;
       },
       handlers: {},
@@ -199,8 +199,8 @@ describe("tree naming — adversarial", () => {
       name: "parent",
       setup: () => ({ w1: "", w2: "" }),
       async afterStart() {
-        const c1 = await this.fork(Worker, undefined, {});
-        const c2 = await this.fork(Worker, undefined, {});
+        const c1 = await this.fork(Worker, {});
+        const c2 = await this.fork(Worker, {});
         this.state.w1 = c1.pname;
         this.state.w2 = c2.pname;
       },
@@ -224,9 +224,7 @@ describe("tree naming — adversarial", () => {
         if (nextLevel > 10) {
           return;
         }
-        const child = await this.fork(leaf1, `leaf-${nextLevel}`, {
-          level: nextLevel,
-        });
+        const child = await this.fork(leaf1, { level: nextLevel }, { name: `leaf-${nextLevel}` });
         return { child };
       },
       handlers: {},
@@ -274,7 +272,7 @@ describe("tree naming — adversarial", () => {
       name: "parent",
       setup: () => ({ exitCount: 0, exitedName: "" }),
       async afterStart() {
-        await this.fork(Child, undefined, {});
+        await this.fork(Child, {});
       },
       onStopRequested() {
         this.$child["parent:child"].send({ type: "STOP" });

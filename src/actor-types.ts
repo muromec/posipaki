@@ -26,7 +26,6 @@ export interface MethodOptions {
 export type HandlerFn<InMsg extends Message> = (
   msg: InMsg,
   sender: SenderInfo,
-  WithSender,
 ) => void | Promise<void>;
 export type HandlerOptions<InMsg extends Message> = Omit<
   {
@@ -54,7 +53,11 @@ export interface ActorDefinition<
   pvtPluginsRaw?: ActorPlugin[] | PluginTransform;
   /** Spawn this actor as a standalone process. */
   spawn(
-    args: Args, toParent?: (msg: WithSender<OutMsg>) => void
+    args: Args,
+    opts?: {
+      name?: string;
+      toParent?: (msg: WithSender<OutMsg>) => void;
+    },
   ): Promise<
     AsyncProcess<
       Args,
@@ -68,7 +71,9 @@ export interface ActorDefinition<
   spawnAsChild(
     ctx: AnyProcessCtx,
     args: Args,
-    name?: string,
+    opts?: {
+      name?: string;
+    },
     parentPlugins?: ActorPlugin[],
   ): Promise<
     AsyncProcess<
@@ -126,13 +131,11 @@ export type ActorConfig<
   onEmit?: (
     msg: OutMsg,
     sender: SenderInfo,
-  WithSender,
   ) => HookResult | Promise<HookResult>;
 
   onMessage?: (
     msg: InMsg,
     sender: SenderInfo,
-  WithSender,
   ) => HookResult | Promise<HookResult>;
 
   onUnhandled?: (msg: Message, sender: SenderInfo) => void | Promise<void>;
@@ -252,9 +255,11 @@ export type ActorContext<
       OM extends Message,
       R extends ReflectionOptions,
     >(
-      fn: ActorDefinition<A, S, IM, OM, R>,
-      name?: string,
+      actor: ActorDefinition<A, S, IM, OM, R>,
       args?: A,
+      opts?: {
+        name?: string;
+      },
     ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R>>;
 
     ctx: ProcessCtx<Args, HidePrivate<InternalState>, InMsg, OutMsg>;

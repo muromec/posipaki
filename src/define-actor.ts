@@ -178,19 +178,19 @@ export function defineActor<
           R extends ReflectionOptions,
         >(
           childActor: ActorDefinition<A, S, IM, OM, R>,
-          name?: string,
           childArgs?: A,
+          forkOpts?: { name?: string },
         ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R>> => {
           let child: AsyncProcess<A, HidePrivate<S>, IM, OM, R>;
           const childName =
-            name ??
+            forkOpts?.name ??
             childActor?.name ??
             `child-${Object.keys(self.$child).length}`;
           const treeName = `${ctx.pname}:${childName}`;
           child = await childActor.spawnAsChild(
             ctx as AnyProcessCtx,
             childArgs!,
-            treeName,
+            { name: treeName },
             (assembly.plugins || []) as ActorPlugin[],
           );
           self.$child[child.pname] = child as unknown as AnyProcess;
@@ -310,7 +310,11 @@ export function defineActor<
     inMessages: config.inMessages,
     outMessages: config.outMessages,
     async spawn(
-      args: Args, toParent?: (msg: WithSender<OutMsg>) => void
+      args: Args,
+      opts?: {
+        name?: string;
+        toParent?: (msg: WithSender<OutMsg>) => void;
+      },
     ): Promise<
       AsyncProcess<
         Args,
@@ -323,7 +327,7 @@ export function defineActor<
       const plugs = resolvePlugins(config.plugins);
       const assembly = await assembleActor(config, plugs);
       const runtime = makeRuntime(assembly);
-      const proc = spawnAsync(runtime, assembly.name ?? "actor", toParent)(args);
+      const proc = spawnAsync(runtime, opts?.name ?? assembly.name ?? "actor", opts?.toParent)(args);
       attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);
       return proc as AsyncProcess<
         Args,
@@ -336,13 +340,15 @@ export function defineActor<
     async spawnAsChild(
       ctx: AnyProcessCtx,
       args: Args,
-      name?: string,
+      opts?: {
+        name?: string;
+      },
       parentPlugins?: ActorPlugin[],
     ) {
       const plugs = resolvePlugins(config.plugins, parentPlugins);
       const assembly = await assembleActor(config, plugs);
       const runtime = makeRuntime(assembly);
-      const proc = ctx.fork(runtime, name ?? assembly.name ?? "child")(args);
+      const proc = ctx.fork(runtime, opts?.name ?? assembly.name ?? "child")(args);
       attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);
       return proc as AsyncProcess<
         Args,

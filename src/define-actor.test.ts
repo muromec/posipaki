@@ -215,10 +215,11 @@ describe.each([
   });
 });
 
-// ── spawn with toParent ────────────────────────────────────────────────
 
-describe('spawn with toParent', () => {
-  it('delivers emitted messages to the toParent callback', async () => {
+// ── spawn with opts ───────────────────────────────────────────────────
+
+describe('spawn with opts', () => {
+  it('delivers emitted messages to toParent callback', async () => {
     const actor = defineActor({
       setup: () => ({ sent: false }),
       handlers: {
@@ -229,8 +230,8 @@ describe('spawn with toParent', () => {
     });
 
     const received: any[] = [];
-    const proc = await actor.spawn({}, ([msg]: [any, any]) => {
-      received.push(msg);
+    const proc = await actor.spawn({}, {
+      toParent: ([msg]: [any, any]) => { received.push(msg); },
     });
 
     await proc.ready();
@@ -240,11 +241,11 @@ describe('spawn with toParent', () => {
     await proc.wait();
 
     expect(received.length).toBeGreaterThanOrEqual(1);
-    expect(received[0].type).toBe("DONE");
+    expect(received[0].type).toBe('DONE');
     expect(received[0].value).toBe(1);
   });
 
-  it('works without toParent (backward compatible)', async () => {
+  it('works without opts (backward compatible)', async () => {
     const actor = defineActor({
       setup: () => ({ x: 0 }),
       handlers: {
@@ -259,6 +260,6 @@ describe('spawn with toParent', () => {
     proc.send({ type: 'STOP' } as any, { fromName: 't', fromId: Symbol('t') });
     await proc.wait();
 
-    expect(proc.state.x).toBe(1);
+    expect((proc.state as any).x).toBe(1);
   });
 });

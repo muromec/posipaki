@@ -46,7 +46,7 @@ describe("inspect", () => {
         name: "parent",
         plugins: [inspect()],
         async setup(this: any) {
-          await this.fork(Leaf, "kid");
+          await this.fork(Leaf, undefined, { name: "kid" });
           return {};
         },
         handlers: {},
@@ -78,7 +78,7 @@ describe("inspect", () => {
         name: "root",
         plugins: [inspect()],
         async setup(this: any) {
-          await this.fork(Plain, "plain-child");
+          await this.fork(Plain, undefined, { name: "plain-child" });
           return {};
         },
         handlers: {},
@@ -108,7 +108,7 @@ describe("inspect", () => {
         plugins: [inspect()],
         async setup() {
           await this.fork(Child);
-          await this.fork(Child, "w2");
+          await this.fork(Child, undefined, { name: "w2" });
           return {};
         },
         handlers: {},
