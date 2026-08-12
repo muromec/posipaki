@@ -163,7 +163,7 @@ export function defineActor<
         Handlers,
         ReflectionMethods
       > = {
-        ctx: ctx as ProcessCtx<Args, InternalState, InMsg, OutMsg>,
+        ctx,
         ...((assembly.methods || {}) as Methods),
         ...((assembly.$decorate || {}) as ActorDecorated),
         state: rawState,
@@ -281,7 +281,7 @@ export function defineActor<
             assembly.onMessage
           ) {
             const result = await callHook(
-              assembly.onMessage as any,
+              assembly.onMessage,
               assembly.onError,
               self,
               msg as InMsg,
