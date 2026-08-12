@@ -48,6 +48,10 @@
     "./remote": {
       "types": "./dist/remote/index.d.ts",
       "default": "./dist/remote/index.js"
+    },
+    "./testing": {
+      "types": "./dist/testing/index.d.ts",
+      "default": "./dist/testing/index.js"
     }
   }
 }
