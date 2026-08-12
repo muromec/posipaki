@@ -102,7 +102,7 @@ describe("createCollector", () => {
     await proc.wait();
   });
 
-  it("resolved() times out when no match", async () => {
+  it("resolved() settles ok:false when the actor exits without matching", async () => {
     const { createCollector } = await import("./test-plugin.js");
 
     const actor = defineActor({
@@ -110,18 +110,17 @@ describe("createCollector", () => {
       handlers: { POKE() {} },
     });
 
-    const collector = createCollector<PongMsg>({ type: "PONG" }, { timeoutMs: 100 });
+    const collector = createCollector<PongMsg>({ type: "PONG" });
     const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
     await new Promise(r => setTimeout(r, 10));
 
-    // No PONG ever emitted
-    const result = await collector.resolved();
-
-    expect(result.ok).toBe(false);
-    expect(result.detail).toContain("Timeout");
-
+    const pending = collector.resolved();
     proc.send({ type: "STOP" });
     await proc.wait();
+
+    const result = await pending;
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("exited");
   });
 
   it("next() waits for additional matches", async () => {

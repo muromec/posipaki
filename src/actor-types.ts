@@ -127,6 +127,20 @@ export type ActorConfig<
   outMessages?: ActorMessages<OutMsg>;
   inMessages?: ActorMessages<InMsg>;
 
+  /** Fires once `self` is built, before `setup`.  State is not yet set
+   *  (`this.state` is `never`).  Use for registering the process/ctx before
+   *  any child is forked in `setup`. */
+  beforeStart?: (
+    this: ActorContext<
+      Args,
+      never,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >,
+  ) => void | Promise<void>;
   setup?: (
     this: ActorContext<
       Args,

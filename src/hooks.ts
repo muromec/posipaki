@@ -89,7 +89,7 @@ export function mergeConfigs<C extends AnyConfig>(base: C, overlay: Partial<C>):
   const result = { ...base } as Record<string, unknown>;
   for (const key of Object.keys(overlay as Record<string, unknown>)) {
     const val = (overlay as Record<string, unknown>)[key];
-    if (typeof val === "function" && /^(on|after)[A-Z]/.test(key)) {
+    if (typeof val === "function" && /^(on|after|before)[A-Z]/.test(key)) {
       result[key] = chainHook(
         (base as Record<string, unknown>)[key] as (
           this: unknown,
