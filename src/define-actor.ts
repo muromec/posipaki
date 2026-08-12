@@ -80,7 +80,7 @@ function resolvePlugins(
   });
 }
 
-async function assembleActor<C>(config: C, plugins: ActorPlugin[]): Promise<C> {
+async function assembleActor<C>(config: C, plugins: ActorPlugin[], addPlugins?: ActorPlugin[]): Promise<C> {
   // Work with the default ActorPlugin type internally, cast back on return
   let cur = config as AnyConfig;
   for (const p of plugins) {
@@ -94,6 +94,7 @@ async function assembleActor<C>(config: C, plugins: ActorPlugin[]): Promise<C> {
     }
   }
   cur.plugins = plugins;
+  if (addPlugins) (cur as any).addPlugins = addPlugins;
   return cur as C;
 }
 
@@ -203,13 +204,17 @@ export function defineActor<
             childActor?.name ??
             `child-${Object.keys(self.$child).length}`;
           const treeName = `${ctx.pname}:${childName}`;
+          const childAddPlugins = [
+            ...((assembly as any).addPlugins || []) as ActorPlugin[],
+            ...(forkOpts?.addPlugins || []),
+          ];
           child = await childActor.spawnAsChild(
             ctx as ProcessCtx<any, any, any, any>,
             childArgs!,
             {
               name: treeName,
               parentPlugins: (assembly.plugins || []) as ActorPlugin[],
-              ...(forkOpts?.addPlugins ? { addPlugins: forkOpts.addPlugins } : {}),
+              ...(childAddPlugins.length ? { addPlugins: childAddPlugins } : {}),
             },
           );
           self.$child[child.pname] = child as unknown as AnyProcess;
@@ -345,7 +350,7 @@ export function defineActor<
       >
     > {
       const plugs = resolvePlugins(config.plugins, undefined, opts?.addPlugins);
-      const assembly = await assembleActor(config, plugs);
+      const assembly = await assembleActor(config, plugs, opts?.addPlugins);
       const runtime = makeRuntime(assembly);
       const proc = spawnAsync(runtime, opts?.name ?? assembly.name ?? "actor", opts?.toParent)(args);
       attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);
@@ -367,7 +372,7 @@ export function defineActor<
       },
     ) {
       const plugs = resolvePlugins(config.plugins, opts?.parentPlugins, opts?.addPlugins);
-      const assembly = await assembleActor(config, plugs);
+      const assembly = await assembleActor(config, plugs, opts?.addPlugins);
       const runtime = makeRuntime(assembly);
       const proc = ctx.fork(runtime, opts?.name ?? assembly.name ?? "child")(args);
       attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);

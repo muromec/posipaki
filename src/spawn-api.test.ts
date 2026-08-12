@@ -133,7 +133,7 @@ describe("spawnAsChild opts", () => {
 
 // ── addPlugins are non-overridable ───────────────────────────────────────
 
-describe.skip("addPlugins non-overridable", () => {
+describe("addPlugins non-overridable", () => {
   it("addPlugins survive child's replacePlugins", async () => {
     const addPlug = namedPlugin("add");
 
