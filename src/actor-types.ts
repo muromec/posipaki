@@ -11,7 +11,6 @@ import type {
   Message,
   ProcessCtx,
   ExitMessage,
-  AnyProcessCtx,
 } from "./types.js";
 import type { ActorDecorated, ActorReflection } from "./hooks.js";
 import type { AnyProcess, AsyncProcess } from "./process.async.js";
@@ -62,6 +61,7 @@ export interface ActorDefinition<
     opts?: {
       name?: string;
       toParent?: (msg: WithSender<OutMsg>) => void;
+      addPlugins?: ActorPlugin[];
     },
   ): Promise<
     AsyncProcess<
@@ -74,12 +74,13 @@ export interface ActorDefinition<
   >;
   /** Spawn this actor as a child of the calling process. */
   spawnAsChild(
-    ctx: AnyProcessCtx,
+    ctx: ProcessCtx<any, any, any, any>,
     args: Args,
     opts?: {
       name?: string;
+      parentPlugins?: ActorPlugin[];
+      addPlugins?: ActorPlugin[];
     },
-    parentPlugins?: ActorPlugin[],
   ): Promise<
     AsyncProcess<
       Args,

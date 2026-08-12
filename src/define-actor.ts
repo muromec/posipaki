@@ -15,7 +15,6 @@ import type {
   Message,
   ExitMessage,
   ProcessCtx,
-  AnyProcessCtx,
 } from "./types.js";
 import type {
   ActorDefinition,
@@ -58,10 +57,27 @@ function hidePrivate<T>(value: T): HidePrivate<T> {
 function resolvePlugins(
   raw: ActorPlugin[] | ((parents: ActorPlugin[]) => ActorPlugin[]) | undefined,
   parentPlugins?: ActorPlugin[],
+  addPlugins?: ActorPlugin[],
 ): ActorPlugin[] {
-  if (!raw) return parentPlugins ? [...parentPlugins] : [];
-  if (Array.isArray(raw)) return [...raw];
-  return raw(parentPlugins ?? []);
+  const resolved =
+    !raw ? (parentPlugins ? [...parentPlugins] : [])
+    : Array.isArray(raw) ? [...raw]
+    : raw(parentPlugins ?? []);
+
+  const combined = addPlugins ? [...resolved, ...addPlugins] : resolved;
+
+  // Deduplicate by function name
+  const seen = new Set<string>();
+  return combined.filter((p) => {
+    const name = (p as Function).name;
+    if (!name) {
+      console.warn("posipaki: plugin has no name, dedup won't work");
+      return true;
+    }
+    if (seen.has(name)) return false;
+    seen.add(name);
+    return true;
+  });
 }
 
 async function assembleActor<C>(config: C, plugins: ActorPlugin[]): Promise<C> {
@@ -69,7 +85,7 @@ async function assembleActor<C>(config: C, plugins: ActorPlugin[]): Promise<C> {
   let cur = config as AnyConfig;
   for (const p of plugins) {
     try {
-      cur = await p(cur);
+          cur = await p(cur);
     } catch (e: unknown) {
       console.error(
         `[assembleActor] plugin "${(p as Function).name || "?"}" failed:`,
@@ -179,7 +195,7 @@ export function defineActor<
         >(
           childActor: ActorDefinition<A, S, IM, OM, R>,
           childArgs?: A,
-          forkOpts?: { name?: string },
+          forkOpts?: { name?: string; addPlugins?: ActorPlugin[] },
         ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R>> => {
           let child: AsyncProcess<A, HidePrivate<S>, IM, OM, R>;
           const childName =
@@ -188,10 +204,13 @@ export function defineActor<
             `child-${Object.keys(self.$child).length}`;
           const treeName = `${ctx.pname}:${childName}`;
           child = await childActor.spawnAsChild(
-            ctx as AnyProcessCtx,
+            ctx as ProcessCtx<any, any, any, any>,
             childArgs!,
-            { name: treeName },
-            (assembly.plugins || []) as ActorPlugin[],
+            {
+              name: treeName,
+              parentPlugins: (assembly.plugins || []) as ActorPlugin[],
+              ...(forkOpts?.addPlugins ? { addPlugins: forkOpts.addPlugins } : {}),
+            },
           );
           self.$child[child.pname] = child as unknown as AnyProcess;
           return child;
@@ -314,6 +333,7 @@ export function defineActor<
       opts?: {
         name?: string;
         toParent?: (msg: WithSender<OutMsg>) => void;
+        addPlugins?: ActorPlugin[];
       },
     ): Promise<
       AsyncProcess<
@@ -324,7 +344,7 @@ export function defineActor<
         ReflectionMethods & ActorReflection
       >
     > {
-      const plugs = resolvePlugins(config.plugins);
+      const plugs = resolvePlugins(config.plugins, undefined, opts?.addPlugins);
       const assembly = await assembleActor(config, plugs);
       const runtime = makeRuntime(assembly);
       const proc = spawnAsync(runtime, opts?.name ?? assembly.name ?? "actor", opts?.toParent)(args);
@@ -338,14 +358,15 @@ export function defineActor<
       >;
     },
     async spawnAsChild(
-      ctx: AnyProcessCtx,
+      ctx: ProcessCtx<any, any, any, any>,
       args: Args,
       opts?: {
         name?: string;
+        parentPlugins?: ActorPlugin[];
+        addPlugins?: ActorPlugin[];
       },
-      parentPlugins?: ActorPlugin[],
     ) {
-      const plugs = resolvePlugins(config.plugins, parentPlugins);
+      const plugs = resolvePlugins(config.plugins, opts?.parentPlugins, opts?.addPlugins);
       const assembly = await assembleActor(config, plugs);
       const runtime = makeRuntime(assembly);
       const proc = ctx.fork(runtime, opts?.name ?? assembly.name ?? "child")(args);

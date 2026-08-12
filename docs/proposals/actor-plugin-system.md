@@ -1,246 +1,152 @@
 # posipaki: Actor Plugin System
 
-> **Status**: Draft proposal.  No code written yet.
-> **Depends on**: `actor-lifecycle-hooks.md` (hooks API must land first).
+> **Status**: In design.  Decisions being made; not yet implemented.
 
 ## Summary
 
-Build on the lifecycle hooks API to create a **plugin system** where reusable
-observability, security, and behaviour-modifying logic can be packaged as
-self-contained units and applied to actors at fork time.  Plugins are
-**inherited by child actors** automatically.
-
-A plugin is a function that receives the `ProcessCtx` and registers hooks:
+Plugins are **config transforms** — functions `(config) => config` that modify an
+actor's `ActorConfig` before `setup` runs.  They use `mergeConfigs` / `chainHook`
+to add hooks without stepping on each other.  Plugins **inherit along the actor
+tree** by default.
 
 ```ts
-const debugLogger = (): ActorPlugin => ({
-  name: 'debugLogger',
-  install(ctx) {
-    const log = logger.for(ctx.pname);
-    ctx.onMessage((msg) => log.debug(`← ${msg.type}`));
-    ctx.onError((err) => log.error('actor error', err));
-  },
-});
+const debugLogger: ActorPlugin = (cfg) =>
+  mergeConfigs(cfg, {
+    onMessage(msg, sender) {
+      console.log(`[${this.name}] ← ${msg.type} from ${sender.fromName}`);
+    },
+    onError(err) {
+      console.error(`[${this.name}] error:`, err);
+    },
+  });
 ```
 
-Usage — specify plugins when defining the actor:
+## Design decisions (2026-08-11)
+
+### 1. Plugin identity is the function name
+
+Deduplication uses `Function.name`.  Anonymous plugins (arrow functions, inline
+lambdas) get `console.warn("plugin has no name, dedup won't work")`.
+
+### 2. Default inheritance: append (was: replace)
+
+| Config | Behaviour |
+|---|---|
+| `plugins: undefined` | Inherit all parent plugins |
+| `plugins: addPlugins(p)` | `[...parentPlugins, ...mine]` — the default |
+| `plugins: replacePlugins(p)` | `[...mine]` — opt-in to replace |
+| `plugins: (parents) => [...]` | Custom transform |
+
+Two explicit helpers make intent clear:
 
 ```ts
-const MyActor = defineActor({
-  plugins: [debugLogger()],
-  handlers: { ... },
-});
+import { addPlugins, replacePlugins } from 'posipaki';
+
+// Append to parent plugins (default)
+plugins: addPlugins(myPlugin)
+
+// Replace parent plugins entirely  
+plugins: replacePlugins(myPlugin)
 ```
 
-No changes to the actor's own code.  The plugin's hooks fire alongside
-any hooks the actor defines directly.
+### 3. `addPlugins` in spawn opt
 
-## Motivation
+All three spawn entry points gain `addPlugins` in their opts, always appended
+after config resolution and deduplicated:
 
-Lifecycle hooks (`actor-lifecycle-hooks.md`) give actors fire-and-forget
-observability — but every actor that wants logging still writes a
-`hooks.onMessage(...)` block.  That's better than per-handler logging but
-still repetitive across actors.
+```ts
+// Standalone spawn
+Actor.spawn(args, { name?, toParent?, addPlugins? })
 
-Worse: when an actor forks a child, the parent's hooks don't follow.
-A `debugLogger` hook on the root `reflector` actor has no visibility into
-the `connector` child, the `tools` pool, or tool workers.
+// Child via fork (inside actor context)
+this.fork(Actor, args, { name?, addPlugins? })
+
+// Child from outside (e.g. test harness)
+Actor.spawnAsChild(ctx, args, { name?, addPlugins? })
+
+### 3b. `addPlugins` are non-overridable
+
+Unlike `plugins` on the actor config (which children can transform via
+`appendPlugins`/`replacePlugins`), plugins passed via `addPlugins` in spawn opts
+**always flow to children and cannot be removed or replaced**.  This is for
+cross-cutting concerns that must apply to the entire subtree — test collectors,
+security policies, global loggers.
+
+```ts
+// Child CANNOT strip these:
+Actor.spawn(args, { addPlugins: [auditLog, rateLimiter] })
+
+// Child CAN transform these:
+const Child = defineActor({
+  plugins: replacePlugins(myPlugin),  // strips parent plugins, keeps addPlugins
+})
+```
+
+Resolution order: `resolvePlugins(config.plugins, parentPlugins)` → `+ opts.addPlugins` → dedup.
+Children receive `parentPlugins = resolved(config.plugins, parentPlugins)` and
+`addPlugins` verbatim.
+
+### 4. `parentPlugins` folded into opts
+
+`spawnAsChild` currently has a 4th positional parameter `parentPlugins?: ActorPlugin[]`.
+This moves into `opts`:
+
+```
+// before
+spawnAsChild(ctx, args, opts?, parentPlugins?)
+
+// after
+spawnAsChild(ctx, args, opts?: { name?, addPlugins? })
+```
+
+`self.fork()` currently passes parent plugins as the 4th param.  After this
+change, `self.fork()` passes them via `addPlugins` in opts, making the
+mechanism the same for all callers.
+
+### 5. Plugin resolution order
+
+When `this.fork(ChildActor, args, opts)` runs:
+
+1. `resolvePlugins(config.plugins, parentPlugins)` — apply the actor's transform
+2. Append `opts.addPlugins` (non-overridable — children always inherit these) (if any)
+3. Deduplicate by function name (warn if anonymous)
+4. Each plugin transforms the child config via `assembleActor`
+5. `setup` runs on the fully transformed config
+
+## Motivation (unchanged)
+
+Lifecycle hooks give actors fire-and-forget observability — but every actor that
+wants logging still writes an `onMessage` block.  That's better than per-handler
+logging but still repetitive across actors.
+
+Worse: when an actor forks a child, the parent's hooks don't follow.  A
+`debugLogger` on the root `reflector` actor has no visibility into the
+`connector` child.
 
 Plugins solve both:
 
-- **Packaging**: a plugin bundles multiple hooks (onMessage + onEmit +
-  onError + onChildExit) into a single importable unit.
+- **Packaging**: a plugin bundles hooks into a single importable transform.
 - **Inheritance**: when a parent forks a child, the child automatically
   inherits the parent's plugin chain.  Observability follows the tree.
-- **Composition**: an actor uses `plugins: [debugLogger(), rbac({ tools: [...] })]`
+- **Composition**: `plugins: addPlugins(debugLogger, rbac({ tools: [...] }))`
   without either plugin knowing about the other.
 
-## Design principles
+## Future: test utilities as plugins
 
-1. **Plugins are functions from ctx to void.**  `install(ctx)` is called
-   at fork time.  The plugin registers hooks on `ctx`.  That's it.
-   No return value, no state, no lifecycle beyond `install`.
-
-2. **Plugins are composed, not subclassed.**  `plugins: [A(), B()]` —
-   each installs independently.  No inheritance chain, no `super`.
-
-3. **Plugin inheritance is opt-out.**  A child inherits its parent's
-   plugins by default.  The child can extend or replace the list.
-
-4. **Plugin spec lives in code, not config.**  The plugin function is
-   imported from TypeScript.  There's no YAML/JSON plugin declaration.
-   Persona identity files may reference plugin names for RBAC gating,
-   but the plugin implementation is always code.
-
-## API
-
-### Plugin type
+With `addPlugins` in spawn opts, test utilities like message collectors and
+root trackers can be implemented as plugins rather than separate modules with
+manual wiring:
 
 ```ts
-type ActorPlugin = {
-  /** Diagnostic name for logging / debugging. */
-  name: string;
+// Instead of:
+const { messages, resolved } = makeCollector(spec);
+const proc = await Actor.spawn(args, { toParent: collector });
+track(proc);
 
-  /** Called at fork time.  The plugin registers hooks on `ctx`. */
-  install(ctx: ProcessCtx<any, any, any, any>): void | Promise<void>;
-};
-```
-
-Note: `install` receives the **same** `ProcessCtx` that the actor receives
-in `initialState` and `onStart`.  The plugin can do anything the actor can
-do with `ctx`: register hooks (`ctx.onMessage`, …), fork children
-(`ctx.fork`), emit messages (`ctx.toParent`).
-
-### Plugin declaration
-
-`defineActor` gains a `plugins` field:
-
-```ts
-type ActorConfig<...> = {
-  // ... existing fields ...
-  plugins?: ActorPlugin[] | PluginTransform;
-};
-
-type PluginTransform = (parentPlugins: ActorPlugin[]) => ActorPlugin[];
-```
-
-Two forms:
-
-- **`plugins: [a, b]`** — use exactly these plugins.  No inheritance.
-- **`plugins: (parents) => [...parents, c]`** — inherit parent plugins,
-  add `c` to the chain.
-
-Default (when `plugins` is omitted): inherit all parent plugins unchanged.
-
-### Inheritance
-
-When `ctx.fork(fn, name)(args)` runs inside a `defineActor` child:
-
-1. The framework collects the parent's resolved plugin chain (the
-   post-install internal representation).
-2. The child's `plugins` field is evaluated:
-   - If it's an array → use that array.
-   - If it's a function → call it with the parent chain as argument.
-   - If it's undefined → use the parent chain unchanged.
-3. Each plugin's `install(childCtx)` is called on the child.
-
-This means:
-
-```ts
-// Root actor with debugLogger:
-const Reflector = defineActor({
-  plugins: [debugLogger()],
-  ...
-});
-
-// Primary actor: inherits debugLogger automatically:
-const OpenAi = defineActor({
-  // plugins: omitted → inherits [debugLogger]
-  ...
-});
-
-// Connector: inherits debugLogger + adds its own timeout guard:
-const Connector = defineActor({
-  plugins: (parents) => [...parents, timeoutGuard({ ms: 30_000 })],
-  ...
-});
-
-// ReplInput: wants NO plugins from parent:
-const ReplInput = defineActor({
-  plugins: [],   // empty array → no inheritance
-  ...
+// Plugin approach:
+const proc = await Actor.spawn(args, {
+  addPlugins: [messageCollector(spec), rootTracker()],
 });
 ```
 
-### Fork-time override
-
-When calling `this.fork()` in actor code, a third parameter allows
-per-fork plugin overrides:
-
-```ts
-// Inherit all plugins (default):
-this.fork(MyActor.fn, 'child')(args);
-
-// Replace plugins for this fork only:
-this.fork(MyActor.fn, 'child', { plugins: [debugLogger()] })(args);
-
-// Extend parent plugins for this fork:
-this.fork(MyActor.fn, 'child', { plugins: (p) => [...p, extra()] })(args);
-```
-
-This is the escape hatch for exceptional cases.  Normal usage relies on
-the child's `defineActor` declaration.
-
-## Example: debugLogger (email-agent code, not in posipaki)
-
-```ts
-import type { ActorPlugin } from 'posipaki';
-import { logger } from './log.js';
-
-export function debugLogger(opts?: { level?: 'debug' | 'info' }): ActorPlugin {
-  return {
-    name: 'debugLogger',
-    install(ctx) {
-      const log = logger.for(ctx.pname);
-
-      ctx.onMessage((msg, sender) => {
-        if (opts?.level === 'info' && msg.type === 'HEARTBEAT') return;
-        log.debug(`${ctx.pname} ← ${msg.type} from ${sender.fromName}`);
-      });
-
-      ctx.onEmit((msg) => {
-        log.debug(`${ctx.pname} → ${msg.type}`);
-      });
-
-      ctx.onChildExit((name) => {
-        log.debug(`${ctx.pname}: child ${name} exited`);
-      });
-
-      ctx.onError((err) => {
-        log.error(`${ctx.pname}: ${(err as Error).message}`);
-      });
-    },
-  };
-}
-```
-
-## Open questions
-
-- **Should `install` be async?**  `install(ctx): void | Promise<void>` is
-  async-capable.  Realistically most plugins won't need it, but it costs
-  nothing to support.
-
-- **Per-instance vs singleton plugins.**  `debugLogger()` returns a new
-  plugin object per call — fine, it's cheap.  Should we support singletons
-  like `debugLogger` (no call parens)?  Probably not worth the API surface.
-
-- **Plugin ordering.**  Plugins install in declaration order.  If plugin A
-  registers `onMessage` before plugin B, A's hook fires first.  This is
-  deterministic and predictable.  Do we need explicit ordering primitives
-  (priority numbers, before/after)?
-
-- **TypeScript declaration merging for plugin-provided `this` properties.**
-  Right now `this.log` is undefined unless the actor defines it in state.
-  Fastify-style declaration merging would let `debugLogger` ship a `.d.ts`
-  that adds `log: Logger` to the actor type.  Separate proposal — out of
-  scope for this one.
-
-## Checklist
-
-- [ ] `ActorPlugin` type: `{ name, install(ctx) }`
-- [ ] `PluginTransform`: `(parentPlugins: ActorPlugin[]) => ActorPlugin[]`
-- [ ] `defineActor` accepts `plugins` field (array or transform)
-- [ ] Plugin inheritance on `ctx.fork()`: parent chain → child
-- [ ] `plugins: []` clears inheritance
-- [ ] `plugins: (p) => [...p, extra()]` extends inheritance
-- [ ] Fork-time override: `this.fork(fn, name, { plugins: [...] })(args)`
-- [ ] Tests: plugin install called at fork time
-- [ ] Tests: plugin hooks fire in order
-- [ ] Tests: inheritance — child gets parent's plugins
-- [ ] Tests: `plugins: []` blocks inheritance
-- [ ] Tests: `plugins: (p) => [...p, extra]` extends parent chain
-- [ ] Tests: fork-time override replaces plugins for that child only
-- [ ] Migration: port one email-agent logger to debugLogger plugin
-- [ ] Update `src/index.ts` exports
-- [ ] Update README with plugin section
-- [ ] Bump minor version
+This is a goal, not part of this proposal's implementation scope.

@@ -240,3 +240,66 @@ const pool = defineActor<PoolArgs, PoolState, PoolInMessage, PoolOutMessage>({
 - [Actor tree naming](actor-tree-naming.md)
 - [Actor remote spawning](actor-remote-spawning.md)
 - [Docs index](../00-INDEX.md)
+
+## Spawn API (design in progress, 2026-08-11)
+
+Three entry points for spawning an actor.  Currently have overlapping but
+inconsistent signatures.  Target: unify opts shapes and fold positional params.
+
+### Current state
+
+```ts
+// Standalone — no parent
+Actor.spawn(args, opts?: { name?, toParent? })
+
+// Child from within actor context
+this.fork(Actor, args?, opts?: { name? })
+
+// Child from outside actor context
+Actor.spawnAsChild(ctx, args, opts?: { name? }, parentPlugins?: ActorPlugin[])
+```
+
+Issues:
+
+1. **`spawnAsChild` takes `AnyProcessCtx`** (`ProcessCtx<unknown, unknown, Message, Message>`)
+   but callers have concrete `ProcessCtx<Args, State, IM, OM>`.  Assignment fails
+   because `ProcessCtx` is invariant in its type params.  Every external call site
+   needs `ctx as any`.
+
+2. **4th positional param `parentPlugins`** on `spawnAsChild` is only used by
+   `self.fork()` internally.  External callers never pass it.  It should be in opts.
+
+3. **`this.fork()` vs `this.ctx.fork()`** — two ways to fork.  The decorated one
+   (`this.fork()`) does tree-naming + plugin propagation + `$child` tracking.
+   The raw one (`this.ctx.fork()`) is used only by the tool pool (which doesn't
+   need plugins).  Naming is confusing.
+
+### Target
+
+```ts
+// Standalone
+Actor.spawn(args, opts?: {
+  name?: string;
+  toParent?: (msg) => void;
+  appendPlugins?: ActorPlugin[];
+})
+
+// Child from within actor context — tree-named, plugin-aware, $child-tracked
+this.fork(Actor, args?, opts?: {
+  name?: string;
+  appendPlugins?: ActorPlugin[];
+})
+
+// Child from outside — thin wrapper, same opts shape
+Actor.spawnAsChild(ctx, args, opts?: {
+  name?: string;
+  appendPlugins?: ActorPlugin[];
+})
+```
+
+Changes:
+
+- `appendPlugins` added to all three opts (enables test utilities as plugins)
+- `parentPlugins` (4th positional) folded into opts → `appendPlugins`
+- `spawnAsChild` ctx type broadened to accept concrete `ProcessCtx` (fixes `as any`)
+- All three share the same opts shape (minus `toParent` which is spawn-only)
