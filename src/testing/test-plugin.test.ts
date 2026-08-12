@@ -27,7 +27,7 @@ describe("createCollector", () => {
     const actor = defineActor({
       setup: () => ({ count: 0 }),
       handlers: {
-        POKE(this: any, msg: PokeMsg) {
+        POKE(this: any, msg: any) {
           this.state.count += msg.n;
           this.emit({ type: "PONG", n: this.state.count } as PongMsg);
         },
@@ -38,8 +38,8 @@ describe("createCollector", () => {
     const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
     await new Promise(r => setTimeout(r, 10));
 
-    proc.send({ type: "POKE", n: 1 });
-    proc.send({ type: "POKE", n: 2 });
+    (proc as any).send({ type: "POKE", n: 1 });
+    (proc as any).send({ type: "POKE", n: 2 });
     await new Promise(r => setTimeout(r, 10));
 
     expect(collector.messages.length).toBe(2);
@@ -56,7 +56,7 @@ describe("createCollector", () => {
     const actor = defineActor({
       setup: () => ({}),
       handlers: {
-        POKE(this: any) {
+        POKE(this: any, _msg: any) {
           this.emit({ type: "PONG", n: 1 } as PongMsg);
         },
       },
@@ -66,7 +66,7 @@ describe("createCollector", () => {
     const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
     await new Promise(r => setTimeout(r, 10));
 
-    proc.send({ type: "POKE", n: 1 });
+    (proc as any).send({ type: "POKE", n: 1 });
     const result = await collector.resolved();
 
     expect(result.ok).toBe(true);
@@ -82,7 +82,7 @@ describe("createCollector", () => {
     const actor = defineActor({
       setup: () => ({}),
       handlers: {
-        POKE(this: any) {
+        POKE(this: any, _msg: any) {
           this.emit({ type: "PONG", n: 42, extra: "ignored" } as any);
         },
       },
@@ -92,7 +92,7 @@ describe("createCollector", () => {
     const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
     await new Promise(r => setTimeout(r, 10));
 
-    proc.send({ type: "POKE", n: 1 });
+    (proc as any).send({ type: "POKE", n: 1 });
     const result = await collector.resolved();
 
     expect(result.ok).toBe(true);
@@ -130,7 +130,7 @@ describe("createCollector", () => {
     const actor = defineActor({
       setup: () => ({ count: 0 }),
       handlers: {
-        POKE(this: any, msg: PokeMsg) {
+        POKE(this: any, msg: any) {
           this.state.count += msg.n;
           this.emit({ type: "PONG", n: this.state.count } as PongMsg);
         },
@@ -142,13 +142,13 @@ describe("createCollector", () => {
     await new Promise(r => setTimeout(r, 10));
 
     // First match: n=1
-    proc.send({ type: "POKE", n: 1 });
+    (proc as any).send({ type: "POKE", n: 1 });
     const r1 = await collector.resolved();
     expect(r1.ok).toBe(true);
     expect(collector.messages.length).toBe(1);
 
     // Second match: n=2 (next with new filter)
-    proc.send({ type: "POKE", n: 1 }); // n=2 now
+    (proc as any).send({ type: "POKE", n: 1 }); // n=2 now
     const r2 = await collector.next({ type: "PONG", n: 2 });
     expect(r2.ok).toBe(true);
     expect(collector.messages.length).toBe(2);
@@ -165,7 +165,7 @@ describe("createCollector", () => {
     const actor = defineActor({
       setup: () => ({ count: 0 }),
       handlers: {
-        POKE(this: any, msg: PokeMsg) {
+        POKE(this: any, msg: any) {
           this.state.count += msg.n;
           this.emit({ type: "PONG", n: this.state.count } as PongMsg);
         },
@@ -176,12 +176,12 @@ describe("createCollector", () => {
     const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
     await new Promise(r => setTimeout(r, 10));
 
-    proc.send({ type: "POKE", n: 1 });
+    (proc as any).send({ type: "POKE", n: 1 });
     await collector.resolved();
 
     // Reset with new filter
     collector.reset({ type: "PONG", n: 2 });
-    proc.send({ type: "POKE", n: 1 });
+    (proc as any).send({ type: "POKE", n: 1 });
 
     const r = await collector.resolved();
     expect(r.ok).toBe(true);
@@ -199,7 +199,7 @@ describe("createCollector", () => {
       name: "kid",
       setup: () => ({}),
       handlers: {
-        POKE(this: any) {
+        POKE(this: any, _msg: any) {
           this.emit({ type: "PONG", n: 99 } as PongMsg);
         },
       },
@@ -209,7 +209,7 @@ describe("createCollector", () => {
       name: "dad",
       setup() { return {}; },
       handlers: {
-        POKE(this: any) {
+        POKE(this: any, _msg: any) {
           this.emit({ type: "PONG", n: 1 } as PongMsg);
         },
       },
@@ -224,7 +224,7 @@ describe("createCollector", () => {
     await new Promise(r => setTimeout(r, 50));
 
     // Child emits PONG n=99, parent emits PONG n=1
-    proc.send({ type: "POKE", n: 1 });
+    (proc as any).send({ type: "POKE", n: 1 });
     await new Promise(r => setTimeout(r, 50));
 
     // Should only have parent's emit (n=1), not child's (n=99)
@@ -244,22 +244,23 @@ describe("createCollector", () => {
       name: "kid",
       setup: () => ({}),
       handlers: {
-        POKE(this: any) {
+        POKE(this: any, _msg: any) {
           this.emit({ type: "PONG", n: 99 } as PongMsg);
         },
       },
     });
 
+    let childRef: any = null;
     const parent = defineActor({
       name: "dad",
       setup() { return {}; },
       handlers: {
-        POKE(this: any) {
+        POKE(this: any, _msg: any) {
           this.emit({ type: "PONG", n: 1 } as PongMsg);
         },
       },
       async afterStart(this: any) {
-        await this.fork(child, {});
+        childRef = await this.fork(child, {});
       },
     });
 
@@ -267,7 +268,11 @@ describe("createCollector", () => {
     const proc = await parent.spawn({}, { addPlugins: [collector.plugin] });
     await new Promise(r => setTimeout(r, 50));
 
-    proc.send({ type: "POKE", n: 1 });
+    // Poke parent — parent emits PONG n=1
+    (proc as any).send({ type: "POKE", n: 1 });
+    await new Promise(r => setTimeout(r, 20));
+    // Poke child — child emits PONG n=99
+    (childRef as any).send({ type: "POKE", n: 1 });
     await new Promise(r => setTimeout(r, 50));
 
     // Should see both parent and child emits
@@ -298,7 +303,7 @@ describe("createRootTracker", () => {
     await tracker.stopAll();
     await proc.wait();
 
-    expect(proc.state.exited).toBe(true);
+    expect((proc.state as any).exited).toBe(true);
   });
 
   it("survives processes that already exited", async () => {
@@ -339,7 +344,7 @@ describe("createRootTracker", () => {
     await tracker.stopAll();
     await Promise.all([p1.wait(), p2.wait()]);
 
-    expect(p1.state.exited).toBe(true);
-    expect(p2.state.exited).toBe(true);
+    expect((p1.state as any).exited).toBe(true);
+    expect((p2.state as any).exited).toBe(true);
   });
 });
