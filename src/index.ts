@@ -28,7 +28,6 @@ export type {
   SupervisorState,
   SenderOrigin,
   SenderInfo,
-  Forker,
 } from "./types.js";
 
 export { defineActor, defineMessages } from "./define-actor.js";

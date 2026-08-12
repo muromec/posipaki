@@ -10,7 +10,6 @@ import type {
   AsyncProcessFn,
   Message,
   ProcessCtx,
-  Forker,
   ExitMessage,
 } from "./types.js";
 import type { ActorDecorated, ActorReflection } from "./hooks.js";
@@ -76,8 +75,8 @@ export interface ActorDefinition<
   /** Spawn this actor as a child of the calling process.
    *  `ctx` must be able to fork children that emit `OutMsg` — i.e. the
    *  parent's in-message is a supertype of this actor's out-message. */
-  spawnAsChild(
-    ctx: Forker<OutMsg>,
+  spawnAsChild<PMO extends Message>(
+    ctx: ProcessCtx<unknown, unknown, OutMsg, PMO>,
     args: Args,
     opts?: {
       name?: string;

@@ -15,7 +15,6 @@ import type {
   Message,
   ExitMessage,
   ProcessCtx,
-  Forker,
 } from "./types.js";
 import type {
   ActorDefinition,
@@ -364,7 +363,7 @@ export function defineActor<
       >;
     },
     async spawnAsChild(
-      ctx: Forker<OutMsg>,
+      ctx: ProcessCtx<unknown, unknown, OutMsg, Message>,
       args: Args,
       opts?: {
         name?: string;
