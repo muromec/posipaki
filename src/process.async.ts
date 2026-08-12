@@ -217,7 +217,7 @@ export class AsyncProcess<
     ChildArgs,
     ChildState,
     ChildIM extends Message,
-    ChildOM extends Message,
+    ChildOM extends InMessage,
   >(
     fn: ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
     pname: string,

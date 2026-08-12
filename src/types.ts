@@ -114,6 +114,23 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   toParent: ProcessMessageCb<OM>;
 } & Pick<AsyncProcess<Args, State, IM, OM, {}>, "fork" | "forkSync">;
 export type AnyProcessCtx = ProcessCtx<unknown, unknown, Message, Message>;
+
+/**
+ * Minimal structural contract for spawning a child: only the `fork` method.
+ * A concrete `ProcessCtx<Args, State, IM, OM>` assigns cleanly because `fork`
+ * is a generic method independent of the class type parameters — `sendSelf`
+ * and `toParent` (which would make `ProcessCtx` invariant) are out of scope.
+ *
+ * `IM` is the parent's in-message type: `fork` only accepts children whose
+ * `ChildOM extends IM`, so passing a `Forker<IM>` documents "children forked
+ * from here must emit messages this process accepts as input."
+ */
+export type Forker<IM extends Message = Message> = {
+  fork: <ChildArgs, ChildState, ChildIM extends Message, ChildOM extends IM>(
+    fn: AsyncProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
+    pname: string,
+  ) => (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}>;
+};
 // ---- Pipe -------------------------------------------------------------------
 
 /** State yielded by the pipe process. */

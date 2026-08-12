@@ -204,6 +204,7 @@ describe("plugin inheritance", () => {
     const Child = defineActor({
       name: "child",
       inMessages: Pin,
+      outMessages: Pin,
       plugins: (parents) => [...parents, extraPlg],
       handlers: { POKE() {} },
     });

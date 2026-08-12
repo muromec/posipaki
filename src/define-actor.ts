@@ -15,6 +15,7 @@ import type {
   Message,
   ExitMessage,
   ProcessCtx,
+  Forker,
 } from "./types.js";
 import type {
   ActorDefinition,
@@ -191,7 +192,7 @@ export function defineActor<
           A,
           S,
           IM extends Message,
-          OM extends Message,
+          OM extends InMsg,
           R extends ReflectionOptions,
         >(
           childActor: ActorDefinition<A, S, IM, OM, R>,
@@ -209,7 +210,7 @@ export function defineActor<
             ...(forkOpts?.addPlugins || []),
           ];
           child = await childActor.spawnAsChild(
-            ctx as ProcessCtx<any, any, any, any>,
+            ctx,
             childArgs!,
             {
               name: treeName,
@@ -363,7 +364,7 @@ export function defineActor<
       >;
     },
     async spawnAsChild(
-      ctx: ProcessCtx<any, any, any, any>,
+      ctx: Forker<OutMsg>,
       args: Args,
       opts?: {
         name?: string;

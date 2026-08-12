@@ -80,7 +80,7 @@ describe("setup()", () => {
     const Child = defineActor({
       name: "child",
       inMessages: defineMessages<CounterIn>(),
-      outMessages: defineMessages<CounterOut>(),
+      outMessages: defineMessages<CounterIn>(),
       setup: () => ({ count: 0 }),
       handlers: { POKE() {} },
     });
