@@ -69,7 +69,7 @@ function resolvePlugins(
   // Deduplicate by function name
   const seen = new Set<string>();
   return combined.filter((p) => {
-    const name = (p as Function).name;
+    const name = p.name;
     if (!name) {
       console.warn("posipaki: plugin has no name, dedup won't work");
       return true;
@@ -88,13 +88,13 @@ async function assembleActor<C>(config: C, plugins: ActorPlugin[], addPlugins?: 
           cur = await p(cur);
     } catch (e: unknown) {
       console.error(
-        `[assembleActor] plugin "${(p as Function).name || "?"}" failed:`,
+        `[assembleActor] plugin "${p.name || "?"}" failed:`,
         e,
       );
     }
   }
   cur.plugins = plugins;
-  if (addPlugins) (cur as any).addPlugins = addPlugins;
+  if (addPlugins) cur.addPlugins = addPlugins;
   return cur as C;
 }
 
@@ -205,7 +205,7 @@ export function defineActor<
             `child-${Object.keys(self.$child).length}`;
           const treeName = `${ctx.pname}:${childName}`;
           const childAddPlugins = [
-            ...((assembly as any).addPlugins || []) as ActorPlugin[],
+            ...(assembly.addPlugins || []),
             ...(forkOpts?.addPlugins || []),
           ];
           child = await childActor.spawnAsChild(

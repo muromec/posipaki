@@ -117,6 +117,9 @@ export type ActorConfig<
   /** Preferred process name.  Used by ctx.fork() when no explicit name is given. */
   name?: string;
   plugins?: ActorPlugin[] | PluginTransform;
+  /** Non-overridable plugins added at spawn time (spawn/fork opts).
+   *  Set by the framework during assembly, not by user config. @internal */
+  addPlugins?: ActorPlugin[];
   outMessages?: ActorMessages<OutMsg>;
   inMessages?: ActorMessages<InMsg>;
 
