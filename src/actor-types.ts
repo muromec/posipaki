@@ -120,6 +120,10 @@ export type ActorConfig<
   /** Non-overridable plugins added at spawn time (spawn/fork opts).
    *  Set by the framework during assembly, not by user config. @internal */
   addPlugins?: ActorPlugin[];
+  /** Resolved plugin chain (raw config transformed against parent plugins).
+   *  Set by the framework during assembly, replacing `plugins` (the raw form).
+   *  @internal */
+  resolvedPlugins?: ActorPlugin[];
   outMessages?: ActorMessages<OutMsg>;
   inMessages?: ActorMessages<InMsg>;
 

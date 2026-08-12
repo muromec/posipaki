@@ -9,6 +9,7 @@ import type {
   HookResult,
   ActorPlugin,
   PluginTransform,
+  AnyConfig,
 } from "./actor-types.js";
 
 // ── stop propagation sentinel ────────────────────────────────────────────
@@ -84,7 +85,7 @@ export function chainHook<TThis, TArgs extends unknown[]>(
  * @param overlay - new hook implementations to prepend
  * @returns a new config with hooks chained
  */
-export function mergeConfigs<T extends {}>(base: T, overlay: Partial<T>): T {
+export function mergeConfigs<C extends AnyConfig>(base: C, overlay: Partial<C>): C {
   const result = { ...base } as Record<string, unknown>;
   for (const key of Object.keys(overlay as Record<string, unknown>)) {
     const val = (overlay as Record<string, unknown>)[key];
@@ -110,7 +111,7 @@ export function mergeConfigs<T extends {}>(base: T, overlay: Partial<T>): T {
     "$reflectionMethods" in overlay ? overlay.$reflectionMethods : {},
   );
 
-  return result as unknown as T;
+  return result as unknown as C;
 }
 
 export type Hook<T, I extends unknown[], O> = (this: T, ...args: I) => O;

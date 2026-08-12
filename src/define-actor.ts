@@ -93,7 +93,7 @@ async function assembleActor<C>(config: C, plugins: ActorPlugin[], addPlugins?: 
       );
     }
   }
-  cur.plugins = plugins;
+  cur.resolvedPlugins = plugins;
   if (addPlugins) cur.addPlugins = addPlugins;
   return cur as C;
 }
@@ -213,7 +213,7 @@ export function defineActor<
             childArgs!,
             {
               name: treeName,
-              parentPlugins: (assembly.plugins || []) as ActorPlugin[],
+              parentPlugins: assembly.resolvedPlugins || [],
               ...(childAddPlugins.length ? { addPlugins: childAddPlugins } : {}),
             },
           );
