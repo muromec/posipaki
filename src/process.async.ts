@@ -84,7 +84,8 @@ export class AsyncProcess<
   /** Every buffered message carries sender provenance. */
   private buffer: Array<WithSender<InMessage | StopMessage>> = [];
   private nextTick: DeferredCall | null = null;
-  private children: Array<
+  /** Child processes forked from this one (any fork method). */
+  children: Array<
     AsyncProcess<unknown, unknown, Message, Message, {}>
   > = [];
   private subscribers: Array<NotifyFn> = [];
@@ -132,6 +133,7 @@ export class AsyncProcess<
       parentId: parentId ?? null,
       fork: this.fork.bind(this),
       forkSync: this.forkSync.bind(this),
+      children: this.children,
       sendSelf: (msg) => {
         this.send([msg, selfCtx]);
       },

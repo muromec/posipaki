@@ -112,7 +112,7 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   parentId: symbol | null;
   sendSelf: (msg: IM | StopMessage) => void;
   toParent: ProcessMessageCb<OM>;
-} & Pick<AsyncProcess<Args, State, IM, OM, {}>, "fork" | "forkSync">;
+} & Pick<AsyncProcess<Args, State, IM, OM, {}>, "fork" | "forkSync" | "children">;
 export type AnyProcessCtx = ProcessCtx<unknown, unknown, Message, Message>;
 
 // ---- Pipe -------------------------------------------------------------------

@@ -30,7 +30,7 @@ export function inspect(): ActorPlugin {
         ...config.$reflectionMethods,
         "inspect.getTree": function (prefix?: string) {
           const children: TreeNode[] = [];
-          for (const child of Object.values(this.$child)) {
+          for (const child of this.ctx.children) {
             const cr = child.$reflection as AR;
             if (typeof cr["inspect.getTree"] === "function") {
               const sub = cr["inspect.getTree"](prefix) as TreeNode;

@@ -288,6 +288,7 @@ export type ActorContext<
       args?: A,
       opts?: {
         name?: string;
+        addPlugins?: ActorPlugin[];
       },
     ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R & ActorReflection>>;
 
