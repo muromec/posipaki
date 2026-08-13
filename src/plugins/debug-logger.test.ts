@@ -53,6 +53,7 @@ function recordFactory(calls: DebugCall[]): (name: string) => Logger {
     info: () => {},
     warn: () => {},
     error: (_msg: string) => {},
+    msg: () => {},
   });
 }
 
@@ -196,6 +197,7 @@ describe("debugLogger", () => {
           info: () => {},
           warn: () => {},
           error: () => {},
+          msg: () => {},
         }),
       });
       await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 1 });

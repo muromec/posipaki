@@ -3,7 +3,7 @@ import { mergeConfigs } from "../hooks";
 import type { Message } from "../types";
 import { pnameMatch } from "../testing/pname-match";
 
-declare module "../hooks" {
+declare module "../index" {
   interface ActorDecorated {
     log: Logger;
   }
@@ -12,11 +12,16 @@ declare module "../hooks" {
 export interface DebugLogFn {
   (message: string, ...args: unknown[]): void;
 }
+export interface MessageLogFn {
+  (message: Message): void;
+}
+
 export interface Logger {
   debug: DebugLogFn;
   info: DebugLogFn;
   warn: DebugLogFn;
   error: DebugLogFn;
+  msg: MessageLogFn;
 }
 export type LoggerFactory = (name: string) => Logger;
 export interface DebugLoggerOpts {
@@ -35,6 +40,7 @@ function patterns(): string[] {
 function defaultFactory(name: string): Logger {
   return {
     debug: (...a: unknown[]) => console.debug(`[${name}]`, ...a),
+    msg: (msg: Message) => console.debug(`[${name}] ←`, msg),
     info: (...a: unknown[]) => console.info(`[${name}]`, ...a),
     warn: (...a: unknown[]) => console.warn(`[${name}]`, ...a),
     error: (...a: unknown[]) => console.error(`[${name}]`, ...a),
@@ -58,7 +64,7 @@ export function debugLogger(opts?: DebugLoggerOpts): ActorPlugin {
     if (pnameMatch(name, pats)) {
       result = mergeConfigs(result, {
         onMessage(msg: Message) {
-          if (!ignoreSet.has(msg.type)) log.debug(`${name} ← ${msg.type}`, msg);
+          if (!ignoreSet.has(msg.type)) log.msg(msg);
         },
         onEmit(msg: Message) {
           log.debug(`${name} → ${msg.type}`, msg);

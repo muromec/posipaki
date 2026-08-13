@@ -161,11 +161,12 @@ export function defineActor<
         OutMsg,
         Methods,
         Handlers,
-        ReflectionMethods
+        ReflectionMethods & ActorReflection
       > = {
         ctx,
         ...((assembly.methods || {}) as Methods),
         ...((assembly.$decorate || {}) as ActorDecorated),
+        reflection: {} as ReflectionMethods & ActorReflection,
         state: rawState,
         name: ctx.pname,
         id: ctx.id,
@@ -186,7 +187,6 @@ export function defineActor<
         },
         $child: {} as Record<string, AnyProcess>,
         decorators: {},
-        reflection: {} as ReflectionMethods,
         fork: async <
           A,
           S,
@@ -197,8 +197,8 @@ export function defineActor<
           childActor: ActorDefinition<A, S, IM, OM, R>,
           childArgs?: A,
           forkOpts?: { name?: string; addPlugins?: ActorPlugin[] },
-        ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R>> => {
-          let child: AsyncProcess<A, HidePrivate<S>, IM, OM, R>;
+        ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R & ActorReflection>> => {
+          let child: AsyncProcess<A, HidePrivate<S>, IM, OM, R & ActorReflection>;
           const childName =
             forkOpts?.name ??
             childActor?.name ??

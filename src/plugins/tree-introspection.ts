@@ -2,7 +2,7 @@ import { mergeConfigs } from "../hooks.js";
 import type { ActorPlugin, ActorReflection as AR } from "../hooks.js";
 import { AnyProcessCtx } from "../types.js";
 
-declare module "../hooks" {
+declare module "../index" {
   interface ActorReflection {
     "inspect.getTree": TreeReflectionMethods["inspect.getTree"];
     "inspect.getState": TreeReflectionMethods["inspect.getState"];

@@ -289,7 +289,7 @@ export type ActorContext<
       opts?: {
         name?: string;
       },
-    ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R>>;
+    ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R & ActorReflection>>;
 
     ctx: ProcessCtx<Args, HidePrivate<InternalState>, InMsg, OutMsg>;
   };
