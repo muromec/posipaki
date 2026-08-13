@@ -50,7 +50,7 @@ function defaultFactory(name: string): Logger {
 export function debugLogger(opts?: DebugLoggerOpts): ActorPlugin {
   const ignoreSet = new Set(opts?.ignore ?? []);
   const factory = opts?.factory ?? defaultFactory;
-  return async (config) => {
+  return async function debugLoggerPlugin(config) {
     const name: string = config.name ?? "actor";
     const pats = patterns();
     const log = factory(name);

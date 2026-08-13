@@ -227,19 +227,21 @@ export function defineActor<
         (self as Record<string, unknown>)[k] = v;
       }
 
-      await callHook(
-        assembly.beforeStart,
-        assembly.onError,
-        self as ActorContext<
-          Args,
-          never, // state not set yet
-          InMsg,
-          OutMsg,
-          Methods,
-          Handlers,
-          ReflectionMethods & ActorReflection
-        >,
-      );
+      if (assembly.beforeStart) {
+        await callHook(
+          assembly.beforeStart,
+          assembly.onError,
+          self as ActorContext<
+            Args,
+            never, // state not set yet
+            InMsg,
+            OutMsg,
+            Methods,
+            Handlers,
+            ReflectionMethods & ActorReflection
+          >,
+        );
+      }
 
       if (assembly.setup) {
         rawState = await assembly.setup.call(

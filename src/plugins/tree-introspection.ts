@@ -24,7 +24,7 @@ export interface TreeNode {
 }
 
 export function inspect(): ActorPlugin {
-  return async (config) => {
+  return async function inspectPlugin(config) {
     return mergeConfigs(config, {
       $reflectionMethods: {
         ...config.$reflectionMethods,
