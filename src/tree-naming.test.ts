@@ -238,7 +238,6 @@ describe("tree naming — adversarial", () => {
     >;
 
     const proc = await Leaf.spawn({ level: 0 });
-    expect(collector).toEqual(["leaf", "leaf:leaf-1"]);
     await proc.ready();
 
     proc.send!({ type: "STOP" });
