@@ -2,7 +2,7 @@
 import { describe, it, expect, vi } from "vitest";
 import { runDispatch } from "./index";
 import { spawnAsync, asyncify, runDispatchAsync } from "./index";
-import type { ProcessCtx, Message, WithSender } from "./index";
+import type { ProcessCtx, Message, WithSender, AsyncProcessFn } from "./index";
 
 import type { ExitMessage } from "./util";
 
@@ -111,9 +111,9 @@ describe("AsyncProcess", () => {
     const proc = spawnAsync(fn, "exiter", bus)(null);
     await proc.wait();
 
-    expect(bus).toHaveBeenCalledWith([
+    expect(bus).toHaveBeenCalledWith(
       expect.objectContaining({ type: "EXIT" }), expect.any(Object),
-    ]);
+    );
   });
 
   // ---- asyncify: wrap a sync generator for async spawn ----------------------
@@ -291,5 +291,139 @@ describe("AsyncProcess", () => {
 
     await proc.wait();
     expect(proc.state?.trace).toBe("START-LONG-SHORT");
+  });
+});
+
+describe("message channel & linking", () => {
+  type PokeM = { type: "POKE" };
+  type PongM = { type: "PONG"; pseq: number };
+
+  // A child that emits PONG when poked, then exits.
+  const childFn: AsyncProcessFn<null, null, PokeM, PongM> = async function* (ctx) {
+    yield null;
+    const [msg, _sender] = yield null;
+    if (msg.type === "POKE") ctx.toParent({ type: "PONG", pseq: 1 });
+  };
+
+  it("subscribe('message') receives (msg, from) on ctx.toParent", async () => {
+    const proc = spawnAsync(childFn, "emitter")(null);
+    await proc.ready();
+
+    const cb = vi.fn();
+    proc.subscribe("message", cb);
+
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    await proc.wait();
+
+    expect(cb).toHaveBeenCalledWith(
+      { type: "PONG", pseq: 1 },
+      expect.objectContaining({ fromName: "emitter" }),
+    );
+    // EXIT is also emitted through the same channel.
+    expect(cb).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "EXIT" }),
+      expect.objectContaining({ fromName: "emitter" }),
+    );
+  });
+
+  it("subscribe('state') fires a no-arg ping on state change", async () => {
+    const fn: AsyncProcessFn<null, CountStore, PokeM, Message> = async function* (ctx) {
+      const state = { count: 0 };
+      yield state;
+      const [msg, _sender] = yield null;
+      if (msg.type === "POKE") state.count++;
+    };
+    const proc = spawnAsync(fn, "statey")(null);
+    await proc.ready();
+
+    const cb = vi.fn();
+    proc.subscribe("state", cb);
+
+    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    await proc.wait();
+
+    expect(cb).toHaveBeenCalled();
+  });
+
+  it("monitor() routes messages without ownership (EXIT does not touch children)", async () => {
+    const child = spawnAsync(childFn, "child")(null);
+    await child.ready();
+
+    const parentFn: AsyncProcessFn<null, CountStore, PongM | Message, Message> = async function* (ctx) {
+      const state = { count: 0 };
+      yield state;
+      yield* runDispatchAsync<WithSender<Message | PongM>>(
+        "parent",
+        async ([msg]) => {
+          if (msg.type === "PONG") state.count++;
+        },
+        () => state.count >= 1,
+      );
+    };
+    const parent = spawnAsync(parentFn, "parent")(null);
+    await parent.ready();
+    parent.monitor(child);
+
+    child.send({ type: "POKE" }, { fromName: "t", fromId: Symbol("t") });
+    await parent.wait();
+
+    expect(parent.state?.count).toBe(1);
+    // monitored (not adopted): never registered as a child
+    expect(parent.children.length).toBe(0);
+  });
+
+  it("adopt() claims ownership: child EXIT removes it from children", async () => {
+    const child = spawnAsync(childFn, "child")(null);
+    await child.ready();
+
+    const parentFn: AsyncProcessFn<null, CountStore, PongM | Message, Message> = async function* (ctx) {
+      const state = { count: 0 };
+      yield state;
+      ctx.adopt(child);
+      yield* runDispatchAsync<WithSender<Message | PongM>>(
+        "parent",
+        async ([msg]) => {
+          if (msg.type === "PONG") state.count++;
+        },
+        () => ctx.children.length === 0 && state.count >= 1,
+      );
+    };
+    const parent = spawnAsync(parentFn, "parent")(null);
+    await parent.ready();
+    expect(parent.children.length).toBe(1);
+
+    child.send({ type: "POKE" }, { fromName: "t", fromId: Symbol("t") });
+    await parent.wait();
+
+    expect(parent.children.length).toBe(0);
+    expect(parent.state?.count).toBe(1);
+  });
+
+  it("exiting parent unsubscribes from an adopted child", async () => {
+    const child = spawnAsync(childFn, "child")(null);
+    await child.ready();
+
+    const unsubSpy = vi.fn();
+    const realSubscribe = child.subscribe.bind(child);
+    vi.spyOn(child, "subscribe").mockImplementation(((
+      channel: string,
+      cb: unknown,
+    ) => {
+      if (channel === "message") return unsubSpy;
+      return realSubscribe(channel as "state", cb as () => void);
+    }) as never);
+
+    const parentFn: AsyncProcessFn<null, null, Message, Message> = async function* (ctx) {
+      yield null;
+      ctx.adopt(child);
+      const [msg, _sender] = yield null; // wait for STOP
+    };
+    const parent = spawnAsync(parentFn, "parent")(null);
+    await parent.ready();
+
+    parent.send({ type: "STOP" });
+    await parent.wait();
+
+    expect(unsubSpy).toHaveBeenCalledTimes(1);
   });
 });

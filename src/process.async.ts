@@ -52,9 +52,10 @@ export async function* runDispatchAsync<M>(
 
 // ---- AsyncProcess -----------------------------------------------------------
 
-type ProcessMessageCb<M> = (msg: M) => void;
+/** A subscriber to this process's message channel: receives the message and
+ *  its sender separately (not a `WithSender` tuple). */
+type MessageCallback<M extends Message> = (msg: M, from: SenderInfo) => void;
 
-const noop = () => null;
 
 /** How long a parent waits for a child to stop before continuing shutdown. */
 const CHILD_STOP_TIMEOUT_MS = 1_000;
@@ -78,8 +79,8 @@ export class AsyncProcess<
   $reflection: ReflectionMethods = {} as ReflectionMethods;
   pgenerator: AsyncProcessFn<Args, State, InMessage, OutMessage>;
   pname: string;
-  /** Called for every message sent via `ctx.toParent`. Receives `WithSender<OutMessage>`. */
-  toParent: ProcessMessageCb<WithSender<OutMessage>>;
+  /** Subscribers to this process's message channel (`ctx.toParent`). */
+  private messageSubscribers: Array<MessageCallback<OutMessage>> = [];
   id: symbol;
   state: State | null;
 
@@ -95,7 +96,9 @@ export class AsyncProcess<
   orphans: Array<
     AsyncProcess<unknown, unknown, Message, Message, {}>
   > = [];
-  private subscribers: Array<NotifyFn> = [];
+  private stateSubscribers: Array<NotifyFn> = [];
+  /** Unsubscribe handles for outgoing message subscriptions (adopt/monitor). */
+  private pvtOutgoingSubscriptions: Array<() => void> = [];
   private exitWaiter: Waiter;
   private pvtIsPaused: boolean = false;
   private pvtTickInProgress: boolean = false;
@@ -106,12 +109,11 @@ export class AsyncProcess<
   constructor(
     fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
     pname: string,
-    toParent: ProcessMessageCb<WithSender<OutMessage>> | undefined,
+    toParent?: MessageCallback<OutMessage>,
   ) {
     this.pgenerator = fn;
     this.pname = pname;
-    this.toParent =
-      toParent || (noop as ProcessMessageCb<WithSender<OutMessage>>);
+    if (toParent) this.messageSubscribers.push(toParent);
     this.id = Symbol(pname);
     this.state = null;
     this.exitWaiter = makeWaiter();
@@ -142,11 +144,13 @@ export class AsyncProcess<
       forkSync: this.forkSync.bind(this),
       children: this.children,
       orphans: this.orphans,
+      adopt: this.adopt.bind(this),
+      monitor: this.monitor.bind(this),
       sendSelf: (msg) => {
         this.send([msg, selfCtx]);
       },
       toParent: (msg) => {
-        this.toParent([msg, selfCtx] as WithSender<OutMessage>);
+        this.messageSubscribers.forEach((cb) => cb(msg as OutMessage, selfCtx));
       },
     };
 
@@ -187,7 +191,7 @@ export class AsyncProcess<
       const orphans: Array<AnyProcess> = [...this.orphans];
       const stopPromises = this.children.map(async (child) => {
         try {
-          const ret = await withTimeout(child.wait(), CHILD_STOP_TIMEOUT_MS, 'childStop');
+          await withTimeout(child.wait(), CHILD_STOP_TIMEOUT_MS, 'childStop');
         } catch (e) {
           if ((e as Error)?.message !== 'Timeout:childStop') {
             throw e;
@@ -204,6 +208,10 @@ export class AsyncProcess<
       // Hand surviving children and inherited orphans up to the parent for adoption (see ctx-orphans proposal).
       // In-process only.
       ctx.toParent({ type: "EXIT", orphans });
+      // Unsubscribe from children/monitored processes so a dead parent
+      // doesn't keep receiving their messages.
+      for (const unsub of this.pvtOutgoingSubscriptions) unsub();
+      this.pvtOutgoingSubscriptions = [];
       if (ctx.afterExit) await ctx.afterExit();
     }
   }
@@ -223,22 +231,8 @@ export class AsyncProcess<
         ChildIM,
         ChildOM,
         {}
-      >(
-        fn,
-        pname,
-        this.fromChild.bind(this) as unknown as ProcessMessageCb<
-          WithSender<ChildOM>
-        >,
-      );
-      this.children.push(
-        child as unknown as AsyncProcess<
-          unknown,
-          unknown,
-          Message,
-          Message,
-          {}
-        >,
-      );
+      >(fn, pname);
+      this.adopt(child);
       child.start(args, this.pname, this.id);
       return child;
     };
@@ -356,20 +350,37 @@ export class AsyncProcess<
   // ---- subscribers ----------------------------------------------------------
 
   notify(): void {
-    this.subscribers.forEach((f) => f());
+    this.stateSubscribers.forEach((f) => f());
   }
 
   get isListenedTo(): boolean {
-    return this.subscribers.length > 0;
+    return this.stateSubscribers.length > 0;
   }
 
-  subscribe(f: NotifyFn): () => void {
-    this.subscribers.push(f);
-    return () => {
-      const idx = this.subscribers.indexOf(f);
-      if (idx < 0) return;
-      this.subscribers.splice(idx, 1);
-    };
+  subscribe(channel: "message", cb: MessageCallback<OutMessage>): () => void;
+  subscribe(channel: "state", cb: NotifyFn): () => void;
+  /** @deprecated Use `subscribe("state", cb)`. */
+  subscribe(cb: NotifyFn): () => void;
+  subscribe(
+    channelOrCb: "message" | "state" | NotifyFn,
+    cb?: MessageCallback<OutMessage> | NotifyFn,
+  ): () => void {
+    if (typeof channelOrCb === "function") {
+      return this.subscribe("state", channelOrCb);
+    }
+    if (channelOrCb === "message") {
+      const fn = cb as MessageCallback<OutMessage>;
+      this.messageSubscribers.push(fn);
+      return () => this.pvtUnsubscribe(this.messageSubscribers, fn);
+    }
+    const fn = cb as NotifyFn;
+    this.stateSubscribers.push(fn);
+    return () => this.pvtUnsubscribe(this.stateSubscribers, fn);
+  }
+
+  private pvtUnsubscribe<T>(list: Array<T>, fn: T): void {
+    const idx = list.indexOf(fn);
+    if (idx >= 0) list.splice(idx, 1);
   }
 
   // ---- pause / resume -------------------------------------------------------
@@ -410,19 +421,50 @@ export class AsyncProcess<
 
   // ---- child messages -------------------------------------------------------
 
-  /** Relays a child's message to this process. The message already carries
-   *  sender provenance (stamped by the child's `ctx.toParent` wrapper). */
-  private fromChild(msgAndSender: WithSender<InMessage | StopMessage>): void {
-    const [msg, sender] = msgAndSender;
+  /**
+   * Tap another process's message channel: every message it emits is fed
+   * into this process's incoming queue.  No ownership — the sender's EXIT
+   * does not touch `children`/`orphans`.
+   */
+  monitor<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends Message>(
+    child: AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}>,
+  ): () => void {
+    const unsub = child.subscribe("message", (msg, from) => {
+      this.send([msg, from] as WithSender<InMessage | StopMessage>);
+    });
+    this.pvtOutgoingSubscriptions.push(unsub);
+    return unsub;
+  }
+
+  /**
+   * Claim another process as a child: its messages are routed here and its
+   * EXIT removes it from `children` (collecting its orphans).  Generalizes
+   * what `fork` does — used for both spawning and orphan adoption.
+   */
+  adopt<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends Message>(
+    child: AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}>,
+  ): () => void {
+    this.children.push(child as unknown as AnyProcess);
+    const unsub = child.subscribe("message", (msg, from) => {
+      this.pvtChildMessage(msg, from);
+    });
+    this.pvtOutgoingSubscriptions.push(unsub);
+    return unsub;
+  }
+
+  /** Handles a child's emitted message: EXIT cleanup + forward to the queue. */
+  private pvtChildMessage(msg: Message, sender: SenderInfo): void {
     if (msg.type === "EXIT") {
-      // sender.fromId === child's id (set by child's ctx.toParent wrapper)
-      this.children = this.children.filter((p) => p.id !== sender.fromId);
+      // sender.fromId === child's id (stamped by the child's ctx.toParent)
+      // Mutate in place so ctx.children (a live reference) stays consistent.
+      const idx = this.children.findIndex((p) => p.id === sender.fromId);
+      if (idx >= 0) this.children.splice(idx, 1);
       const orphans = (msg as ExitMessage).orphans;
       if (orphans && orphans.length > 0) {
         this.orphans.push(...orphans);
       }
     }
-    this.send(msgAndSender);
+    this.send([msg, sender] as WithSender<InMessage | StopMessage>);
   }
 }
 export type AnyProcess = AsyncProcess<unknown, unknown, Message, Message, {}>;
@@ -440,7 +482,7 @@ export function spawnAsync<
 >(
   fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
   pname: string,
-  toParent?: ProcessMessageCb<WithSender<OutMessage>>,
+  toParent?: MessageCallback<OutMessage>,
 ): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage, {}> {
   return (args: Args) => {
     const proc = new AsyncProcess<Args, State, InMessage, OutMessage, {}>(

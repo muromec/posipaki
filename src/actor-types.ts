@@ -6,7 +6,6 @@
 
 import type {
   SenderInfo,
-  WithSender,
   AsyncProcessFn,
   Message,
   ProcessCtx,
@@ -60,7 +59,7 @@ export interface ActorDefinition<
     args: Args,
     opts?: {
       name?: string;
-      toParent?: (msg: WithSender<OutMsg>) => void;
+      toParent?: (msg: OutMsg, from: SenderInfo) => void;
       addPlugins?: ActorPlugin[];
     },
   ): Promise<

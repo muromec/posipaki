@@ -199,7 +199,7 @@ describe.each([
     const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
       getFn(),
       "counter",
-      ([msg]) => {
+      (msg) => {
         messages.push(msg);
       },
     )({ max: 1 });
@@ -231,7 +231,7 @@ describe('spawn with opts', () => {
 
     const received: any[] = [];
     const proc = await actor.spawn({}, {
-      toParent: ([msg]: [any, any]) => { received.push(msg); },
+      toParent: (msg) => { received.push(msg); },
     });
 
     await proc.ready();

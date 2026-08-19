@@ -291,7 +291,7 @@ describe("hooks.onStart / beforeEnd", () => {
     });
 
     const proc = await Actor.spawn({}, {
-      toParent: ([msg]: [any, any]) => {
+      toParent: (msg) => {
         if (msg.type === "EXIT") order.push("EXIT");
       },
     });
@@ -500,7 +500,7 @@ describe("cascading stop", () => {
     });
 
     const proc = await Parent.spawn({}, {
-      toParent: ([msg]: [Message]) => {
+      toParent: (msg) => {
         if (msg.type === "EXIT") order.push("parent:EXIT");
       },
     });

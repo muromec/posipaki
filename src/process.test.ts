@@ -87,8 +87,8 @@ describe("Process", () => {
     await proc.ready();
     proc.send({ type: "TRIGGER" } as Message, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "PONG", pseq: 0 }), expect.any(Object)]);
-    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "EXIT" }), expect.any(Object)]);
+    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: 0 }), expect.any(Object));
+    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }), expect.any(Object));
   });
 
   type CountStore = { seq: number };
@@ -116,11 +116,11 @@ describe("Process", () => {
     for (let i = 0; i < 5; i++) {
       proc.send({ type: "PING", pseq: i }, { fromName: "test", fromId: Symbol("test") });
       await proc.tick();
-      expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "PONG", pseq: i }), expect.any(Object)]);
+      expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: i }), expect.any(Object));
     }
-    expect(bus).toHaveBeenCalledWith([
+    expect(bus).toHaveBeenCalledWith(
       expect.objectContaining({ type: "EXIT" }), expect.any(Object),
-    ]);
+    );
     expect(bus).toHaveBeenCalledTimes(6);
   });
 
@@ -134,12 +134,12 @@ describe("Process", () => {
     await proc.ready();
     proc.send({ type: "PING", pseq: 0 }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith([expect.objectContaining({ type: "PONG", pseq: 0 }), expect.any(Object)]);
+    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: 0 }), expect.any(Object));
     proc.send({ type: "PING", pseq: 2 }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith([
+    expect(bus).toHaveBeenCalledWith(
       expect.objectContaining({ type: "EXIT" }), expect.any(Object),
-    ]);
+    );
     expect(bus).toHaveBeenCalledTimes(2);
   });
 

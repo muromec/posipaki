@@ -118,7 +118,7 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   /** Invoked by the runtime after the process emits EXIT to its parent.
    *  Best-effort teardown that must not delay the exit signal. */
   afterExit?: () => Promise<void> | void;
-} & Pick<AsyncProcess<Args, State, IM, OM, {}>, "fork" | "forkSync" | "children" | "orphans">;
+} & Pick<AsyncProcess<Args, State, IM, OM, {}>, "fork" | "forkSync" | "children" | "orphans" | "adopt" | "monitor">;
 export type AnyProcessCtx = ProcessCtx<unknown, unknown, Message, Message>;
 
 // ---- Pipe -------------------------------------------------------------------

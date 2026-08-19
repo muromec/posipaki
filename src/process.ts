@@ -1,6 +1,6 @@
 import { AsyncProcess } from "./process.async.js";
 import { asyncify } from "./adapters.js";
-import type { Message, WithSender, ExitMessage, ProcessFn } from "./types.js";
+import type { Message, SenderInfo, ExitMessage, ProcessFn } from "./types.js";
 
 export type { Message, ProcessFn, ProcessCtx } from "./types.js";
 export { runDispatch } from "./util.js";
@@ -14,7 +14,7 @@ export function spawn<
 >(
   fn: ProcessFn<A, S, IM, OM>,
   pname: string,
-  tp?: (m: WithSender<OM>) => void,
+  tp?: (m: OM, from: SenderInfo) => void,
 ): (a: A) => Process<A, S, IM, OM> {
   return (a: A) => new Process(fn, pname, tp).start(a);
 }
@@ -30,7 +30,7 @@ class Process<
   constructor(
     fn: ProcessFn<A, S, IM, OM>,
     pname: string,
-    tp?: (m: WithSender<OM>) => void,
+    tp?: (m: OM, from: SenderInfo) => void,
   ) {
     super(asyncify(fn), pname, tp);
   }

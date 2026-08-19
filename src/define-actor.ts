@@ -11,6 +11,7 @@ import {
 } from "./process.async.js";
 import type {
   WithSender,
+  SenderInfo,
   AsyncProcessFn,
   Message,
   ExitMessage,
@@ -354,7 +355,7 @@ export function defineActor<
       args: Args,
       opts?: {
         name?: string;
-        toParent?: (msg: WithSender<OutMsg>) => void;
+        toParent?: (msg: OutMsg, from: SenderInfo) => void;
         addPlugins?: ActorPlugin[];
       },
     ): Promise<

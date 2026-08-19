@@ -63,8 +63,7 @@ export async function runChild<
     return yield* fn(ctx, args);
   };
 
-  const proc = spawnAsync(wrappedFn, "remote", (msgWithSender) => {
-    const [msg, sender] = msgWithSender;
+  const proc = spawnAsync(wrappedFn, "remote", (msg, sender) => {
     transport
       .send(
         encode("$msg", {
