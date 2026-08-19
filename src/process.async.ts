@@ -1,4 +1,4 @@
-import { defer, makeWaiter, debugLog, sleep } from "./util.js";
+import { defer, makeWaiter, debugLog, withTimeout } from "./util.js";
 import type { DeferredCall, Waiter } from "./util.js";
 import type {
   Message,
@@ -133,7 +133,7 @@ export class AsyncProcess<
   start(arg0: Args, parentName?: string | null, parentId?: symbol | null) {
     const selfCtx: SenderInfo = { fromName: this.pname, fromId: this.id };
 
-    const ctx: ProcessCtx<Args, State, InMessage, OutMessage> = {
+    const ctx: ProcessCtx<Args, State, InMessage, OutMessage | ExitMessage> = {
       pname: this.pname,
       id: this.id,
       parentName: parentName ?? null,
@@ -175,7 +175,7 @@ export class AsyncProcess<
 
   /** Wrap the user's generator so EXIT/STOP logic fires on completion. */
   private async *pvtWatchExit(
-    ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
+    ctx: ProcessCtx<Args, State, InMessage, OutMessage | ExitMessage>,
     arg0: Args,
   ): AsyncProcessGenerator<State, InMessage> {
     try {
@@ -183,31 +183,27 @@ export class AsyncProcess<
     } finally {
       // Cascade: STOP every child and await its generator stopping.
       this.toAllChildren({ type: "STOP" });
-      const children = [...this.children];
-      const survivors: Array<
-        AsyncProcess<unknown, unknown, Message, Message, {}>
-      > = [];
-      if (children.length > 0) {
-        await Promise.all(
-          children.map(async (child) => {
-            const stopped = await Promise.race([
-              child.wait().then(() => true),
-              sleep(CHILD_STOP_TIMEOUT_MS).then(() => false),
-            ]);
-            if (!stopped) {
-              console.warn(
-                `posipaki: child "${child.pname}" did not stop within ${CHILD_STOP_TIMEOUT_MS}ms; continuing shutdown`,
-              );
-              survivors.push(child);
-            }
-          }),
-        );
-      }
-      // Hand surviving children and inherited orphans up to the parent for
-      // adoption (see ctx-orphans proposal). In-process only.
-      const orphans = [...survivors, ...this.orphans];
-      // ctx.toParent stamps sender info into a WithSender tuple
-      ctx.toParent({ type: "EXIT", orphans } as unknown as OutMessage);
+
+      const orphans: Array<AnyProcess> = [...this.orphans];
+      const stopPromises = this.children.map(async (child) => {
+        try {
+          const ret = await withTimeout(child.wait(), CHILD_STOP_TIMEOUT_MS, 'childStop');
+        } catch (e) {
+          if ((e as Error)?.message !== 'Timeout:childStop') {
+            throw e;
+          }
+
+          orphans.push(child);
+          console.warn(
+            `posipaki: child "${child.pname}" did not stop within ${CHILD_STOP_TIMEOUT_MS}ms; continuing shutdown`,
+          );
+        }
+      });
+
+      await Promise.all(stopPromises);
+      // Hand surviving children and inherited orphans up to the parent for adoption (see ctx-orphans proposal).
+      // In-process only.
+      ctx.toParent({ type: "EXIT", orphans });
       if (ctx.afterExit) await ctx.afterExit();
     }
   }

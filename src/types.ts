@@ -3,7 +3,7 @@
  *
  * @module
  */
-import type { AsyncProcess } from "./process.async.js";
+import type { AsyncProcess, AnyProcess } from "./process.async.js";
 
 // ---- Message -----------------------------------------------------------------
 
@@ -39,7 +39,7 @@ export type ExitMessage = {
   type: "EXIT";
   /** Still-running children of the exiting process, handed up to the parent
    *  for adoption (in-process only). */
-  orphans?: Array<AsyncProcess<unknown, unknown, Message, Message, {}>>;
+  orphans?: Array<AnyProcess>;
 };
 
 export type StopMessage = {

@@ -4,6 +4,9 @@
 const realVitest = await import('vitest');
 // ── vitest shim ────────────────────────────────────────────────────────────
 Object.assign(realVitest.vi, {
+    mocked(fn) {
+      return fn;
+    },
     stubGlobal(name: string, value: unknown) {
       (globalThis as Record<string, unknown>)[name] = value;
     },

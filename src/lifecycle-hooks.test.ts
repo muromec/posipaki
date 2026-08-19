@@ -6,7 +6,24 @@
 import { describe, it, expect, vi } from "vitest";
 import { defineActor, defineMessages } from "./define-actor.js";
 import { stopPropagation, mergeConfigs, type HookResult } from "./hooks.js";
+import { withTimeout } from './util.js';
 import type { Message, SenderInfo } from "./types.js";
+
+vi.mock('./util.js', async (importOriginal) => {
+  let actual = {}
+  if (importOriginal) {
+    actual = await importOriginal();
+  }
+  const withTimeoutMock = vi.fn().mockImplementation((p) => p);
+  return { ...actual, withTimeout: withTimeoutMock };
+});
+
+function withTimeoutMiss() {
+  vi.mocked(withTimeout).mockRejectedValueOnce(new Error('Timeout:childStop'));
+}
+function withTimeoutHit() {
+  vi.mocked(withTimeout).mockImplementation((p) => p);
+}
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
@@ -464,6 +481,7 @@ describe("hooks — adversarial", () => {
 
 describe("cascading stop", () => {
   it("parent awaits children before emitting EXIT", async () => {
+    withTimeoutHit();
     const order: string[] = [];
     const Child = defineActor({
       name: "child",
@@ -482,7 +500,7 @@ describe("cascading stop", () => {
     });
 
     const proc = await Parent.spawn({}, {
-      toParent: ([msg]: [any, any]) => {
+      toParent: ([msg]: [Message]) => {
         if (msg.type === "EXIT") order.push("parent:EXIT");
       },
     });
@@ -494,6 +512,8 @@ describe("cascading stop", () => {
   });
 
   it("warns when a child refuses to stop", async () => {
+    withTimeoutMiss();
+
     const Child = defineActor({
       name: "child",
       onStopRequested() {
@@ -523,8 +543,13 @@ describe("cascading stop", () => {
       warn.mockRestore();
     }
   });
+});
+
+describe("orphans", () => {
 
   it("collects a surviving grandchild into the parent's orphans", async () => {
+    withTimeoutMiss();
+
     const Grandchild = defineActor({
       name: "grandchild",
       onStopRequested() {
@@ -559,7 +584,45 @@ describe("cascading stop", () => {
     // completion rather than sleeping.
     const child = proc.children[0];
     await child.wait();
-    expect(proc.orphans.map((o) => o.pname)).toContain("parent:child:grandchild");
+    expect(proc.orphans.map((o) => o.pname)).toEqual(["parent:child:grandchild"]);
+    proc.send({ type: "STOP" });
+    await proc.wait();
+  });
+
+  it("keeps orphan list empty if all children exit on time", async () => {
+    withTimeoutHit();
+    const Grandchild = defineActor({
+      name: "grandchild",
+      handlers: {},
+    });
+    const Child = defineActor({
+      name: "child",
+      async setup() {
+        await this.fork(Grandchild, undefined, {});
+        return {};
+      },
+      afterStart() {
+        this.exit();
+      },
+      handlers: {},
+    });
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.ready();
+    // Child self-exits; its grandchild refuses to stop (1s cascade timeout), so
+    // Parent collects the survivor into its orphans. Await the child's own
+    // completion rather than sleeping.
+    const child = proc.children[0];
+    await child.wait();
+    expect(proc.orphans.map((o) => o.pname)).toEqual([]);
     proc.send({ type: "STOP" });
     await proc.wait();
   });
