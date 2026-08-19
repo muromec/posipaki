@@ -25,6 +25,11 @@ function withTimeoutHit() {
   vi.mocked(withTimeout).mockImplementation((p) => p);
 }
 
+/** Let a process's dispatch loop process a message (EXIT) already in its inbox. */
+async function settle() {
+  await new Promise((r) => setTimeout(r, 20));
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────
 
 interface PokeMsg extends Message {
@@ -623,6 +628,101 @@ describe("orphans", () => {
     const child = proc.children[0];
     await child.wait();
     expect(proc.orphans.map((o) => o.pname)).toEqual([]);
+    proc.send({ type: "STOP" });
+    await proc.wait();
+  });
+});
+
+describe("orphan policy (onOrphan)", () => {
+  const Grandchild = defineActor({
+    name: "grandchild",
+    onStopRequested() {
+      // never agree to stop — refuse
+    },
+    handlers: {},
+  });
+  const Child = defineActor({
+    name: "child",
+    async setup() {
+      await this.fork(Grandchild, undefined, {});
+      return {};
+    },
+    afterStart() {
+      this.exit();
+    },
+    handlers: {},
+  });
+
+  it("adopts an orphan via onOrphan 'adopt'", async () => {
+    withTimeoutMiss(); // child's cascade: grandchild refuses → orphaned
+    withTimeoutMiss(); // parent's cascade: adopted grandchild refuses → orphaned again
+    const Parent = defineActor({
+      name: "parent",
+      onOrphan() {
+        return "adopt";
+      },
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.ready();
+    const child = proc.children[0];
+    await child.wait();
+    await settle();
+
+    expect(proc.orphans.length).toBe(0);
+    expect(proc.children.map((c) => c.pname)).toContain("parent:child:grandchild");
+    proc.send({ type: "STOP" });
+    await proc.wait();
+  });
+
+  it("force-stops an orphan via onOrphan 'force-stop'", async () => {
+    withTimeoutMiss();
+    const Parent = defineActor({
+      name: "parent",
+      onOrphan() {
+        return "force-stop";
+      },
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.ready();
+    const child = proc.children[0];
+    await child.wait();
+    await settle();
+
+    expect(proc.orphans.length).toBe(0);
+    proc.send({ type: "STOP" });
+    await proc.wait();
+  });
+
+  it("leaves an orphan by default (no onOrphan)", async () => {
+    withTimeoutMiss();
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.ready();
+    const child = proc.children[0];
+    await child.wait();
+    await settle();
+
+    expect(proc.orphans.map((o) => o.pname)).toEqual(["parent:child:grandchild"]);
     proc.send({ type: "STOP" });
     await proc.wait();
   });

@@ -1,6 +1,6 @@
 # posipaki: Orphan policy (actor-level tools)
 
-> **Status**: Idea. Design revised (2026-08-19) — `adopt` is a buffered, lossless handoff.
+> **Status**: Actor layer implemented (2026-08-19). The buffered handoff (lossless `adopt`) is still TODO — `adopt` currently uses the simple `ctx.adopt` subscribe.
 
 ## Summary
 
@@ -125,3 +125,11 @@ equally be a mode switch inside `pvtChildMessage` (a flag: `send` vs
   `wait()`/`ready()`).
 - **Remote.** EXIT is in-process only; remote orphans cannot carry buffers.
   Accepted (same as `ctx-orphans.md`).
+
+## Implementation status
+
+- ✅ `onOrphan(orphan)` hook on `defineActor` (returns `'adopt' | 'force-stop' | 'leave'`).
+- ✅ `force-stop` — `orphan.forceStop({ cascade: true })` + imperative removal from `ctx.orphans`.
+- ✅ `leave` (default) — orphan stays in `ctx.orphans`, propagates up on exit.
+- ✅ `adopt` (lossy) — `ctx.adopt(orphan)` subscribes and promotes to `children`.
+- ⏳ `adopt` (lossless) — the collector + back-feed + `pending` buffer handoff described above is not yet implemented.

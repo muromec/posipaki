@@ -291,6 +291,30 @@ export function defineActor<
               childName,
               msg as ExitMessage,
             );
+            // Orphan policy: a child that exits may leave still-running
+            // grandchildren behind (see ctx-orphans / orphan-policy).
+            const orphans = (msg as ExitMessage).orphans;
+            if (orphans && orphans.length > 0) {
+              for (const orphan of orphans) {
+                const decision = await callHook(
+                  assembly.onOrphan,
+                  assembly.onError,
+                  self,
+                  orphan,
+                );
+                if (decision === "adopt") {
+                  ctx.adopt(orphan);
+                  const idx = ctx.orphans.indexOf(orphan);
+                  if (idx >= 0) ctx.orphans.splice(idx, 1);
+                  self.$child[orphan.pname] = orphan;
+                } else if (decision === "force-stop") {
+                  orphan.forceStop({ cascade: true });
+                  const idx = ctx.orphans.indexOf(orphan);
+                  if (idx >= 0) ctx.orphans.splice(idx, 1);
+                }
+                // 'leave' (or undefined) → do nothing; it propagates on exit.
+              }
+            }
           }
           let hookStopped = false;
           if (

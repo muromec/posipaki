@@ -174,6 +174,13 @@ export type ActorConfig<
     reason: ExitMessage,
   ) => HookResult | Promise<HookResult>;
 
+  /** Fires for each orphan a child leaves behind (in its EXIT).  Return the
+   *  policy: `'adopt'` (promote to a child), `'force-stop'` (hard-kill), or
+   *  `'leave'` (default — propagate up on my exit). */
+  onOrphan?: (
+    orphan: AnyProcess,
+  ) => OrphanDecision | void | Promise<OrphanDecision | void>;
+
   handlers: Handlers &
     ThisType<
       ActorContext<
@@ -236,6 +243,9 @@ export const stopPropagation = (): typeof STOP_SENTINEL => STOP_SENTINEL;
 
 /** Return type of onMessage hooks: void (continue) or sentinel (stop). */
 export type HookResult = void | typeof STOP_SENTINEL;
+
+/** Decision returned by `onOrphan` for how to handle an inherited orphan. */
+export type OrphanDecision = 'adopt' | 'force-stop' | 'leave';
 // ── plugin types ─────────────────────────────────────────────────────────
 
 /** A reusable unit of actor behaviour. */
