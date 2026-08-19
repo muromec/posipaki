@@ -554,9 +554,11 @@ describe("cascading stop", () => {
 
     const proc = await Parent.spawn({});
     await proc.ready();
-    // Child exits; its grandchild refuses to stop (1s cascade timeout), so
-    // Parent collects the survivor into its orphans.
-    await new Promise((r) => setTimeout(r, 1500));
+    // Child self-exits; its grandchild refuses to stop (1s cascade timeout), so
+    // Parent collects the survivor into its orphans. Await the child's own
+    // completion rather than sleeping.
+    const child = proc.children[0];
+    await child.wait();
     expect(proc.orphans.map((o) => o.pname)).toContain("parent:child:grandchild");
     proc.send({ type: "STOP" });
     await proc.wait();
