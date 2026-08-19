@@ -36,15 +36,34 @@ buffering at the boundary; for children that stop cleanly, the loss is accepted.
 
 ## Design
 
-### Policy tools
+### Policy tools (hook-shaped)
+
+The actor declares an `onOrphan(orphan)` hook. When the runtime collects an
+orphan, it calls the hook and applies the returned decision:
+
+```ts
+onOrphan(orphan) {
+  return 'adopt' | 'force-stop' | 'leave';
+}
+```
 
 - **adopt** — take ownership via the buffered handoff below. The orphan is
   promoted from `orphans` to `children`, and its in-flight messages are
   preserved.
-- **force-stop** — STOP the orphan (and reap) now; drop its pending buffer.
+- **force-stop** — hard-kill the orphan (`AsyncProcess.forceStop()` — see below)
+  and remove it from `ctx.orphans` imperatively; drop its pending buffer. The
+  same applies to own children, which can also be force-stopped.
 - **leave** — do not adopt; remove the collector callback and drop the pending
   buffer; the orphan propagates up on my exit.
 - The default, when the actor defines nothing, is **leave**.
+
+#### force-stop is a hard kill, not a STOP message
+
+`force-stop` is *not* `send(STOP)`. STOP is graceful — the generator cooperates
+and emits EXIT. `force-stop` terminates the process immediately: no generator
+`finally`, no EXIT, nothing left to observe. It is a method on `AsyncProcess`
+(currently missing), and the caller removes the process from its `children` /
+`orphans` list imperatively, because there is no EXIT to do that cleanup.
 
 ### adopt — the buffered handoff
 
@@ -103,8 +122,9 @@ equally be a mode switch inside `pvtChildMessage` (a flag: `send` vs
 
 - **Buffer transport shape.** `pending` as a `Map<symbol, WithSender<Message>[]>`
   or a parallel `Array<[AnyProcess, WithSender<Message>[]]>`?
-- **Shape.** Tools as methods (`this.adopt(orphan)`) or a lifecycle hook
-  (`onOrphan`)? And does `force-stop` remove the orphan from `ctx.orphans`, or
-  only STOP it?
+- **force-stop primitive.** `AsyncProcess.forceStop()` does not exist yet; it
+  must hard-terminate (abandon the generator without running its `finally`, clear
+  buffer/subscribers, resolve `wait()`). Confirm that's the desired semantic vs
+  `generator.return()` (which *does* run the `finally`).
 - **Remote.** EXIT is in-process only; remote orphans cannot carry buffers.
   Accepted (same as `ctx-orphans.md`).
