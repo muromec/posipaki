@@ -524,30 +524,4 @@ describe("cascading stop", () => {
     }
   });
 
-  it("passes shuttingDown to onChildExit", async () => {
-    const seen: Array<{ name: string; shuttingDown: boolean }> = [];
-    const Child = defineActor({
-      name: "child",
-      afterStart() {
-        this.exit();
-      },
-      handlers: {},
-    });
-    const Parent = defineActor({
-      name: "parent",
-      async setup() {
-        await this.fork(Child, undefined, {});
-        return { seen };
-      },
-      onChildExit(name, _reason, shuttingDown) {
-        this.state.seen.push({ name, shuttingDown });
-        this.exit("done");
-      },
-      handlers: {},
-    });
-
-    const proc = await Parent.spawn({});
-    await proc.wait();
-    expect(proc.state!.seen).toEqual([{ name: "parent:child", shuttingDown: false }]);
-  });
 });

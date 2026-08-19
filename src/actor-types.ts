@@ -173,7 +173,6 @@ export type ActorConfig<
   onChildExit?: (
     name: string,
     reason: ExitMessage,
-    shuttingDown: boolean,
   ) => HookResult | Promise<HookResult>;
 
   handlers: Handlers &
@@ -276,7 +275,6 @@ export type ActorContext<
     > &
       ReflectionMethods;
     exit: (reason?: unknown) => void;
-    shuttingDown: boolean;
 
     $child: Record<string, AnyProcess>;
 

@@ -1,4 +1,4 @@
-# posipaki: Cascading stop with awaited children, timeout, and a shutdown flag
+# posipaki: Cascading stop with awaited children and timeout
 
 > **Status**: Implemented.
 
@@ -8,14 +8,11 @@ Make actor shutdown cascade to children *and wait for them*. When an actor
 stops — it received STOP and `onStopRequested` confirmed via `agreeToStop()`,
 or it called `this.exit()` — the framework:
 
-1. sets an internal `shuttingDown` flag,
-2. sends STOP to every child,
-3. **awaits** each child's generator stopping (`proc.wait()`), bounded by a
+1. sends STOP to every child,
+2. **awaits** each child's generator stopping (`proc.wait()`), bounded by a
    timeout constant,
-4. warns (naming the child) for any child that does not stop in time,
-5. passes the flag to `onChildExit` so the actor can distinguish a
-   shutdown-induced child exit from a spontaneous one,
-6. only then emits EXIT to the parent.
+3. warns (naming the child) for any child that does not stop in time,
+4. only then emits EXIT to the parent.
 
 This is implemented at the actor level (`defineActor` + the `AsyncProcess`
 lifecycle), not in hand-rolled dispatcher loops.
@@ -48,27 +45,6 @@ children serializes teardown-before-respawn and removes that class of bug.
 
 ## Design
 
-### Shutdown flag
-
-`defineActor`'s runtime already closes over `done` / `exitReason`. Add a
-boolean `shuttingDown` (initially `false`), set to `true` the moment the actor
-enters the stopping phase (STOP + agree, or `exit()`). It is exposed on the
-actor context as `this.shuttingDown` and passed to `onChildExit`.
-
-### `onChildExit` signature
-
-```ts
-onChildExit?: (
-  name: string,
-  reason: ExitMessage,
-  shuttingDown: boolean,
-) => HookResult | Promise<HookResult>;
-```
-
-The third argument lets an actor that reacts to a child exit during its own
-shutdown (e.g. "my child died — but I'm stopping anyway, so don't respawn it")
-distinguish that case from a spontaneous child death.
-
 ### Awaiting children: `proc.wait()`, not EXIT
 
 The framework does **not** wait for an `EXIT` message from a child. It awaits
@@ -92,14 +68,14 @@ Instead of `done = true` ending the dispatch loop immediately, STOP becomes a
 two-step handshake:
 
 1. `onStopRequested` runs (or the default path fires). `agreeToStop()` (or
-   `exit()`) sets `shuttingDown = true` and marks the actor "stopping".
+   `exit()`) sets `done = true` and marks the actor "stopping".
 2. The framework sends STOP to all children and records the set of children it
    is awaiting.
 3. The framework awaits each child's `proc.wait()` (see above), bounded by the
    timeout.
-4. When every child has stopped (or the timeout elapsed), `done = true`, the
-   loop exits, and the normal end-of-life sequence resumes (`beforeEnd` →
-   `toParent(EXIT)` → `afterEnd`).
+4. When every child has stopped (or the timeout elapsed), the generator's
+   `finally` runs the normal end-of-life sequence (`toParent(EXIT)` →
+   `afterEnd`).
 
 ### Timeout
 
@@ -128,6 +104,20 @@ left running as an **orphan**. This is acceptable and intentional: a stuck
 child must not wedge the parent. The warning names the orphan so an operator
 can find and reap it.
 
+### Removed: `shuttingDown` flag
+
+The original draft added a `shuttingDown` flag, set before STOPping children
+and passed to `onChildExit`, so an actor could distinguish a shutdown-induced
+child exit from a spontaneous one.
+
+It was **removed during implementation**: once `done` is set, the dispatch loop
+exits and no further messages — including a child's `EXIT` — reach the
+generator. `onChildExit` therefore never fires for cascade-stopped children,
+so the flag's `true` value was unobservable through `onChildExit`; only the
+always-`false` value from a spontaneous exit could ever be seen. The flag
+carried no information and was dropped. `onChildExit` keeps its two-argument
+signature.
+
 ## Scope
 
 Applies to `defineActor` actors and the `AsyncProcess` lifecycle they use.
@@ -142,7 +132,7 @@ The awaited cascade slots between `beforeEnd` and EXIT:
 ```
 loop exits
 beforeEnd(reason)          ← pre-EXIT teardown
-shuttingDown = true; STOP children; await proc.wait() (timeout + warn); onChildExit(..., shuttingDown)
+STOP children; await proc.wait() (timeout + warn)
 toParent(EXIT)
 afterEnd(reason)           ← post-EXIT teardown
 ```
@@ -150,8 +140,5 @@ afterEnd(reason)           ← post-EXIT teardown
 ## Open questions
 
 - Whether the timeout is a single deadline for all children or per-child.
-- Whether `onChildExit` fires for cascade children (given EXIT messages are
-  queued during STOP processing) or is instead the flag is consulted only via
-  `this.shuttingDown`; reconcile with the `proc.wait()` await.
 - Should a child that ignores STOP be force-aborted after the timeout, or only
   warned (proposal: warn only; the orphan is acceptable).
