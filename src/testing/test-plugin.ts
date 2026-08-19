@@ -79,7 +79,7 @@ export function createCollector<M extends Message>(
         messages.push(msg as M);
         checkAndNotify();
       },
-      onEnd() {
+      beforeEnd() {
         const ws = waiters.splice(0);
         for (const w of ws) w({ ok: false, detail: "actor exited before match" });
       },
@@ -113,7 +113,7 @@ export function createRootTracker(): RootTracker {
       beforeStart(this: { ctx: ProcessCtx<unknown, unknown, Message, Message> }) {
         roots.add(this.ctx);
       },
-      onEnd(this: { ctx: ProcessCtx<unknown, unknown, Message, Message> }) {
+      afterEnd(this: { ctx: ProcessCtx<unknown, unknown, Message, Message> }) {
         roots.delete(this.ctx);
       },
     });

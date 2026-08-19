@@ -1,7 +1,7 @@
 // ── Lifecycle Hooks Tests ───────────────────────────────────────────────
 //
 // Tests for defineActor hooks: onMessage, onEmit, onChildExit, onError,
-// onStart, onEnd, onStopRequested, and stopPropagation().
+// onStart, beforeEnd, onStopRequested, and stopPropagation().
 
 import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "./define-actor.js";
@@ -205,9 +205,9 @@ describe("hooks.onChildExit", () => {
   });
 });
 
-// ── onStart / onEnd ordering (plugin chain via mergeConfigs) ─────────────
+// ── onStart / beforeEnd ordering (plugin chain via mergeConfigs) ─────────────
 
-describe("hooks.onStart / onEnd", () => {
+describe("hooks.onStart / beforeEnd", () => {
   it("plugin afterStart fires before actor afterStart", async () => {
     const order: string[] = [];
 
@@ -234,18 +234,18 @@ describe("hooks.onStart / onEnd", () => {
     expect(order).toEqual(["plugin", "actor"]);
   });
 
-  it("plugin onEnd fires before actor onEnd", async () => {
+  it("plugin beforeEnd fires before actor beforeEnd", async () => {
     const order: string[] = [];
 
     const Actor = defineActor({
       name: "test",
-      onEnd() {
+      beforeEnd() {
         order.push("actor");
       },
       plugins: [
         (cfg) =>
           mergeConfigs(cfg, {
-            onEnd() {
+            beforeEnd() {
               order.push("plugin");
             },
           }),
@@ -259,6 +259,30 @@ describe("hooks.onStart / onEnd", () => {
     await proc.wait();
 
     expect(order).toEqual(["plugin", "actor"]);
+  });
+  it("beforeEnd fires before EXIT, afterEnd fires after EXIT", async () => {
+    const order: string[] = [];
+    const Actor = defineActor({
+      name: "test",
+      beforeEnd() {
+        order.push("beforeEnd");
+      },
+      afterEnd() {
+        order.push("afterEnd");
+      },
+      handlers: {},
+    });
+
+    const proc = await Actor.spawn({}, {
+      toParent: ([msg]: [any, any]) => {
+        if (msg.type === "EXIT") order.push("EXIT");
+      },
+    });
+    await proc.ready();
+    proc.send({ type: "STOP" });
+    await proc.wait();
+
+    expect(order).toEqual(["beforeEnd", "EXIT", "afterEnd"]);
   });
 });
 

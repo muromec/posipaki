@@ -1,6 +1,6 @@
 # posipaki: Split `onEnd` into `beforeEnd` and `afterEnd`
 
-> **Status**: Draft proposal. No code written yet.
+> **Status**: Implemented.
 
 ## Summary
 

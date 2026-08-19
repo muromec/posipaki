@@ -21,7 +21,7 @@ function namedPlugin(name: string): ActorPlugin & { calls: string[] } {
   const fn = function (this: any, config: any) {
     return mergeConfigs(config, {
       afterStart() { calls.push(`${name}:${this.name}:afterStart`); },
-      onEnd() { calls.push(`${name}:${this.name}:onEnd`); },
+      beforeEnd() { calls.push(`${name}:${this.name}:beforeEnd`); },
     });
   } as ActorPlugin & { calls: string[] };
   Object.defineProperty(fn, 'name', { value: name });

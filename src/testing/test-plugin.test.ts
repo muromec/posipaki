@@ -293,7 +293,7 @@ describe("createRootTracker", () => {
     const actor = defineActor({
       setup: () => ({ exited: false }),
       handlers: { POKE() {} },
-      onEnd(this: any) { this.state.exited = true; },
+      beforeEnd(this: any) { this.state.exited = true; },
     });
 
     const proc = await actor.spawn({}, { addPlugins: [tracker.plugin] });
@@ -333,7 +333,7 @@ describe("createRootTracker", () => {
     const actor = defineActor({
       setup: () => ({ exited: false }),
       handlers: { POKE() {} },
-      onEnd(this: any) { this.state.exited = true; },
+      beforeEnd(this: any) { this.state.exited = true; },
     });
 
     const p1 = await actor.spawn({}, { name: "p1", addPlugins: [tracker.plugin] });

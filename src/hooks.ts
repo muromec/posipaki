@@ -78,7 +78,7 @@ export function chainHook<TThis, TArgs extends unknown[]>(
  * Typical use in a plugin:
  *   return mergeConfigs(cfg, {
  *     onStart() { this.log.info('starting'); },
- *     onEnd()   { this.log.info('stopping'); },
+ *     beforeEnd() { this.log.info('stopping'); },
  *   });
  *
  * @param base    - the existing config (ActorConfig)

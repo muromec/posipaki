@@ -222,6 +222,9 @@ export function defineActor<
         },
       };
       actorCtxMap.set(ctx.id, self);
+      ctx.afterExit = async () => {
+        await callHook(assembly.afterEnd, assembly.onError, self, exitReason);
+      };
 
       for (const [k, v] of decorated) {
         (self as Record<string, unknown>)[k] = v;
@@ -321,7 +324,7 @@ export function defineActor<
         () => done,
       );
 
-      await callHook(assembly.onEnd, assembly.onError, self, exitReason);
+      await callHook(assembly.beforeEnd, assembly.onError, self, exitReason);
     };
   }
 

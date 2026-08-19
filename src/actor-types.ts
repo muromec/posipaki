@@ -155,7 +155,8 @@ export type ActorConfig<
   ) => Promise<InternalState> | InternalState;
   afterStart?: () => void | Promise<void>;
   onStopRequested?: () => HookResult | Promise<HookResult>;
-  onEnd?: (reason?: unknown) => HookResult | Promise<HookResult>;
+  beforeEnd?: (reason?: unknown) => HookResult | Promise<HookResult>;
+  afterEnd?: (reason?: unknown) => HookResult | Promise<HookResult>;
   onError?: (error?: unknown) => HookResult | Promise<HookResult>;
   onEmit?: (
     msg: OutMsg,

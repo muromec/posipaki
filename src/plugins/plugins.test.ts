@@ -43,8 +43,8 @@ function spyPlugin(id: string) {
       onError() {
         calls.push(`${id}:onError`);
       },
-      onEnd() {
-        calls.push(`${id}:${this.name}:onEnd`);
+      beforeEnd() {
+        calls.push(`${id}:${this.name}:beforeEnd`);
       },
     });
   return Object.assign(fn, { calls });
@@ -102,7 +102,7 @@ describe("plugin basic", () => {
     proc.send({ type: "STOP" });
     await proc.wait();
 
-    expect(sp.calls).toContain("A:a:onEnd");
+    expect(sp.calls).toContain("A:a:beforeEnd");
   });
 
   it("plugin onStart receives state", async () => {
@@ -488,7 +488,7 @@ describe("full lifecycle coverage", () => {
         fired.push("onStopRequested");
         this.agreeToStop();
       },
-      onEnd: trace("onEnd"),
+      beforeEnd: trace("beforeEnd"),
       handlers: {
         POKE() {
           fired.push("handler:POKE");
@@ -513,15 +513,15 @@ describe("full lifecycle coverage", () => {
     proc.send({ type: "STOP" });
     await proc.wait();
     expect(fired).toContain("onStopRequested");
-    expect(fired).toContain("onEnd");
+    expect(fired).toContain("beforeEnd");
   });
 
-  it("plugin onEnd fires before actor onEnd", async () => {
+  it("plugin beforeEnd fires before actor beforeEnd", async () => {
     const order: string[] = [];
 
     const plug: ActorPlugin = (config) =>
       mergeConfigs(config, {
-        onEnd() {
+        beforeEnd() {
           order.push("plug");
         },
       });
@@ -529,7 +529,7 @@ describe("full lifecycle coverage", () => {
     const Actor = defineActor({
       name: "a",
       plugins: [plug],
-      onEnd() {
+      beforeEnd() {
         order.push("actor-hook");
       },
       handlers: {},
@@ -539,7 +539,7 @@ describe("full lifecycle coverage", () => {
     proc.send({ type: "STOP" });
     await proc.wait();
 
-    // Plugin onEnd fires before actor hooks.onEnd
+    // Plugin beforeEnd fires before actor hooks.beforeEnd
     expect(order).toEqual(["plug", "actor-hook"]);
   });
 

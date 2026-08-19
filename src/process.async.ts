@@ -176,6 +176,7 @@ export class AsyncProcess<
       this.toAllChildren({ type: "STOP" });
       // ctx.toParent stamps sender info into a WithSender tuple
       ctx.toParent({ type: "EXIT" } as unknown as OutMessage);
+      if (ctx.afterExit) await ctx.afterExit();
     }
   }
 

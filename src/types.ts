@@ -112,6 +112,9 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   parentId: symbol | null;
   sendSelf: (msg: IM | StopMessage) => void;
   toParent: ProcessMessageCb<OM>;
+  /** Invoked by the runtime after the process emits EXIT to its parent.
+   *  Best-effort teardown that must not delay the exit signal. */
+  afterExit?: () => Promise<void> | void;
 } & Pick<AsyncProcess<Args, State, IM, OM, {}>, "fork" | "forkSync" | "children">;
 export type AnyProcessCtx = ProcessCtx<unknown, unknown, Message, Message>;
 
