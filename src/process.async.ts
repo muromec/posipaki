@@ -91,6 +91,10 @@ export class AsyncProcess<
   children: Array<
     AsyncProcess<unknown, unknown, Message, Message, {}>
   > = [];
+  /** Children inherited from a child that exited (see ctx-orphans proposal). */
+  orphans: Array<
+    AsyncProcess<unknown, unknown, Message, Message, {}>
+  > = [];
   private subscribers: Array<NotifyFn> = [];
   private exitWaiter: Waiter;
   private pvtIsPaused: boolean = false;
@@ -137,6 +141,7 @@ export class AsyncProcess<
       fork: this.fork.bind(this),
       forkSync: this.forkSync.bind(this),
       children: this.children,
+      orphans: this.orphans,
       sendSelf: (msg) => {
         this.send([msg, selfCtx]);
       },
@@ -179,6 +184,9 @@ export class AsyncProcess<
       // Cascade: STOP every child and await its generator stopping.
       this.toAllChildren({ type: "STOP" });
       const children = [...this.children];
+      const survivors: Array<
+        AsyncProcess<unknown, unknown, Message, Message, {}>
+      > = [];
       if (children.length > 0) {
         await Promise.all(
           children.map(async (child) => {
@@ -190,12 +198,16 @@ export class AsyncProcess<
               console.warn(
                 `posipaki: child "${child.pname}" did not stop within ${CHILD_STOP_TIMEOUT_MS}ms; continuing shutdown`,
               );
+              survivors.push(child);
             }
           }),
         );
       }
+      // Hand surviving children and inherited orphans up to the parent for
+      // adoption (see ctx-orphans proposal). In-process only.
+      const orphans = [...survivors, ...this.orphans];
       // ctx.toParent stamps sender info into a WithSender tuple
-      ctx.toParent({ type: "EXIT" } as unknown as OutMessage);
+      ctx.toParent({ type: "EXIT", orphans } as unknown as OutMessage);
       if (ctx.afterExit) await ctx.afterExit();
     }
   }
@@ -409,6 +421,10 @@ export class AsyncProcess<
     if (msg.type === "EXIT") {
       // sender.fromId === child's id (set by child's ctx.toParent wrapper)
       this.children = this.children.filter((p) => p.id !== sender.fromId);
+      const orphans = (msg as ExitMessage).orphans;
+      if (orphans && orphans.length > 0) {
+        this.orphans.push(...orphans);
+      }
     }
     this.send(msgAndSender);
   }

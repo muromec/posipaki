@@ -1,6 +1,6 @@
 # posipaki: ctx.orphans — orphan collection (core-level)
 
-> **Status**: Idea. Rough concept; no design yet.
+> **Status**: Implemented.
 
 ## Summary
 

@@ -37,6 +37,9 @@ export type WithoutSender<T extends WithSender<any>> = T[0];
  *  The sender's identity is carried in the {@link SenderInfo} tuple. */
 export type ExitMessage = {
   type: "EXIT";
+  /** Still-running children of the exiting process, handed up to the parent
+   *  for adoption (in-process only). */
+  orphans?: Array<AsyncProcess<unknown, unknown, Message, Message, {}>>;
 };
 
 export type StopMessage = {
@@ -115,7 +118,7 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   /** Invoked by the runtime after the process emits EXIT to its parent.
    *  Best-effort teardown that must not delay the exit signal. */
   afterExit?: () => Promise<void> | void;
-} & Pick<AsyncProcess<Args, State, IM, OM, {}>, "fork" | "forkSync" | "children">;
+} & Pick<AsyncProcess<Args, State, IM, OM, {}>, "fork" | "forkSync" | "children" | "orphans">;
 export type AnyProcessCtx = ProcessCtx<unknown, unknown, Message, Message>;
 
 // ---- Pipe -------------------------------------------------------------------

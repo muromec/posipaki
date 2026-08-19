@@ -524,4 +524,41 @@ describe("cascading stop", () => {
     }
   });
 
+  it("collects a surviving grandchild into the parent's orphans", async () => {
+    const Grandchild = defineActor({
+      name: "grandchild",
+      onStopRequested() {
+        // never call agreeToStop — refuse to stop
+      },
+      handlers: {},
+    });
+    const Child = defineActor({
+      name: "child",
+      async setup() {
+        await this.fork(Grandchild, undefined, {});
+        return {};
+      },
+      afterStart() {
+        this.exit();
+      },
+      handlers: {},
+    });
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.ready();
+    // Child exits; its grandchild refuses to stop (1s cascade timeout), so
+    // Parent collects the survivor into its orphans.
+    await new Promise((r) => setTimeout(r, 1500));
+    expect(proc.orphans.map((o) => o.pname)).toContain("parent:child:grandchild");
+    proc.send({ type: "STOP" });
+    await proc.wait();
+  });
 });
