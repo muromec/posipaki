@@ -1,4 +1,4 @@
-import { defer, makeWaiter, debugLog } from "./util.js";
+import { defer, makeWaiter, debugLog, sleep } from "./util.js";
 import type { DeferredCall, Waiter } from "./util.js";
 import type {
   Message,
@@ -55,6 +55,9 @@ export async function* runDispatchAsync<M>(
 type ProcessMessageCb<M> = (msg: M) => void;
 
 const noop = () => null;
+
+/** How long a parent waits for a child to stop before continuing shutdown. */
+const CHILD_STOP_TIMEOUT_MS = 1_000;
 
 /**
  * A process driven by an async generator. Functionally identical to
@@ -173,7 +176,24 @@ export class AsyncProcess<
     try {
       yield* this.pgenerator(ctx, arg0);
     } finally {
+      // Cascade: STOP every child and await its generator stopping.
       this.toAllChildren({ type: "STOP" });
+      const children = [...this.children];
+      if (children.length > 0) {
+        await Promise.all(
+          children.map(async (child) => {
+            const stopped = await Promise.race([
+              child.wait().then(() => true),
+              sleep(CHILD_STOP_TIMEOUT_MS).then(() => false),
+            ]);
+            if (!stopped) {
+              console.warn(
+                `posipaki: child "${child.pname}" did not stop within ${CHILD_STOP_TIMEOUT_MS}ms; continuing shutdown`,
+              );
+            }
+          }),
+        );
+      }
       // ctx.toParent stamps sender info into a WithSender tuple
       ctx.toParent({ type: "EXIT" } as unknown as OutMessage);
       if (ctx.afterExit) await ctx.afterExit();

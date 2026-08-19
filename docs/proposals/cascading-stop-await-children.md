@@ -1,6 +1,6 @@
 # posipaki: Cascading stop with awaited children, timeout, and a shutdown flag
 
-> **Status**: Draft proposal. No code written yet.
+> **Status**: Implemented.
 
 ## Summary
 

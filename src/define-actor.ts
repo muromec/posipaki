@@ -151,6 +151,7 @@ export function defineActor<
     > {
       let done = false;
       let exitReason: unknown;
+      let shuttingDown = false;
       let rawState: InternalState = undefined as unknown as InternalState;
 
       const decorated = new Map();
@@ -178,12 +179,17 @@ export function defineActor<
           ctx.toParent(msg);
         },
         agreeToStop() {
+          shuttingDown = true;
           exitReason = "stopped";
           done = true;
         },
         exit(reason: unknown) {
+          shuttingDown = true;
           exitReason = reason;
           done = true;
+        },
+        get shuttingDown() {
+          return shuttingDown;
         },
         $child: {} as Record<string, AnyProcess>,
         decorators: {},
@@ -289,6 +295,7 @@ export function defineActor<
               self,
               childName,
               msg as ExitMessage,
+              shuttingDown,
             );
           }
           let hookStopped = false;

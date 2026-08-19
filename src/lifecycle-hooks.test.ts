@@ -3,7 +3,7 @@
 // Tests for defineActor hooks: onMessage, onEmit, onChildExit, onError,
 // onStart, beforeEnd, onStopRequested, and stopPropagation().
 
-import { describe, it, expect } from "vitest";
+import { describe, it, expect, vi } from "vitest";
 import { defineActor, defineMessages } from "./define-actor.js";
 import { stopPropagation, mergeConfigs, type HookResult } from "./hooks.js";
 import type { Message, SenderInfo } from "./types.js";
@@ -457,5 +457,97 @@ describe("hooks — adversarial", () => {
 
     await proc.wait();
     expect(handlerRan).toBe(false);
+  });
+});
+
+// ── cascading stop ─────────────────────────────────────────────────────────
+
+describe("cascading stop", () => {
+  it("parent awaits children before emitting EXIT", async () => {
+    const order: string[] = [];
+    const Child = defineActor({
+      name: "child",
+      beforeEnd() {
+        order.push("child:beforeEnd");
+      },
+      handlers: {},
+    });
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({}, {
+      toParent: ([msg]: [any, any]) => {
+        if (msg.type === "EXIT") order.push("parent:EXIT");
+      },
+    });
+    await proc.ready();
+    proc.send({ type: "STOP" });
+    await proc.wait();
+
+    expect(order).toEqual(["child:beforeEnd", "parent:EXIT"]);
+  });
+
+  it("warns when a child refuses to stop", async () => {
+    const Child = defineActor({
+      name: "child",
+      onStopRequested() {
+        // never call agreeToStop — refuse to stop
+      },
+      handlers: {},
+    });
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      const proc = await Parent.spawn({});
+      await proc.ready();
+      proc.send({ type: "STOP" });
+      await proc.wait();
+      expect(warn).toHaveBeenCalledWith(
+        expect.stringContaining('child "parent:child" did not stop'),
+      );
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it("passes shuttingDown to onChildExit", async () => {
+    const seen: Array<{ name: string; shuttingDown: boolean }> = [];
+    const Child = defineActor({
+      name: "child",
+      afterStart() {
+        this.exit();
+      },
+      handlers: {},
+    });
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return { seen };
+      },
+      onChildExit(name, _reason, shuttingDown) {
+        this.state.seen.push({ name, shuttingDown });
+        this.exit("done");
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.wait();
+    expect(proc.state!.seen).toEqual([{ name: "parent:child", shuttingDown: false }]);
   });
 });

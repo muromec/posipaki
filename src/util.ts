@@ -118,5 +118,10 @@ function makeWaiter(): Waiter {
   return { promise, resolve: resolve as NotifyFn };
 }
 
+/** Resolve after `ms` milliseconds. */
+export function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export { runDispatch, defer, makeWaiter, watchExit };
 export type { ExitMessage };
