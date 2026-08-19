@@ -1,6 +1,6 @@
 # posipaki: Process links — generalize parent-child communication
 
-> **Status**: Idea. Rough concept; no design yet.
+> **Status**: Implemented (2026-08-19). See commit `9633785`.
 
 ## Summary
 
@@ -75,14 +75,29 @@ This is wrong on three counts:
 `this.link(orphan)` — the orphan's messages flow to the adopter like any other
 subscription, stamped with the orphan's identity.
 
-## Open questions
+## Resolved design decisions
 
-- **Callback signatures.** Pin down `MsgCallback<OutMsg>` (does it receive the
-  raw message or the `[msg, sender]` tuple?) and `StateCallback<State>`
-  (does it receive the state value, or stay a no-arg ping?).
-- **`emit` vs `ctx.toParent`.** Does `emit` replace `ctx.toParent` outright, or
-  is `ctx.toParent` kept as a thin shim over `emit`?
-- **`fromChild` / `toParent` migration.** The EXIT-filtering in `fromChild`
-  (removing the child from `this.children`) still needs a home in the new model.
-- **`notify()` for state.** If `StateCallback` receives the state value, the
-  existing no-arg `notify()` call sites change; confirm that's wanted.
+- **Callback signature.** `MsgCallback<OutMsg>` is `(msg, from) => void` — the
+  raw message and its `SenderInfo` as two args, not a `WithSender` tuple.
+  `StateCallback` stays a no-arg ping (`() => void`).
+- **`emit` vs `ctx.toParent`.** No new `emit` primitive; `ctx.toParent(msg)`
+  is the emit point — it stamps `[msg, selfCtx]` and fires message subscribers.
+- **`fromChild` / `toParent` migration.** The EXIT filtering (remove child from
+  `children`, collect orphans) lives in `adopt`'s subscriber, `pvtChildMessage`.
+  `adopt` is the *ownership* primitive (subscribe + children + EXIT cleanup);
+  `subscribe("message")` is a pure tap with no side effects.
+- **`monitor`.** A separate primitive that *only* forwards messages into the
+  incoming queue — no ownership, no EXIT filtering.
+- **Unsubscribe on exit.** An exiting parent unsubscribes from all its
+  `adopt`/`monitor` subscriptions (tracked in `pvtOutgoingSubscriptions`).
+- **`children` in-place mutation.** Child EXIT now splices `children` in place
+  so `ctx.children` (a live reference) never goes stale.
+- **Naming.** `link` was renamed to `adopt`.
+
+## Known limitation (next phase)
+
+A message a child emits *while its parent is processing STOP* can be lost:
+the parent exits (unsubscribing) before the message is drained, and the child —
+if it refuses to stop — is handed to the grandparent as an orphan *without*
+that in-flight message. This adoption race is tracked for the orphan-policy
+phase.
