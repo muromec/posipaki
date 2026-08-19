@@ -82,9 +82,9 @@ process can do it):
    (`sender.fromId === orphan.id`) and distribute them into the orphan's buffer,
    *ahead of* whatever the collector has already buffered (they predate the cut).
 4. **Hand off** — P's EXIT carries the orphans, and in a **separate payload
-   field** their pending buffers (`orphans` + `pending` keyed by process id). The
-   buffers are *live*: the collector keeps appending while the handoff is in
-   flight.
+   field** their pending buffers: `orphans: AnyProcess[]` plus
+   `pending: Map<symbol, WithSender<Message>[]>`. The buffers are *live*: the
+   collector keeps appending while the handoff is in flight.
 5. **On adopt** — G subscribes to the orphan first, removes the collector, then
    drains the (still-growing) buffer into G's inbox. Order is back-fed →
    collector → live.
@@ -120,11 +120,8 @@ equally be a mode switch inside `pvtChildMessage` (a flag: `send` vs
 
 ## Open questions
 
-- **Buffer transport shape.** `pending` as a `Map<symbol, WithSender<Message>[]>`
-  or a parallel `Array<[AnyProcess, WithSender<Message>[]]>`?
-- **force-stop primitive.** `AsyncProcess.forceStop()` does not exist yet; it
-  must hard-terminate (abandon the generator without running its `finally`, clear
-  buffer/subscribers, resolve `wait()`). Confirm that's the desired semantic vs
-  `generator.return()` (which *does* run the `finally`).
+- **force-stop primitive.** Implemented — see `force-stop.md`
+  (`AsyncProcess.forceStop()`: abandon the generator, no `finally`, settle
+  `wait()`/`ready()`).
 - **Remote.** EXIT is in-process only; remote orphans cannot carry buffers.
   Accepted (same as `ctx-orphans.md`).
