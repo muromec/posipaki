@@ -4,9 +4,13 @@
 
 ## Summary
 
-`ProcessCtx` gains an `orphans` array alongside `children`. The low-level
-`AsyncProcess` mechanically collects surviving grandchildren there and passes
-them up the tree on exit. No policy — this is just the collection primitive.
+`AsyncProcess` / `ProcessCtx` gain an `orphans` collection alongside
+`children`. The low-level runtime mechanically collects surviving grandchildren
+there and passes them up on exit.
+
+This is a **core-level** primitive and lives entirely outside `defineActor` —
+`defineActor` may as well not exist. It applies to any process, including raw
+`spawnAsync` generators.
 
 ```
 P1 ── P2 ── P3            P2 exits (P3 refuses STOP, keeps running)
@@ -24,20 +28,31 @@ proposal, the small core-level half) and **policy** (the actor-level proposal,
 
 ## Design
 
-- `ctx.orphans: Array<AsyncProcess<...>>` — a second collection on `ProcessCtx`,
-  alongside `ctx.children`.
+- `AsyncProcess.orphans: Array<AsyncProcess<...>>` — a second collection; the
+  existing `ctx` exposes it as `ctx.orphans` (same array, like `ctx.children`).
 - **Collect on child EXIT.** A child's EXIT message carries its still-running
-  children (in-process handles, nothing serialized). The parent appends them to
-  `ctx.orphans`.
-- **Propagate on own EXIT.** When I exit, my surviving `children` plus my
-  `orphans` are carried in my EXIT to my parent, which collects them into *its*
-  `orphans`. An orphan keeps bubbling up until some actor handles it.
+  children (in-process handles). The parent's `fromChild` appends them to
+  `this.orphans` when it sees the EXIT — alongside its existing job of removing
+  the exiting child from `this.children`.
+- **Propagate on own EXIT.** In `pvtWatchExit`'s `finally`, after the STOP
+  cascade + await, my surviving `children` plus my `orphans` are carried in my
+  EXIT to my parent, which collects them into *its* `orphans`. An orphan keeps
+  bubbling up until some actor handles it.
 - **No policy.** The low level does not auto-stop or auto-adopt orphans — that is
   the actor-level proposal's job.
+- **Naming is kept.** An orphan keeps its original tree name (e.g. `P1:P2:P3`)
+  — it reflects where it was forked, not its current parent. Intentional.
+
+## Where it is wired
+
+All in `src/process.async.ts` (+ the `ProcessCtx` type):
+
+- `pvtWatchExit` — collects survivors and orphans into the EXIT payload.
+- `fromChild` — on EXIT, removes the dead child and appends the carried orphans
+  to `this.orphans`.
+
+No `defineActor` involvement.
 
 ## Open questions
 
-- Where collection is wired: the low-level `fromChild` (owns `ctx.children`) vs
-  the `defineActor` EXIT branch (owns the decorated map).
-- Tree naming on propagation: keep the orphan's `P1:P2:P3` name or re-name it.
 - In-process only — the remote path serializes EXIT and cannot carry handles.
