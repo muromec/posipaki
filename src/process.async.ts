@@ -385,6 +385,12 @@ export class AsyncProcess<
 
   // ---- pause / resume -------------------------------------------------------
 
+  /**
+   * Freeze dispatch: no further ticks are scheduled, so the process stops
+   * *processing* incoming messages.  This is half-working as a "quiesce"
+   * primitive — it does not stop the process from *emitting* via async
+   * callbacks (timers, fetch) that bypass the dispatch loop.
+   */
   pause(): void {
     this.nextTick?.cancel();
     this.nextTick = null;

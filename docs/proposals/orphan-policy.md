@@ -1,7 +1,6 @@
 # posipaki: Orphan policy (actor-level tools)
 
-> **Status**: Idea. Design revised (2026-08-19) to make `adopt` a lossless,
-> buffered handoff rather than a bare re-subscribe.
+> **Status**: Idea. Design revised (2026-08-19) — `adopt` is a buffered, lossless handoff.
 
 ## Summary
 
@@ -9,7 +8,7 @@
 collection (see `ctx-orphans.md`): **adopt**, **force-stop**, or **leave** an
 orphan.
 
-`adopt` is the interesting one. It must be a **buffered cutover** — the orphan's
+`adopt` is the interesting one: it must be a **buffered cutover** — the orphan's
 in-flight messages are preserved across the change of ownership, not dropped in
 the gap between the old parent dying and the new parent subscribing.
 
@@ -23,73 +22,78 @@ window has no hole.
 ## The footgun
 
 When parent P exits and its child C survives (refuses STOP), C is handed up as
-an orphan. There are two distinct loss windows:
+an orphan. Two loss windows:
 
-- **Window A — addressed to a dying process.** C emits M to P while P is in its
-  exit cascade. M lands in P's inbox (via the `adopt` subscriber → `send`) and
-  is discarded when P dies. This is at-most-once, Erlang-mailbox semantics.
+- **Window A — addressed to a dying process.** C emits M to P while P is
+  exiting; M lands in P's inbox and is discarded with P. For a child that *also*
+  exits (stops cleanly), this is accepted — it's going away and its in-flight
+  messages die with it.
 - **Window B — the handoff limbo.** After P unsubscribes from C but before the
   grandparent G adopts C, C has zero subscribers; messages go to nobody.
 
-Window B is a bug we can fix. Window A is fundamental *only if* we commit the
-message to P's inbox; the `adopt` protocol below sidesteps that by buffering at
-the handoff boundary instead.
+Window B is the one `adopt` must close. Window A is closed for orphans by
+buffering at the boundary; for children that stop cleanly, the loss is accepted.
 
 ## Design
 
 ### Policy tools
 
-- **adopt** — take ownership of an orphan via the buffered handoff below. The
-  orphan is promoted from `orphans` to `children`, and its in-flight messages
-  are preserved.
-- **force-stop** — STOP the orphan (and reap) now.
-- **leave** — do nothing; the orphan (and its pending buffer) propagates up on
-  my exit.
+- **adopt** — take ownership via the buffered handoff below. The orphan is
+  promoted from `orphans` to `children`, and its in-flight messages are
+  preserved.
+- **force-stop** — STOP the orphan (and reap) now; drop its pending buffer.
+- **leave** — do not adopt; remove the collector callback and drop the pending
+  buffer; the orphan propagates up on my exit.
 - The default, when the actor defines nothing, is **leave**.
 
-### `adopt` — the buffered handoff
+### adopt — the buffered handoff
 
-The core-level protocol lives in `AsyncProcess` (this is not `defineActor`-specific;
-any process can do it):
+The core-level protocol lives in `AsyncProcess` (not `defineActor`-specific; any
+process can do it):
 
-1. **Pause** the orphan C — freeze its dispatch so it stops emitting new
-   message-driven work. (Caveat: `pause()` freezes *dispatch*, not async-callback
-   emission; see open questions.)
-2. **Cut C's routing to a dumb collector** — replace the `pvtChildMessage`
-   subscriber with a collector that only buffers `[msg, from]` (no EXIT
+1. Run the STOP cascade + await (with timeout), as today. The children that did
+   not stop within the timeout are the **orphans to hand over**. A child that
+   stopped cleanly is simply gone — anything it emitted while we were exiting is
+   lost with it, and that's fine.
+2. For each orphan, **swap its callback to a dumb collector** — replace the
+   `pvtChildMessage` subscriber with one that only buffers `[msg, from]` (no EXIT
    filtering, no policy). The swap is two synchronous statements, so it is an
-   *atomic cut*: C's emission observes either the old handler or the collector,
-   never both and never neither (see below).
-3. **Back-feed** — scan P's *own* inbox for undrained messages from C
-   (`sender.fromId === C.id`) and move them into C's collector buffer, ahead of
-   the collector-captured messages (preserving emission order).
-4. **Hand off with the buffer** — P's EXIT carries the orphan *and* its buffered
-   messages (in-process handles; the EXIT is already in-process only).
-5. **On adopt** — G subscribes to C first, removes the collector, drains the
-   buffer into G's inbox (back-fed → collector → live, in order), then resumes C.
+   *atomic cut* (see below).
+3. **Back-feed** — sweep P's *own* inbox for undrained messages from each orphan
+   (`sender.fromId === orphan.id`) and distribute them into the orphan's buffer,
+   *ahead of* whatever the collector has already buffered (they predate the cut).
+4. **Hand off** — P's EXIT carries the orphans, and in a **separate payload
+   field** their pending buffers (`orphans` + `pending` keyed by process id). The
+   buffers are *live*: the collector keeps appending while the handoff is in
+   flight.
+5. **On adopt** — G subscribes to the orphan first, removes the collector, then
+   drains the (still-growing) buffer into G's inbox. Order is back-fed →
+   collector → live.
 
 Ordering falls out of the cut: back-fed (oldest) → collector (newer) → live
-post-resume (newest), which preserves C's emission order across the transfer.
+post-adopt (newest).
+
+### The leak is G's problem
+
+The collector buffers without bound while the orphan is unowned. If G adopts,
+the drain empties it. If G does not adopt (`leave`/`force-stop`), G removes the
+collector callback and drops the buffer. No pause is involved; `pause()` freezes
+dispatch but not async-callback emission, so it is deliberately out of scope
+here (and marked half-working in the source).
 
 ### Why the cut is atomic
 
-`subscribe` and `unsubscribe` are synchronous, and JavaScript runs a job to
-completion — there is no `await` between the two statements. C's emission runs
-in its own macrotask, so it sees the before-state (`[old]`) or the after-state
-(`[collector]`), never the intermediate `[old, collector]`. No gap, no
-duplication. The collector may equally be a mode switch inside `pvtChildMessage`
-(a flag: `send` vs `buffer.push`) — equivalent, less bookkeeping.
-
-### What the collector is
-
-A "dumb" subscriber: it buffers and does nothing else. It has no policy and no
-EXIT handling. Its only job is to keep messages that would otherwise be
-committed to a dying inbox.
+`subscribe`/`unsubscribe` are synchronous, and JavaScript runs a job to
+completion — there is no `await` between the two statements. The orphan's
+emission runs in its own macrotask and observes either the before-state or the
+after-state, never the intermediate. No gap, no duplication. The collector may
+equally be a mode switch inside `pvtChildMessage` (a flag: `send` vs
+`buffer.push`) — equivalent, less bookkeeping.
 
 ## Relationship to other proposals
 
-- Depends on `ctx-orphans.md` (the collection) — the EXIT payload gains a
-  `pending` buffer alongside `orphans`.
+- Depends on `ctx-orphans.md` — the EXIT payload gains a separate `pending`
+  buffer alongside `orphans`.
 - Depends on `process-links.md` — `adopt`/`monitor` and the discriminated
   `subscribe` are the primitives the collector and the subscribe/drain steps are
   built on.
@@ -97,18 +101,10 @@ committed to a dying inbox.
 
 ## Open questions
 
-- **Buffer transport.** Should the buffered messages ride in the EXIT payload
-  (`orphans` + a parallel `pending` map keyed by process id), or be attached to
-  the orphan process object itself?
-- **Eager vs lazy collector.** Install the collector for *all* children at the
-  start of the exit cascade (discard buffers for children that stop cleanly), or
-  only for detected orphans after the timeout? The former is simpler; the latter
-  installs fewer collectors.
-- **Pause vs async emission.** `pause()` freezes dispatch, not async callbacks.
-  A chatty orphan that emits from timers/fetch will still grow the collector
-  buffer while orphaned. Bound it, or accept unbounded buffering?
-- **Exposure.** Should `defineActor` expose `this.orphans` as a decorated view,
-  or do actors reach into `ctx.orphans` directly?
+- **Buffer transport shape.** `pending` as a `Map<symbol, WithSender<Message>[]>`
+  or a parallel `Array<[AnyProcess, WithSender<Message>[]]>`?
 - **Shape.** Tools as methods (`this.adopt(orphan)`) or a lifecycle hook
   (`onOrphan`)? And does `force-stop` remove the orphan from `ctx.orphans`, or
   only STOP it?
+- **Remote.** EXIT is in-process only; remote orphans cannot carry buffers.
+  Accepted (same as `ctx-orphans.md`).
