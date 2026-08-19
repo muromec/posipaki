@@ -1,62 +1,72 @@
-# posipaki: forceStop — hard-kill a process
+# posipaki: process termination — stop() escalation ladder + forceStop()
 
 > **Status**: Implemented (2026-08-19).
 
 ## Summary
 
-Add `AsyncProcess.forceStop()` — a hard kill that terminates a process
-immediately, *without* a STOP message, *without* running the generator's
-`finally` (so no EXIT, no STOP cascade), leaving nothing to observe.
+Two primitives terminate a process, on an escalation ladder:
 
-## Motivation
+- `proc.stop(opts?: { force?: boolean; from?: SenderInfo })` — the **nice** way,
+  then (optionally) the **escalation**.
+- `proc.forceStop()` — the final **abandon** rung, for when the nice way was
+  already tried.
 
-STOP is graceful: the generator cooperates, emits EXIT, and the parent observes
-the child's death via the normal message flow. The orphan-policy needs a way to
-kill a process that should simply go away — where there is nothing to observe
-afterward and the caller does not care how it died.
+The guiding principle: be nice and let the process run its `finally` (where
+`afterEnd` frees resources), but never dead-lock ourselves waiting for a process
+that is stuck awaiting a dead promise or looping back on us.
 
-## Design
+## The ladder
 
-`forceStop()`:
+`stop()`:
+
+1. **STOP** — send STOP (the nice way; the generator cooperates and its
+   `finally` runs). Await on a best-effort basis with a timeout (we can't wait
+   forever — whatever it awaits may never happen because it bugged out).
+2. **return() fire-and-forget** — if it refused and `force` is set, fire
+   `generator.return()` *without awaiting*: throw the generator away for GC to
+   find. This gives the `finally` a chance to run, but we do not block on it.
+3. **Cascade** — proceed to stop its children with the same ladder
+   (`child.stop({ force: true })`).
+4. **Abandon** — `forceStop()`: drop the generator, clear inbox/observers,
+   settle `wait()`/`ready()`.
+
+`stop()` resolves `true` if the process stopped (gracefully or forced), `false`
+if it refused and `force` was not requested.
+
+## `forceStop()` — the abandon rung
+
+`forceStop()` is the hard kill, used when the nice way was already tried:
 
 1. marks the process dead (a `pvtDead` flag guards `send`/`pvtScheduleTick`),
 2. abandons the generator (`current = null`) so its `finally` never runs,
 3. drops the inbox and stops scheduling,
-4. releases incoming observers and drains outgoing subscriptions
-   (`adopt`/`monitor` unsubscribes),
+4. releases incoming observers and drains outgoing `adopt`/`monitor`
+   subscriptions,
 5. settles `wait()` and `ready()`.
 
 There is **no EXIT** and **no cascade**. The caller removes the process from its
 `children`/`orphans` list imperatively — exactly one place owns that list
-mutation, matching "ownership where state lives".
-
-Applies to children and orphans alike; it is a per-process primitive, not tied
-to `defineActor`.
+mutation, matching "ownership where state lives". Applies to children and
+orphans alike.
 
 ### Best-effort caveat
 
 JS offers no way to cancel a pending promise. An *idle* generator (suspended at
 `yield`) is abandoned cleanly — its `finally` never runs. A generator mid-`await`
 will complete its `finally` when that `await` settles, because the pending
-promise still holds the continuation. `forceStop()` is therefore best-effort for
-a process that is actively awaiting inside a reducer.
-
-### Does not cascade
-
-`forceStop()` kills *this* process only. Its own children are abandoned (still
-referenced by the dead process's `children` list until GC). The caller
-force-stops them separately if it owns them. (Open question: should this
-cascade? Leaning no — keep the primitive narrow.)
+promise still holds the continuation. Both `return()` and abandonment are
+therefore best-effort for a process actively awaiting inside a reducer.
 
 ## Relationship to other proposals
 
 - Consumed by `orphan-policy.md`'s `force-stop` policy (`onOrphan` returning
   `'force-stop'`).
-- Orthogonal to `process-links.md` (it drains the `adopt`/`monitor`
-  subscriptions those primitives created).
+- The cascade in `pvtWatchExit` now delegates to `child.stop()` (nice) rather
+  than the previous `toAllChildren(STOP)` + manual timeout.
 
 ## Open questions
 
-- Cascade to children, or leave them abandoned? (Leaning: no cascade.)
-- Should `wait()` resolve or reject on a hard kill? (Currently: resolve — the
-  caller "doesn't care", and a kill is not an error.)
+- Should `forceStop()` cascade to children? (Leaning no — `stop({ force: true })`
+  cascades; `forceStop()` is the single-process abandon.)
+- Should `wait()` resolve or reject on a hard kill? (Currently resolve — a kill
+  is not an error.)

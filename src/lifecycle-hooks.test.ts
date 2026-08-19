@@ -19,7 +19,7 @@ vi.mock('./util.js', async (importOriginal) => {
 });
 
 function withTimeoutMiss() {
-  vi.mocked(withTimeout).mockRejectedValueOnce(new Error('Timeout:childStop'));
+  vi.mocked(withTimeout).mockRejectedValueOnce(new Error('Timeout:stop'));
 }
 function withTimeoutHit() {
   vi.mocked(withTimeout).mockImplementation((p) => p);

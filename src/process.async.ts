@@ -186,18 +186,12 @@ export class AsyncProcess<
     try {
       yield* this.pgenerator(ctx, arg0);
     } finally {
-      // Cascade: STOP every child and await its generator stopping.
-      this.toAllChildren({ type: "STOP" });
-
+      // Cascade: stop every child (nice) and collect the refusers as orphans.
       const orphans: Array<AnyProcess> = [...this.orphans];
+      const parentSender: SenderInfo = { fromName: this.pname, fromId: this.id };
       const stopPromises = this.children.map(async (child) => {
-        try {
-          await withTimeout(child.wait(), CHILD_STOP_TIMEOUT_MS, 'childStop');
-        } catch (e) {
-          if ((e as Error)?.message !== 'Timeout:childStop') {
-            throw e;
-          }
-
+        const stopped = await child.stop({ from: parentSender });
+        if (!stopped) {
           orphans.push(child);
           console.warn(
             `posipaki: child "${child.pname}" did not stop within ${CHILD_STOP_TIMEOUT_MS}ms; continuing shutdown`,
@@ -440,6 +434,47 @@ export class AsyncProcess<
     this.pvtResolveReady();
     this.exitWaiter.resolve();
     this.pvtExitReject = null;
+  }
+
+  /**
+   * Stop this process.  Sends STOP (the nice way — the generator cooperates
+   * and its `finally` runs) and awaits on a best-effort basis.
+   *
+   * With `{ force: true }`, when the process refuses (does not exit within the
+   * timeout) it escalates: fires `generator.return()` *without awaiting* (throw
+   * the generator away for GC to find), cascades to children with the same
+   * ladder, then hard-kills itself.
+   *
+   * Resolves `true` if the process stopped (gracefully or forced), `false` if
+   * it refused and `force` was not requested.
+   */
+  async stop(opts?: { force?: boolean; from?: SenderInfo }): Promise<boolean> {
+    if (this.pvtDead) return true;
+
+    this.send({ type: "STOP" } as StopMessage, opts?.from);
+
+    try {
+      await withTimeout(this.wait(), CHILD_STOP_TIMEOUT_MS, 'stop');
+      return true;
+    } catch (e) {
+      if ((e as Error)?.message !== 'Timeout:stop') throw e;
+      // refused to stop within the timeout
+    }
+
+    if (!opts?.force) return false;
+
+    // Escalate: give the finally a chance to run (fire-and-forget), but do not
+    // block on it — the process may be stuck awaiting a dead promise.
+    void this.current?.return(undefined);
+
+    // Cascade to children with the same ladder, stamped from this process.
+    const selfSender: SenderInfo = { fromName: this.pname, fromId: this.id };
+    await Promise.all(
+      [...this.children].map((child) => child.stop({ force: true, from: selfSender })),
+    );
+
+    this.forceStop();
+    return true;
   }
 
   // ---- waiting --------------------------------------------------------------

@@ -499,3 +499,42 @@ describe("forceStop", () => {
     expect(unsubSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("stop", () => {
+  type PokeM = { type: "POKE" };
+
+  // Exits after processing a single message (STOP or POKE).
+  const quittable: AsyncProcessFn<null, null, PokeM, Message> = async function* (ctx) {
+    yield null;
+    const [msg, _sender] = yield null;
+    if (msg.type === "POKE") ctx.toParent({ type: "PONG", pseq: 1 } as never);
+  };
+
+  // Never exits — ignores every message.
+  const stubborn: AsyncProcessFn<null, null, PokeM, Message> = async function* () {
+    yield null;
+    while (true) yield null;
+  };
+
+  it("resolves true when the process exits gracefully", async () => {
+    const proc = spawnAsync(quittable, "quittable")(null);
+    await proc.ready();
+    await expect(proc.stop()).resolves.toBe(true);
+  });
+
+  it("returns false when a non-forced process refuses to stop", async () => {
+    const proc = spawnAsync(stubborn, "stubborn")(null);
+    await proc.ready();
+    await expect(proc.stop()).resolves.toBe(false);
+    // Clean up so the stubborn process doesn't linger.
+    proc.forceStop();
+    await proc.wait();
+  });
+
+  it("force-kills a refusing process and returns true", async () => {
+    const proc = spawnAsync(stubborn, "stubborn")(null);
+    await proc.ready();
+    await expect(proc.stop({ force: true })).resolves.toBe(true);
+    await proc.wait();
+  });
+});
