@@ -53,6 +53,9 @@ All in `src/process.async.ts` (+ the `ProcessCtx` type):
 
 No `defineActor` involvement.
 
-## Open questions
+## Scope
 
-- In-process only — the remote path serializes EXIT and cannot carry handles.
+- **In-process only.** Remote processes (across a process boundary) serialize
+  EXIT and cannot carry handles — but there is nothing to do there anyway: if
+  the parent disconnects, the orphan is unreachable and we cannot help it.
+  Accepted.
