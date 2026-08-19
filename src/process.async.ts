@@ -101,6 +101,7 @@ export class AsyncProcess<
   private pvtOutgoingSubscriptions: Array<() => void> = [];
   private exitWaiter: Waiter;
   private pvtIsPaused: boolean = false;
+  private pvtDead: boolean = false;
   private pvtTickInProgress: boolean = false;
   private pvtExitReject: ((e: unknown) => void) | null = null;
   private pvtReady!: Waiter;
@@ -316,6 +317,7 @@ export class AsyncProcess<
     msgOrTuple: InMessage | StopMessage | WithSender<InMessage | StopMessage>,
     from?: SenderInfo,
   ): void {
+    if (this.pvtDead) return;
     if ("type" in msgOrTuple) {
       this.buffer.push([
         msgOrTuple as InMessage | StopMessage,
@@ -338,7 +340,7 @@ export class AsyncProcess<
   }
 
   private pvtScheduleTick(): void {
-    if (this.pvtIsPaused) return;
+    if (this.pvtIsPaused || this.pvtDead) return;
 
     this.nextTick?.cancel();
     this.nextTick = defer(() => {
@@ -400,6 +402,44 @@ export class AsyncProcess<
   resume(): void {
     this.pvtIsPaused = false;
     this.pvtScheduleTick();
+  }
+
+  /**
+   * Hard-kill this process: abandon the generator without running its
+   * `finally` (no EXIT, no STOP cascade), drop the inbox and observers,
+   * unsubscribe from children/monitors, and settle `wait()`/`ready()`.
+   *
+   * There is nothing to observe afterward — callers remove the process from
+   * their `children`/`orphans` lists imperatively.  Does not cascade to this
+   * process's own children; they are abandoned (force-stop them separately if
+   * owned).
+   *
+   * Best-effort: an idle generator (suspended at `yield`) is abandoned
+   * cleanly; a generator mid-`await` completes its `finally` when that await
+   * settles, because JS offers no way to cancel a pending promise.
+   */
+  forceStop(): void {
+    if (this.pvtDead) return;
+    this.pvtDead = true;
+
+    // Abandon the generator so its finally block never runs.
+    this.current = null;
+
+    // Drop the inbox and stop scheduling.
+    this.buffer.length = 0;
+    this.nextTick?.cancel();
+    this.nextTick = null;
+
+    // Release incoming observers and outgoing subscriptions.
+    this.messageSubscribers.length = 0;
+    this.stateSubscribers.length = 0;
+    for (const unsub of this.pvtOutgoingSubscriptions) unsub();
+    this.pvtOutgoingSubscriptions = [];
+
+    // Settle waiters.
+    this.pvtResolveReady();
+    this.exitWaiter.resolve();
+    this.pvtExitReject = null;
   }
 
   // ---- waiting --------------------------------------------------------------

@@ -427,3 +427,75 @@ describe("message channel & linking", () => {
     expect(unsubSpy).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("forceStop", () => {
+  type PokeM = { type: "POKE" };
+
+  // An idle process: yields state, then waits forever for a message.
+  const idleFn: AsyncProcessFn<null, null, PokeM, Message> = async function* (ctx) {
+    yield null;
+    const [msg, _sender] = yield null;
+    if (msg.type === "POKE") ctx.toParent({ type: "PONG", pseq: 1 } as never);
+  };
+
+  it("resolves wait() and does not emit EXIT (finally never runs)", async () => {
+    const proc = spawnAsync(idleFn, "victim")(null);
+    await proc.ready();
+
+    const emitted: string[] = [];
+    proc.subscribe("message", (msg) => emitted.push(msg.type));
+
+    proc.forceStop();
+    await proc.wait();
+
+    expect(emitted).toEqual([]);
+  });
+
+  it("makes send() a no-op after kill", async () => {
+    const proc = spawnAsync(idleFn, "victim")(null);
+    await proc.ready();
+
+    proc.forceStop();
+    expect(() =>
+      proc.send({ type: "POKE" }, { fromName: "t", fromId: Symbol("t") }),
+    ).not.toThrow();
+    await proc.wait();
+  });
+
+  it("is idempotent", async () => {
+    const proc = spawnAsync(idleFn, "victim")(null);
+    await proc.ready();
+    proc.forceStop();
+    proc.forceStop();
+    await proc.wait();
+  });
+
+  it("unsubscribes from a monitored child", async () => {
+    const child = spawnAsync(idleFn, "child")(null);
+    await child.ready();
+
+    // Spy on child.subscribe before the parent monitors it, so the parent's
+    // monitor() captures our unsubSpy as its subscription handle.
+    const unsubSpy = vi.fn();
+    const realSubscribe = child.subscribe.bind(child);
+    vi.spyOn(child, "subscribe").mockImplementation(((
+      channel: string,
+      cb: unknown,
+    ) => {
+      if (channel === "message") return unsubSpy;
+      return realSubscribe(channel as "state", cb as () => void);
+    }) as never);
+
+    const parentFn: AsyncProcessFn<null, null, Message, Message> = async function* (ctx) {
+      yield null;
+      ctx.monitor(child);
+      const [msg, _sender] = yield null; // wait forever
+    };
+    const parent = spawnAsync(parentFn, "parent")(null);
+    await parent.ready();
+
+    parent.forceStop();
+    await parent.wait();
+    expect(unsubSpy).toHaveBeenCalledTimes(1);
+  });
+});
