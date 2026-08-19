@@ -498,6 +498,26 @@ describe("forceStop", () => {
     await parent.wait();
     expect(unsubSpy).toHaveBeenCalledTimes(1);
   });
+
+  it("cascades to children starting with the nice stop", async () => {
+    const child = spawnAsync(idleFn, "child")(null);
+    await child.ready();
+
+    const parentFn: AsyncProcessFn<null, null, Message, Message> = async function* (ctx) {
+      yield null;
+      ctx.adopt(child);
+      const [msg, _sender] = yield null; // wait forever
+    };
+    const parent = spawnAsync(parentFn, "parent")(null);
+    await parent.ready();
+
+    parent.forceStop({ cascade: true });
+    await parent.wait();
+
+    // The child was stopped (nicely) by the cascade — it exited, so wait()
+    // resolves rather than hanging.
+    await child.wait();
+  });
 });
 
 describe("stop", () => {

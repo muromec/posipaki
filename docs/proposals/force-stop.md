@@ -35,19 +35,22 @@ if it refused and `force` was not requested.
 
 ## `forceStop()` — the abandon rung
 
-`forceStop()` is the hard kill, used when the nice way was already tried:
+`forceStop(opts?: { cascade?: boolean })` is the hard kill, used when the nice
+way was already tried:
 
 1. marks the process dead (a `pvtDead` flag guards `send`/`pvtScheduleTick`),
 2. abandons the generator (`current = null`) so its `finally` never runs,
 3. drops the inbox and stops scheduling,
 4. releases incoming observers and drains outgoing `adopt`/`monitor`
    subscriptions,
-5. settles `wait()` and `ready()`.
+5. settles `wait()` and `ready()`,
+6. with `{ cascade: true }`, stops the children too — **starting with the nice
+   stop** (`child.stop({ force: true })`), fire-and-forget so the hard kill
+   itself does not block.
 
-There is **no EXIT** and **no cascade**. The caller removes the process from its
-`children`/`orphans` list imperatively — exactly one place owns that list
-mutation, matching "ownership where state lives". Applies to children and
-orphans alike.
+There is **no EXIT**. The caller removes the process from its `children`/
+`orphans` list imperatively — exactly one place owns that list mutation,
+matching "ownership where state lives". Applies to children and orphans alike.
 
 ### Best-effort caveat
 
@@ -66,7 +69,5 @@ therefore best-effort for a process actively awaiting inside a reducer.
 
 ## Open questions
 
-- Should `forceStop()` cascade to children? (Leaning no — `stop({ force: true })`
-  cascades; `forceStop()` is the single-process abandon.)
 - Should `wait()` resolve or reject on a hard kill? (Currently resolve — a kill
   is not an error.)

@@ -412,7 +412,7 @@ export class AsyncProcess<
    * cleanly; a generator mid-`await` completes its `finally` when that await
    * settles, because JS offers no way to cancel a pending promise.
    */
-  forceStop(): void {
+  forceStop(opts?: { cascade?: boolean }): void {
     if (this.pvtDead) return;
     this.pvtDead = true;
 
@@ -434,6 +434,15 @@ export class AsyncProcess<
     this.pvtResolveReady();
     this.exitWaiter.resolve();
     this.pvtExitReject = null;
+
+    if (opts?.cascade) {
+      // Stop the children too, starting with the nice stop (fire-and-forget:
+      // the hard kill itself does not block on their graceful exit).
+      const selfSender: SenderInfo = { fromName: this.pname, fromId: this.id };
+      for (const child of this.children) {
+        void child.stop({ force: true, from: selfSender }).catch(() => {});
+      }
+    }
   }
 
   /**
