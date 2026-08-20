@@ -1,6 +1,8 @@
 # posipaki: Orphan policy (actor-level tools)
 
-> **Status**: Actor layer implemented (2026-08-19). The buffered handoff (lossless `adopt`) is still TODO — `adopt` currently uses the simple `ctx.adopt` subscribe.
+> **Status**: Implemented (2026-08-19). The buffered handoff (lossless `adopt`)
+> is in — collector + back-feed + drain, with the pending buffer carried on the
+> orphan process.
 
 ## Summary
 
@@ -53,17 +55,20 @@ onOrphan(orphan) {
 - **force-stop** — hard-kill the orphan (`AsyncProcess.forceStop()` — see below)
   and remove it from `ctx.orphans` imperatively; drop its pending buffer. The
   same applies to own children, which can also be force-stopped.
-- **leave** — do not adopt; remove the collector callback and drop the pending
-  buffer; the orphan propagates up on my exit.
+- **leave** — do not adopt; the orphan keeps its collector and pending buffer
+  and propagates up on my exit (lossless bubbling — the next ancestor adopts or
+  force-stops it).
 - The default, when the actor defines nothing, is **leave**.
 
 #### force-stop is a hard kill, not a STOP message
 
 `force-stop` is *not* `send(STOP)`. STOP is graceful — the generator cooperates
 and emits EXIT. `force-stop` terminates the process immediately: no generator
-`finally`, no EXIT, nothing left to observe. It is a method on `AsyncProcess`
-(currently missing), and the caller removes the process from its `children` /
-`orphans` list imperatively, because there is no EXIT to do that cleanup.
+`finally`, no EXIT, nothing left to observe. It is `AsyncProcess.forceStop()`,
+and the caller removes the process from its `children` / `orphans` list
+imperatively, because there is no EXIT to do that cleanup. `forceStop` also drops
+the process's own handoff state (pending buffer + collector) if it was an
+unowned orphan.
 
 ### adopt — the buffered handoff
 
@@ -81,10 +86,11 @@ process can do it):
 3. **Back-feed** — sweep P's *own* inbox for undrained messages from each orphan
    (`sender.fromId === orphan.id`) and distribute them into the orphan's buffer,
    *ahead of* whatever the collector has already buffered (they predate the cut).
-4. **Hand off** — P's EXIT carries the orphans, and in a **separate payload
-   field** their pending buffers: `orphans: AnyProcess[]` plus
-   `pending: Map<symbol, WithSender<Message>[]>`. The buffers are *live*: the
-   collector keeps appending while the handoff is in flight.
+4. **Hand off** — P's EXIT carries the orphans (in-process handles). Each
+   orphan carries its own live pending buffer (`pvtPending`) and collector
+   unsubscribe (`pvtCollectorUnsub`) on the process object, so no separate
+   `pending` payload field is needed — the buffer travels with the orphan. It is
+   *live*: the collector keeps appending while the handoff is in flight.
 5. **On adopt** — G subscribes to the orphan first, removes the collector, then
    drains the (still-growing) buffer into G's inbox. Order is back-fed →
    collector → live.
@@ -95,10 +101,11 @@ post-adopt (newest).
 ### The leak is G's problem
 
 The collector buffers without bound while the orphan is unowned. If G adopts,
-the drain empties it. If G does not adopt (`leave`/`force-stop`), G removes the
-collector callback and drops the buffer. No pause is involved; `pause()` freezes
-dispatch but not async-callback emission, so it is deliberately out of scope
-here (and marked half-working in the source).
+the drain empties it. If G force-stops, `forceStop` drops the buffer. If G
+leaves, the orphan keeps the collector + buffer and bubbles up, so the next
+ancestor becomes responsible for adopt/force-stop. No pause is involved;
+`pause()` freezes dispatch but not async-callback emission, so it is
+deliberately out of scope here (and marked half-working in the source).
 
 ### Why the cut is atomic
 
@@ -111,8 +118,9 @@ equally be a mode switch inside `pvtChildMessage` (a flag: `send` vs
 
 ## Relationship to other proposals
 
-- Depends on `ctx-orphans.md` — the EXIT payload gains a separate `pending`
-  buffer alongside `orphans`.
+- Depends on `ctx-orphans.md` — the EXIT carries the orphans (in-process
+  handles); the pending buffer lives on the orphan process rather than as a
+  separate EXIT field.
 - Depends on `process-links.md` — `adopt`/`monitor` and the discriminated
   `subscribe` are the primitives the collector and the subscribe/drain steps are
   built on.
@@ -131,5 +139,5 @@ equally be a mode switch inside `pvtChildMessage` (a flag: `send` vs
 - ✅ `onOrphan(orphan)` hook on `defineActor` (returns `'adopt' | 'force-stop' | 'leave'`).
 - ✅ `force-stop` — `orphan.forceStop({ cascade: true })` + imperative removal from `ctx.orphans`.
 - ✅ `leave` (default) — orphan stays in `ctx.orphans`, propagates up on exit.
-- ✅ `adopt` (lossy) — `ctx.adopt(orphan)` subscribes and promotes to `children`.
-- ⏳ `adopt` (lossless) — the collector + back-feed + `pending` buffer handoff described above is not yet implemented.
+- ✅ `adopt` (lossless) — `ctx.adopt(orphan)` subscribes, removes the collector,
+  and drains the orphan's pending buffer (back-fed + collector) into the inbox.

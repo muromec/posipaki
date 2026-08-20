@@ -31,7 +31,7 @@ proposal, the small core-level half) and **policy** (the actor-level proposal,
 - `AsyncProcess.orphans: Array<AsyncProcess<...>>` — a second collection; the
   existing `ctx` exposes it as `ctx.orphans` (same array, like `ctx.children`).
 - **Collect on child EXIT.** A child's EXIT message carries its still-running
-  children (in-process handles). The parent's `fromChild` appends them to
+  children (in-process handles). The parent's `pvtChildMessage` appends them to
   `this.orphans` when it sees the EXIT — alongside its existing job of removing
   the exiting child from `this.children`.
 - **Propagate on own EXIT.** In `pvtWatchExit`'s `finally`, after the STOP
@@ -47,9 +47,11 @@ proposal, the small core-level half) and **policy** (the actor-level proposal,
 
 All in `src/process.async.ts` (+ the `ProcessCtx` type):
 
-- `pvtWatchExit` — collects survivors and orphans into the EXIT payload.
-- `fromChild` — on EXIT, removes the dead child and appends the carried orphans
-  to `this.orphans`.
+- `pvtWatchExit` — collects survivors and orphans into the EXIT payload; via
+  `pvtPrepareHandoff` it also installs a collector on each orphan so its in-flight
+  messages are buffered losslessly (see `orphan-policy.md`).
+- `pvtChildMessage` — on EXIT, removes the dead child and appends the carried
+  orphans to `this.orphans`.
 
 No `defineActor` involvement.
 

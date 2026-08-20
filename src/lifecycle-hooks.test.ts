@@ -30,6 +30,17 @@ async function settle() {
   await new Promise((r) => setTimeout(r, 20));
 }
 
+/** Poll until `fn` is truthy, throwing after `timeoutMs` (deterministic waits). */
+async function until(fn: () => boolean, timeoutMs = 2000): Promise<void> {
+  const start = Date.now();
+  while (!fn()) {
+    if (Date.now() - start > timeoutMs) {
+      throw new Error("until: condition not met within timeout");
+    }
+    await new Promise((r) => setTimeout(r, 5));
+  }
+}
+
 // ── helpers ──────────────────────────────────────────────────────────────
 
 interface PokeMsg extends Message {
@@ -723,6 +734,226 @@ describe("orphan policy (onOrphan)", () => {
     await settle();
 
     expect(proc.orphans.map((o) => o.pname)).toEqual(["parent:child:grandchild"]);
+    proc.send({ type: "STOP" });
+    await proc.wait();
+  });
+});
+
+
+// ── orphan handoff (lossless adopt) ──────────────────────────────────────
+
+describe("orphan handoff (lossless adopt)", () => {
+  interface HandoffMsg extends Message {
+    type: "HANDOFF";
+    value: number;
+  }
+  const HandoffIn = defineMessages<HandoffMsg>();
+  const HandoffOut = defineMessages<HandoffMsg>();
+
+  it("recovers a message the orphan emits during the handoff window", async () => {
+    withTimeoutMiss(); // child's cascade: grandchild refuses → orphaned
+    withTimeoutMiss(); // parent's cascade: adopted grandchild refuses → orphaned again
+
+    const received: number[] = [];
+
+    const Grandchild = defineActor({
+      name: "grandchild",
+      outMessages: HandoffOut,
+      onStopRequested() {
+        // Emitted while processing STOP, which happens *after* the child has
+        // installed its collector — so this lands in the collector's buffer.
+        this.emit({ type: "HANDOFF", value: 42 });
+        // (do not call agreeToStop — refuse to stop)
+      },
+      handlers: {},
+    });
+    const Child = defineActor({
+      name: "child",
+      outMessages: HandoffOut,
+      async setup() {
+        await this.fork(Grandchild, undefined, {});
+        return {};
+      },
+      afterStart() {
+        this.exit();
+      },
+      handlers: {},
+    });
+    const Parent = defineActor({
+      name: "parent",
+      inMessages: HandoffIn,
+      onOrphan() {
+        return "adopt";
+      },
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {
+        HANDOFF(msg) {
+          received.push(msg.value);
+        },
+      },
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.ready();
+    const child = proc.children[0];
+    await child.wait();
+    await settle();
+
+    expect(received).toEqual([42]);
+    expect(proc.orphans.length).toBe(0);
+    expect(proc.children.map((c) => c.pname)).toContain(
+      "parent:child:grandchild",
+    );
+    proc.send({ type: "STOP" });
+    await proc.wait();
+  });
+
+  it("back-feeds a message the orphan emitted into the dying parent's inbox", async () => {
+    // The child's cascade hangs on a *controlled* timeout so the grandchild can
+    // emit while the child is still subscribed — the message lands in the
+    // child's inbox (Window A) and is recovered by back-feed, not the collector.
+    let release: (() => void) | null = null;
+    let emitted = false;
+    vi.mocked(withTimeout).mockImplementationOnce(
+      () =>
+        new Promise((_, reject) => {
+          release = () => reject(new Error("Timeout:stop"));
+        }),
+    );
+    withTimeoutMiss(); // parent's cascade: adopted grandchild refuses
+
+    const received: number[] = [];
+
+    const Grandchild = defineActor({
+      name: "grandchild",
+      outMessages: HandoffOut,
+      async onStopRequested() {
+        await this.emit({ type: "HANDOFF", value: 7 });
+        emitted = true;
+      },
+      handlers: {},
+    });
+    const Child = defineActor({
+      name: "child",
+      outMessages: HandoffOut,
+      async setup() {
+        await this.fork(Grandchild, undefined, {});
+        return {};
+      },
+      afterStart() {
+        this.exit();
+      },
+      handlers: {},
+    });
+    const Parent = defineActor({
+      name: "parent",
+      inMessages: HandoffIn,
+      onOrphan() {
+        return "adopt";
+      },
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {
+        HANDOFF(msg) {
+          received.push(msg.value);
+        },
+      },
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.ready();
+    const child = proc.children[0];
+    // Wait until the grandchild has processed STOP and emitted into the child's
+    // still-live inbox, then release the cascade timeout so the child finishes
+    // exiting (and back-feeds the message to the adopting parent).
+    await until(() => emitted);
+    release!();
+    await child.wait();
+    await settle();
+
+    expect(received).toEqual([7]);
+    proc.send({ type: "STOP" });
+    await proc.wait();
+  });
+
+  it("drains an orphan that self-stops while unowned (its EXIT lands in the collector)", async () => {
+    withTimeoutMiss(); // child's cascade: grandchild refuses → orphaned
+
+    let gateReached = false;
+    let releaseGate: (() => void) | null = null;
+    const gate = new Promise<void>((resolve) => {
+      releaseGate = resolve;
+    });
+
+    const exitedNames: string[] = [];
+
+    const Grandchild = defineActor({
+      name: "grandchild",
+      onStopRequested() {
+        // refuse to stop (no agreeToStop) — this is what orphans it
+      },
+      handlers: {
+        DIE() {
+          this.exit();
+        },
+      },
+    });
+    const Child = defineActor({
+      name: "child",
+      async setup() {
+        await this.fork(Grandchild, undefined, {});
+        return {};
+      },
+      afterStart() {
+        this.exit();
+      },
+      handlers: {},
+    });
+    const Parent = defineActor({
+      name: "parent",
+      async onOrphan() {
+        gateReached = true;
+        await gate; // hold the orphan unowned while we make it self-stop
+        return "adopt" as const;
+      },
+      onChildExit(name) {
+        exitedNames.push(name);
+      },
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.ready();
+    const child = proc.children[0];
+    await child.wait();
+    // Parent is now holding onOrphan at the gate: the grandchild is unowned and
+    // its collector is buffering. Make it self-stop so its EXIT lands in the
+    // collector's buffer rather than reaching anyone in real time.
+    await until(() => gateReached);
+    const gc = proc.orphans[0];
+    gc.send({ type: "DIE" });
+    await gc.wait();
+
+    releaseGate!();
+    await settle();
+
+    // The drained EXIT removed the (dead) orphan from children and fired
+    // onChildExit for it — the handoff closes cleanly.
+    expect(proc.children.map((c) => c.pname)).not.toContain(
+      "parent:child:grandchild",
+    );
+    expect(proc.orphans.length).toBe(0);
+    expect(exitedNames).toContain("parent:child:grandchild");
+
     proc.send({ type: "STOP" });
     await proc.wait();
   });

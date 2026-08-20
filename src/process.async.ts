@@ -97,8 +97,14 @@ export class AsyncProcess<
     AsyncProcess<unknown, unknown, Message, Message, {}>
   > = [];
   private stateSubscribers: Array<NotifyFn> = [];
-  /** Unsubscribe handles for outgoing message subscriptions (adopt/monitor). */
+  /** Unsubscribe handles for outgoing message subscriptions (monitor only). */
   private pvtOutgoingSubscriptions: Array<() => void> = [];
+  /** Unsubscribe handles for adopt (ownership) subscriptions, keyed by child id. */
+  private pvtAdoptUnsubs: Map<symbol, () => void> = new Map();
+  /** Live buffer while this process is an unowned orphan mid-handoff. */
+  private pvtPending: Array<WithSender<Message>> | null = null;
+  /** Unsubscribe for the collector currently buffering into pvtPending. */
+  private pvtCollectorUnsub: (() => void) | null = null;
   private exitWaiter: Waiter;
   private pvtIsPaused: boolean = false;
   private pvtDead: boolean = false;
@@ -202,11 +208,11 @@ export class AsyncProcess<
       await Promise.all(stopPromises);
       // Hand surviving children and inherited orphans up to the parent for adoption (see ctx-orphans proposal).
       // In-process only.
+      this.pvtPrepareHandoff(orphans);
       ctx.toParent({ type: "EXIT", orphans });
       // Unsubscribe from children/monitored processes so a dead parent
-      // doesn't keep receiving their messages.
-      for (const unsub of this.pvtOutgoingSubscriptions) unsub();
-      this.pvtOutgoingSubscriptions = [];
+      // doesn't keep receiving their messages (handoff collectors stay on the orphans).
+      this.pvtUnsubscribeAll();
       if (ctx.afterExit) await ctx.afterExit();
     }
   }
@@ -427,8 +433,10 @@ export class AsyncProcess<
     // Release incoming observers and outgoing subscriptions.
     this.messageSubscribers.length = 0;
     this.stateSubscribers.length = 0;
-    for (const unsub of this.pvtOutgoingSubscriptions) unsub();
-    this.pvtOutgoingSubscriptions = [];
+    this.pvtUnsubscribeAll();
+    // Drop any handoff state this process carried as an unowned orphan.
+    this.pvtCollectorUnsub = null;
+    this.pvtPending = null;
 
     // Settle waiters.
     this.pvtResolveReady();
@@ -538,7 +546,9 @@ export class AsyncProcess<
     const unsub = child.subscribe("message", (msg, from) => {
       this.pvtChildMessage(msg, from);
     });
-    this.pvtOutgoingSubscriptions.push(unsub);
+    this.pvtAdoptUnsubs.set(child.id, unsub);
+    // Lossless handoff: drain a pending buffer left by the previous parent.
+    this.pvtDrainPending(child as unknown as AnyProcess);
     return unsub;
   }
 
@@ -555,6 +565,70 @@ export class AsyncProcess<
       }
     }
     this.send([msg, sender] as WithSender<InMessage | StopMessage>);
+  }
+
+  // ---- orphan handoff -------------------------------------------------------
+
+  /** Unsubscribe from all outgoing subscriptions (monitors + adopt). */
+  private pvtUnsubscribeAll(): void {
+    for (const unsub of this.pvtOutgoingSubscriptions) unsub();
+    this.pvtOutgoingSubscriptions = [];
+    for (const unsub of this.pvtAdoptUnsubs.values()) unsub();
+    this.pvtAdoptUnsubs.clear();
+  }
+
+  /** Prepare surviving children and inherited orphans for a lossless handoff:
+   *  recover undrained messages and install a collector on each orphan. */
+  private pvtPrepareHandoff(orphans: Array<AnyProcess>): void {
+    for (const orphan of orphans) {
+      this.pvtBackFeed(orphan);
+      if (!orphan.pvtCollectorUnsub) {
+        this.pvtSwapToCollector(orphan);
+      }
+    }
+  }
+
+  /** Recover messages the orphan emitted into my inbox that I never drained. */
+  private pvtBackFeed(orphan: AnyProcess): void {
+    const fromOrphan: Array<WithSender<Message>> = [];
+    this.buffer = this.buffer.filter((entry) => {
+      if (entry[1].fromId === orphan.id) {
+        fromOrphan.push(entry);
+        return false;
+      }
+      return true;
+    });
+    if (fromOrphan.length === 0) return;
+    if (!orphan.pvtPending) orphan.pvtPending = [];
+    orphan.pvtPending.unshift(...fromOrphan);
+  }
+
+  /** Replace my ownership subscription to `orphan` with a handoff collector. */
+  private pvtSwapToCollector(orphan: AnyProcess): void {
+    const mine = this.pvtAdoptUnsubs.get(orphan.id);
+    if (mine) {
+      mine();
+      this.pvtAdoptUnsubs.delete(orphan.id);
+    }
+    if (!orphan.pvtPending) orphan.pvtPending = [];
+    const pending = orphan.pvtPending;
+    orphan.pvtCollectorUnsub = orphan.subscribe("message", (msg, from) => {
+      pending.push([msg, from]);
+    });
+  }
+
+  /** Drain a handed-off orphan's pending buffer into my inbox (lossless adopt). */
+  private pvtDrainPending(orphan: AnyProcess): void {
+    if (orphan.pvtCollectorUnsub) {
+      orphan.pvtCollectorUnsub();
+      orphan.pvtCollectorUnsub = null;
+    }
+    const pending = orphan.pvtPending;
+    if (!pending) return;
+    orphan.pvtPending = null;
+    for (const [msg, from] of pending) {
+      this.pvtChildMessage(msg, from);
+    }
   }
 }
 export type AnyProcess = AsyncProcess<unknown, unknown, Message, Message, {}>;
