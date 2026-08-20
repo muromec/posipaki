@@ -185,10 +185,10 @@ describe("inspect", () => {
     });
   });
 
-  describe("stop", () => {
-    it("calls agreeToStop and causes the actor to exit", async () => {
+  describe("exit", () => {
+    it("causes the actor to exit from inside", async () => {
       const Actor = defineActor({
-        name: "stop-test",
+        name: "exit-test",
         plugins: [inspect()],
         handlers: {},
       });
@@ -196,7 +196,79 @@ describe("inspect", () => {
       const proc = await Actor.spawn({});
       await proc.ready();
 
-      proc.$reflection["inspect.stop"]();
+      proc.$reflection["inspect.exit"]();
+      await proc.wait();
+    });
+  });
+
+  describe("find", () => {
+    it("returns a descendant process by full pname", async () => {
+      const Child = defineActor({
+        name: "leaf",
+        plugins: [inspect()],
+        handlers: {},
+      });
+      const Parent = defineActor({
+        name: "parent",
+        plugins: [inspect()],
+        async setup(this: any) {
+          await this.fork(Child, undefined, { name: "kid" });
+          return {};
+        },
+        handlers: {},
+      });
+
+      const proc = await Parent.spawn({});
+      await proc.ready();
+
+      const found = proc.$reflection["inspect.find"]("parent:kid");
+      expect(found).not.toBeNull();
+      expect(found!.pname).toBe("parent:kid");
+
+      proc.send({ type: "STOP" });
+      await proc.wait();
+    });
+
+    it("reaches children without the inspect plugin", async () => {
+      const Plain = defineActor({
+        name: "plain",
+        plugins: [], // block inheritance
+        handlers: {},
+      });
+      const Parent = defineActor({
+        name: "root",
+        plugins: [inspect()],
+        async setup(this: any) {
+          await this.fork(Plain, undefined, { name: "plain-child" });
+          return {};
+        },
+        handlers: {},
+      });
+
+      const proc = await Parent.spawn({});
+      await proc.ready();
+
+      const found = proc.$reflection["inspect.find"]("root:plain-child");
+      expect(found).not.toBeNull();
+      expect(found!.pname).toBe("root:plain-child");
+
+      proc.send({ type: "STOP" });
+      await proc.wait();
+    });
+
+    it("returns null for an unknown pname", async () => {
+      const Actor = defineActor({
+        name: "solo",
+        plugins: [inspect()],
+        handlers: {},
+      });
+
+      const proc = await Actor.spawn({});
+      await proc.ready();
+
+      expect(proc.$reflection["inspect.find"]("nope")).toBeNull();
+
+      proc.send({ type: "STOP" });
       await proc.wait();
     });
   });

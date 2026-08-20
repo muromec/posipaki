@@ -1,19 +1,22 @@
 import { mergeConfigs } from "../hooks.js";
 import type { ActorPlugin, ActorReflection as AR } from "../hooks.js";
 import { AnyProcessCtx } from "../types.js";
+import type { AnyProcess } from "../process.async.js";
 
 declare module "../index" {
   interface ActorReflection {
     "inspect.getTree": TreeReflectionMethods["inspect.getTree"];
     "inspect.getState": TreeReflectionMethods["inspect.getState"];
-    "inspect.stop": TreeReflectionMethods["inspect.stop"];
+    "inspect.find": TreeReflectionMethods["inspect.find"];
+    "inspect.exit": TreeReflectionMethods["inspect.exit"];
   }
 }
 
 interface TreeReflectionMethods {
   "inspect.getTree": (prefix?: string) => TreeNode;
   "inspect.getState": () => unknown;
-  "inspect.stop": () => void;
+  "inspect.find": (pname: string) => AnyProcess | null;
+  "inspect.exit": () => void;
 }
 
 export interface TreeNode {
@@ -21,6 +24,16 @@ export interface TreeNode {
   parentName: string | null;
   children: TreeNode[];
   status: "running" | "no introspection";
+}
+
+/** Depth-first search for a live process by its full `pname`. */
+function findProcess(procs: Iterable<AnyProcess>, pname: string): AnyProcess | null {
+  for (const proc of procs) {
+    if (proc.pname === pname) return proc;
+    const found = findProcess(proc.children, pname);
+    if (found) return found;
+  }
+  return null;
 }
 
 export function inspect(): ActorPlugin {
@@ -58,7 +71,11 @@ export function inspect(): ActorPlugin {
           const state = this.state as unknown;
           return state;
         },
-        "inspect.stop": function () {
+        "inspect.find": function (pname: string) {
+          const selfCtx = this.ctx as AnyProcessCtx;
+          return findProcess(selfCtx.children, pname);
+        },
+        "inspect.exit": function () {
           this.exit("inspector");
         },
       },

@@ -128,6 +128,12 @@ export class AsyncProcess<
     this.pvtResolveReady = this.pvtReady.resolve;
   }
 
+  /** Compact handle for `util.inspect` — actor state often holds process
+   *  references, and dumping the internals would be unreadable. */
+  [Symbol.for("nodejs.util.inspect.custom")](): string {
+    return `AsyncProcess<${this.pname}>`;
+  }
+
   /** Promise that resolves once the initial state is available. */
   ready(): Promise<void> {
     return this.pvtReady.promise;
