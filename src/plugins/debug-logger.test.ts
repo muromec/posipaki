@@ -1,9 +1,9 @@
 // ── debugLogger Plugin Tests ────────────────────────────────────────────
 
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, beforeEach } from "vitest";
 import { defineActor, defineMessages } from "../define-actor.js";
 import type { Message } from "../types.js";
-import { debugLogger } from "./debug-logger.js";
+import { debugLogger, defaultMsgFilter } from "./debug-logger.js";
 import type { Logger } from "./debug-logger.js";
 import assert from "assert";
 
@@ -16,7 +16,6 @@ interface PokeMsg extends Message {
 interface NopMsg extends Message {
   type: "NOP";
 }
-
 const Pin = defineMessages<PokeMsg | NopMsg>();
 const Pout = defineMessages<PokeMsg>();
 
@@ -24,8 +23,29 @@ const Pout = defineMessages<PokeMsg>();
 
 interface DebugCall {
   name: string;
-  msgType: string;
-  kind: string;
+  kind: "debug" | "msg" | "error" | "lifecycle";
+  msgType?: string;
+  event?: string;
+  payload?: unknown;
+}
+
+function recordFactory(calls: DebugCall[]): (name: string) => Logger {
+  return (name: string) => ({
+    debug: (msg: string) => {
+      calls.push({ name, kind: "debug", msgType: msg.match(/← (\w+)/)?.[1] ?? "" });
+    },
+    info: () => {},
+    warn: () => {},
+    error: () => {
+      calls.push({ name, kind: "error" });
+    },
+    msg: (message: Message) => {
+      calls.push({ name, kind: "msg", msgType: message.type, payload: message });
+    },
+    lifecycle: (event: string, detail?: unknown) => {
+      calls.push({ name, kind: "lifecycle", event, payload: detail });
+    },
+  });
 }
 
 function makeActor(name: string, opts?: Parameters<typeof debugLogger>[0]) {
@@ -40,21 +60,6 @@ function makeActor(name: string, opts?: Parameters<typeof debugLogger>[0]) {
         this.state.x = 42;
       },
       NOP() {},
-    },
-  });
-}
-
-function recordFactory(calls: DebugCall[]): (name: string) => Logger {
-  return (name: string) => ({
-    debug: (msg: string) => {
-      const m = msg.match(/← (\w+)/);
-      calls.push({ name, msgType: m ? m[1] : "", kind: "debug" });
-    },
-    info: () => {},
-    warn: () => {},
-    error: (_msg: string) => {},
-    msg: (message: Message) => {
-      calls.push({ name, msgType: message.type, kind: "msg" });
     },
   });
 }
@@ -77,79 +82,84 @@ describe("debugLogger", () => {
   beforeEach(() => {
     calls = [];
   });
-  afterEach(() => {
-    delete process.env.DEBUG;
+
+  describe("lifecycle events", () => {
+    it("emits started / stopping / stopped", async () => {
+      const Actor = makeActor("lifecycle-test", { factory: recordFactory(calls) });
+      const proc = await Actor.spawn({});
+      await proc.ready();
+      proc.send({ type: "STOP" });
+      await proc.wait();
+
+      const events = calls.filter((c) => c.kind === "lifecycle").map((c) => c.event);
+      expect(events).toContain("started");
+      expect(events).toContain("stopping");
+      expect(events).toContain("stopped");
+    });
+
+    it("emits child-exited when a forked child exits", async () => {
+      const Child = defineActor({
+        name: "child",
+        afterStart() {
+          this.exit();
+        },
+        handlers: {},
+      });
+      const Parent = defineActor({
+        name: "parent",
+        plugins: [debugLogger({ factory: recordFactory(calls) })],
+        async setup() {
+          await this.fork(Child, undefined, {});
+          return {};
+        },
+        handlers: {},
+      });
+      const proc = await Parent.spawn({});
+      await proc.ready();
+      await new Promise((r) => setTimeout(r, 20));
+      proc.send({ type: "STOP" });
+      await proc.wait();
+
+      const childExits = calls.filter(
+        (c) => c.kind === "lifecycle" && c.event === "child-exited",
+      );
+      expect(childExits.length).toBeGreaterThan(0);
+      expect(childExits[0].payload).toBe("parent:child");
+    });
+
+    it("registers hooks regardless of the DEBUG env var", async () => {
+      delete process.env.DEBUG;
+      const Actor = makeActor("no-debug-gate", { factory: recordFactory(calls) });
+      await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 1 });
+      expect(calls.filter((c) => c.kind === "lifecycle").length).toBeGreaterThan(0);
+    });
   });
 
-  describe("pattern matching", () => {
-    it("* matches everything", async () => {
-      process.env.DEBUG = "*";
-      const Actor = makeActor("some-actor", {
+  describe("message filter (shrink / skip)", () => {
+    it("skips a message when the filter returns null", async () => {
+      const Actor = makeActor("filter-skip", {
         factory: recordFactory(calls),
+        msgFilter: (msg) => (msg.type === "POKE" ? null : msg),
       });
       await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 1 });
-      expect(calls.some((c) => c.name === "some-actor")).toBe(true);
+      expect(calls.filter((c) => c.kind === "msg" && c.msgType === "POKE")).toEqual([]);
     });
 
-    it("prefix:* matches subtree", async () => {
-      process.env.DEBUG = "openai:*";
-      const Actor = makeActor("openai:connector", {
+    it("logs the shrunk payload when the filter shrinks", async () => {
+      const Actor = makeActor("filter-shrink", {
         factory: recordFactory(calls),
+        msgFilter: (msg) =>
+          msg.type === "POKE" ? ({ ...msg, value: 0 } as PokeMsg) : msg,
       });
-      await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 1 });
-      expect(calls.some((c) => c.name === "openai:connector")).toBe(true);
-    });
-
-    it("exact name match", async () => {
-      process.env.DEBUG = "openai:connector";
-      const Actor = makeActor("openai:connector", {
-        factory: recordFactory(calls),
-      });
-      await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 1 });
-      expect(calls.some((c) => c.name === "openai:connector")).toBe(true);
-    });
-
-    it("non-matching actor is skipped", async () => {
-      process.env.DEBUG = "openai:connector";
-      const Actor = makeActor("openai:tools", {
-        factory: recordFactory(calls),
-      });
-      await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 1 });
-      expect(calls.some((c) => c.name === "openai:tools")).toBe(false);
-    });
-
-    it("multiple comma-separated patterns", async () => {
-      process.env.DEBUG = "openai:connector,reflector:*";
-      await sendAndStop(
-        await makeActor("openai:connector", {
-          factory: recordFactory(calls),
-        }).spawn({}),
-        { type: "POKE", value: 1 },
-      );
-      expect(calls.some((c) => c.name === "openai:connector")).toBe(true);
-      calls.length = 0;
-      await sendAndStop(
-        await makeActor("reflector:openai", {
-          factory: recordFactory(calls),
-        }).spawn({}),
-        { type: "POKE", value: 1 },
-      );
-      expect(calls.some((c) => c.name === "reflector:openai")).toBe(true);
-    });
-
-    it("empty DEBUG skips everything", async () => {
-      delete process.env.DEBUG;
-      const Actor = makeActor("anything", {
-        factory: recordFactory(calls),
-      });
-      await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 1 });
-      expect(calls.length).toBe(0);
+      await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 99 });
+      const logged = calls.find((c) => c.kind === "msg" && c.msgType === "POKE");
+      expect(logged).toBeDefined();
+      expect((logged!.payload as PokeMsg).value).toBe(0);
     });
   });
 
   describe("ignore option", () => {
     it("silences listed message types", async () => {
-      process.env.DEBUG = "*";
       const Actor = makeActor("ignore-test", {
         ignore: ["POKE"],
         factory: recordFactory(calls),
@@ -160,14 +170,42 @@ describe("debugLogger", () => {
       proc.send({ type: "NOP" });
       proc.send({ type: "STOP" });
       await proc.wait();
-      expect(calls.filter((c) => c.msgType === "POKE").length).toBe(0);
-      expect(calls.filter((c) => c.msgType === "NOP").length).toBe(1);
+      expect(calls.filter((c) => c.kind === "msg" && c.msgType === "POKE").length).toBe(0);
+      expect(calls.filter((c) => c.kind === "msg" && c.msgType === "NOP").length).toBe(1);
+    });
+  });
+
+  describe("default msgFilter", () => {
+    it("shrinks oversized string and array fields", () => {
+      const shrunk = defaultMsgFilter({
+        type: "BIG",
+        history: Array.from({ length: 100 }, () => "x"),
+        note: "a".repeat(1000),
+      } as unknown as Message) as unknown as Record<string, unknown>;
+      expect(shrunk.history).toBe("[100 items]");
+      expect(shrunk.note).toContain("… (1000 chars)");
+    });
+
+    it("leaves small messages untouched", () => {
+      const msg: Message = { type: "SMALL", value: 1 } as unknown as Message;
+      expect(defaultMsgFilter(msg)).toBe(msg);
+    });
+
+    it("applies by default when no custom filter is given", async () => {
+      const Actor = makeActor("default-shrink", { factory: recordFactory(calls) });
+      const proc = await Actor.spawn({});
+      await proc.ready();
+      proc.send({ type: "NOP", history: Array.from({ length: 50 }, () => "x") } as unknown as NopMsg);
+      proc.send({ type: "STOP" });
+      await proc.wait();
+      const logged = calls.find((c) => c.kind === "msg" && c.msgType === "NOP");
+      expect(logged).toBeDefined();
+      expect((logged!.payload as Record<string, unknown>).history).toBe("[50 items]");
     });
   });
 
   describe("decoration", () => {
-    it("decorates self.log on every actor regardless of DEBUG", async () => {
-      delete process.env.DEBUG;
+    it("decorates self.log on every actor", async () => {
       let decoratedLog: Logger = undefined as unknown as Logger;
       const Actor = defineActor({
         name: "decoration-test",
@@ -179,9 +217,10 @@ describe("debugLogger", () => {
       });
       const proc = await Actor.spawn({});
       await proc.ready();
+      await new Promise((r) => setTimeout(r, 0)); // afterStart is chained (async)
       assert(decoratedLog);
-      expect(decoratedLog).toBeDefined();
       expect(decoratedLog.debug).toBeTypeOf("function");
+      expect(decoratedLog.lifecycle).toBeTypeOf("function");
       proc.send({ type: "STOP" });
       await proc.wait();
     });
@@ -189,7 +228,6 @@ describe("debugLogger", () => {
 
   describe("custom factory", () => {
     it("uses the provided logger factory", async () => {
-      process.env.DEBUG = "*";
       const customCalls: string[] = [];
       const Actor = makeActor("custom-test", {
         factory: (name: string) => ({
@@ -202,20 +240,19 @@ describe("debugLogger", () => {
           msg: (message: Message) => {
             customCalls.push(`custom:${name}:msg:${message.type}`);
           },
+          lifecycle: (event: string) => {
+            customCalls.push(`custom:${name}:lifecycle:${event}`);
+          },
         }),
       });
       await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 1 });
-      expect(customCalls.length).toBeGreaterThan(0);
-      expect(customCalls[0]).toContain("custom:custom-test:");
+      expect(customCalls.some((c) => c.includes("lifecycle:started"))).toBe(true);
     });
   });
 
   describe("integration", () => {
     it("does not interfere with normal operation", async () => {
-      process.env.DEBUG = "*";
-      const Actor = makeActor("test-int", {
-        factory: recordFactory(calls),
-      });
+      const Actor = makeActor("test-int", { factory: recordFactory(calls) });
       const proc = await Actor.spawn({});
       await proc.ready();
       proc.send({ type: "POKE", value: 1 });
