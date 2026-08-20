@@ -435,8 +435,7 @@ export class AsyncProcess<
     this.stateSubscribers.length = 0;
     this.pvtUnsubscribeAll();
     // Drop any handoff state this process carried as an unowned orphan.
-    this.pvtCollectorUnsub = null;
-    this.pvtPending = null;
+    this.unparent();
 
     // Settle waiters.
     this.pvtResolveReady();
@@ -629,6 +628,19 @@ export class AsyncProcess<
     for (const [msg, from] of pending) {
       this.pvtChildMessage(msg, from);
     }
+  }
+
+  /**
+   * Drop this process's handoff state (collector + pending buffer) without
+   * stopping it.  Used by `onOrphan`'s "unparent" decision: the orphan keeps
+   * running and stays in the orphans list, but its in-flight buffer is gone.
+   */
+  unparent(): void {
+    if (this.pvtCollectorUnsub) {
+      this.pvtCollectorUnsub();
+      this.pvtCollectorUnsub = null;
+    }
+    this.pvtPending = null;
   }
 }
 export type AnyProcess = AsyncProcess<unknown, unknown, Message, Message, {}>;

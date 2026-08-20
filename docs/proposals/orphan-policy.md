@@ -45,7 +45,7 @@ orphan, it calls the hook and applies the returned decision:
 
 ```ts
 onOrphan(orphan) {
-  return 'adopt' | 'force-stop' | 'leave';
+  return 'adopt' | 'force-stop' | 'unparent' | 'leave';
 }
 ```
 
@@ -55,10 +55,14 @@ onOrphan(orphan) {
 - **force-stop** — hard-kill the orphan (`AsyncProcess.forceStop()` — see below)
   and remove it from `ctx.orphans` imperatively; drop its pending buffer. The
   same applies to own children, which can also be force-stopped.
+- **unparent** — drop the orphan's pending buffer + collector
+  (`AsyncProcess.unparent()`) but keep it running and accounted for in
+  `ctx.orphans`. Its in-flight messages are discarded; a fresh collector is
+  installed when it next bubbles up.
 - **leave** — do not adopt; the orphan keeps its collector and pending buffer
   and propagates up on my exit (lossless bubbling — the next ancestor adopts or
   force-stops it).
-- The default, when the actor defines nothing, is **leave**.
+- The default, when the actor defines nothing, is **force-stop**.
 
 #### force-stop is a hard kill, not a STOP message
 
@@ -136,8 +140,10 @@ equally be a mode switch inside `pvtChildMessage` (a flag: `send` vs
 
 ## Implementation status
 
-- ✅ `onOrphan(orphan)` hook on `defineActor` (returns `'adopt' | 'force-stop' | 'leave'`).
+- ✅ `onOrphan(orphan)` hook on `defineActor` (returns `'adopt' | 'force-stop' | 'unparent' | 'leave'`).
 - ✅ `force-stop` — `orphan.forceStop({ cascade: true })` + imperative removal from `ctx.orphans`.
-- ✅ `leave` (default) — orphan stays in `ctx.orphans`, propagates up on exit.
+- ✅ `unparent` — `orphan.unparent()` drops the buffer + collector, keeps it in `ctx.orphans`.
+- ✅ `leave` — orphan stays in `ctx.orphans` (with its collector), propagates up on exit.
+- ✅ default (no `onOrphan`) — `force-stop`.
 - ✅ `adopt` (lossless) — `ctx.adopt(orphan)` subscribes, removes the collector,
   and drains the orphan's pending buffer (back-fed + collector) into the inbox.

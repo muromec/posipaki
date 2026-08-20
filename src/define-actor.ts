@@ -296,12 +296,15 @@ export function defineActor<
             const orphans = (msg as ExitMessage).orphans;
             if (orphans && orphans.length > 0) {
               for (const orphan of orphans) {
-                const decision = await callHook(
-                  assembly.onOrphan,
-                  assembly.onError,
-                  self,
-                  orphan,
-                );
+                // Default when no hook is defined: hard-kill the orphan.
+                const decision = assembly.onOrphan
+                  ? await callHook(
+                      assembly.onOrphan,
+                      assembly.onError,
+                      self,
+                      orphan,
+                    )
+                  : "force-stop";
                 if (decision === "adopt") {
                   ctx.adopt(orphan);
                   const idx = ctx.orphans.indexOf(orphan);
@@ -311,6 +314,8 @@ export function defineActor<
                   orphan.forceStop({ cascade: true });
                   const idx = ctx.orphans.indexOf(orphan);
                   if (idx >= 0) ctx.orphans.splice(idx, 1);
+                } else if (decision === "unparent") {
+                  orphan.unparent();
                 }
                 // 'leave' (or undefined) → do nothing; it propagates on exit.
               }

@@ -716,7 +716,7 @@ describe("orphan policy (onOrphan)", () => {
     await proc.wait();
   });
 
-  it("leaves an orphan by default (no onOrphan)", async () => {
+  it("force-stops an orphan by default (no onOrphan)", async () => {
     withTimeoutMiss();
     const Parent = defineActor({
       name: "parent",
@@ -733,6 +733,58 @@ describe("orphan policy (onOrphan)", () => {
     await child.wait();
     await settle();
 
+    // No onOrphan → the orphan is hard-killed and removed.
+    expect(proc.orphans.length).toBe(0);
+    proc.send({ type: "STOP" });
+    await proc.wait();
+  });
+
+  it("leaves an orphan via onOrphan 'leave'", async () => {
+    withTimeoutMiss();
+    const Parent = defineActor({
+      name: "parent",
+      onOrphan() {
+        return "leave";
+      },
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.ready();
+    const child = proc.children[0];
+    await child.wait();
+    await settle();
+
+    expect(proc.orphans.map((o) => o.pname)).toEqual(["parent:child:grandchild"]);
+    proc.send({ type: "STOP" });
+    await proc.wait();
+  });
+
+  it("unparents an orphan via onOrphan 'unparent'", async () => {
+    withTimeoutMiss();
+    const Parent = defineActor({
+      name: "parent",
+      onOrphan() {
+        return "unparent";
+      },
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.ready();
+    const child = proc.children[0];
+    await child.wait();
+    await settle();
+
+    // Buffer dropped but the orphan keeps running, still accounted for.
     expect(proc.orphans.map((o) => o.pname)).toEqual(["parent:child:grandchild"]);
     proc.send({ type: "STOP" });
     await proc.wait();
@@ -956,5 +1008,105 @@ describe("orphan handoff (lossless adopt)", () => {
 
     proc.send({ type: "STOP" });
     await proc.wait();
+  });
+});
+
+
+// ── orphan policy: buffer drop (unparent vs leave) ───────────────────────
+
+describe("orphan policy: buffer drop (unparent vs leave)", () => {
+  interface PongMsg extends Message {
+    type: "PONG";
+  }
+  const PongOut = defineMessages<PongMsg>();
+
+  const Grandchild = defineActor({
+    name: "grandchild",
+    outMessages: PongOut,
+    onStopRequested() {
+      // refuse to stop — this is what orphans it
+    },
+    handlers: {
+      PING() {
+        this.emit({ type: "PONG" });
+      },
+    },
+  });
+  const Child = defineActor({
+    name: "child",
+    async setup() {
+      await this.fork(Grandchild, undefined, {});
+      return {};
+    },
+    afterStart() {
+      this.exit();
+    },
+    handlers: {},
+  });
+
+  async function runTree(decision: "unparent" | "leave") {
+    let pDecided = false;
+    let receivedPong = false;
+
+    const Parent = defineActor({
+      name: "parent",
+      onOrphan() {
+        pDecided = true;
+        return decision;
+      },
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      handlers: {},
+    });
+    const GrandParent = defineActor({
+      name: "grandparent",
+      onOrphan() {
+        return "adopt";
+      },
+      async setup() {
+        await this.fork(Parent, undefined, {});
+        return {};
+      },
+      handlers: {
+        PONG() {
+          receivedPong = true;
+        },
+      },
+    });
+
+    const gg = await GrandParent.spawn({});
+    await gg.ready();
+    const parent = gg.children[0];
+    await until(() => pDecided);
+    // Parent has made its decision; ping the still-orphaned grandchild, then
+    // stop Parent so the grandchild bubbles up and the grandparent adopts it.
+    const gc = parent.orphans[0];
+    gc.send({ type: "PING" });
+    await settle();
+    parent.send({ type: "STOP" });
+    await parent.wait();
+    await settle();
+
+    return { gg, receivedPong };
+  }
+
+  it("unparent drops the orphan's in-flight buffer", async () => {
+    withTimeoutMiss(); // child's cascade
+    withTimeoutMiss(); // grandparent's cascade (adopted grandchild refuses)
+    const { gg, receivedPong } = await runTree("unparent");
+    expect(receivedPong).toBe(false);
+    gg.send({ type: "STOP" });
+    await gg.wait();
+  });
+
+  it("leave preserves the orphan's in-flight buffer", async () => {
+    withTimeoutMiss();
+    withTimeoutMiss();
+    const { gg, receivedPong } = await runTree("leave");
+    expect(receivedPong).toBe(true);
+    gg.send({ type: "STOP" });
+    await gg.wait();
   });
 });
