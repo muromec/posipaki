@@ -41,3 +41,23 @@ export function toMatcher<M extends Message>(spec: MatchSpec<M>): Matcher<M> {
   // Single literal: the latest message must shallow-match.
   return (msg) => shallowMatch(msg, spec);
 }
+
+/**
+ * Occurrence matcher: matches when at least `n` messages in the history
+ * satisfy `spec`.  This is the canonical form for "Nth occurrence" waits:
+ *
+ *   const c = createCollector<PongMsg>({ type: "PONG" });
+ *   await c.next(times({ type: "PONG" }, 3));  // wait for the 3rd PONG
+ *
+ * Note: `history` accumulates, so this counts occurrences over the whole
+ * collected history, not since the previous `next()`.  Use `reset()` with a
+ * fresh collector for windowed counts.
+ */
+export function times<M extends Message>(
+  spec: Partial<M> | Matcher<M>,
+  n: number,
+): Matcher<M> {
+  const single: Matcher<M> =
+    typeof spec === "function" ? spec : (m) => shallowMatch(m, spec);
+  return (_msg, history) => history.filter((m) => single(m, history)).length >= n;
+}

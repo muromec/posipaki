@@ -2,6 +2,12 @@
 //
 // createCollector: per-actor message collector plugin.
 // createRootTracker: global process tracker for cleanup.
+//
+// Observation model: the collector is a plugin installed on the root.  It
+// sees every message that flows through the process's onEmit, filtered by
+// a pname scope (default: the root and everything below it).  Waiting is
+// event-driven — `resolved()` settles when a matching message arrives, the
+// actor exits, or an explicit timeout fires.  No polling.
 
 import { mergeConfigs, type ActorPlugin } from "../hooks.js";
 import type { Message, StopMessage, SenderInfo, ProcessCtx } from "../types.js";
@@ -12,20 +18,44 @@ import { pnameMatch } from "./pname-match.js";
 
 export interface MatchResult {
   ok: boolean;
+  /** Human-readable diagnosis on failure (timeout / exit-before-match). */
   detail?: string;
 }
 
 export interface Collector<M extends Message> {
   plugin: ActorPlugin;
   messages: M[];
-  resolved(): Promise<MatchResult>;
-  next(filter: MatchSpec<M>): Promise<MatchResult>;
+  /**
+   * Wait until the collected history matches the current filter.
+   *
+   * @param timeoutMs - optional deadline.  Without one, the promise settles
+   *   when the actor exits (with `ok: false`) — pass a timeout for a hard
+   *   failure with a diagnostic instead of relying on the test runner's
+   *   global timeout.
+   */
+  resolved(timeoutMs?: number): Promise<MatchResult>;
+  next(filter: MatchSpec<M>, timeoutMs?: number): Promise<MatchResult>;
   reset(filter?: MatchSpec<M>): void;
 }
 
 export interface RootTracker {
   plugin: ActorPlugin;
   stopAll(): Promise<void>;
+}
+
+// ── diagnostics helpers ──────────────────────────────────────────────────
+
+function describeSpec<M extends Message>(spec: MatchSpec<M>): string {
+  if (typeof spec === "function") return "predicate";
+  if (Array.isArray(spec))
+    return `sequence [${spec.map((s) => JSON.stringify(s)).join(" → ")}]`;
+  return JSON.stringify(spec);
+}
+
+function lastSummary<M extends Message>(messages: M[]): string {
+  const last = messages[messages.length - 1];
+  if (last === undefined) return "none";
+  return JSON.stringify(last).slice(0, 120);
 }
 
 // ── createCollector ──────────────────────────────────────────────────────
@@ -36,12 +66,20 @@ export function createCollector<M extends Message>(
 ): Collector<M> {
   const messages: M[] = [];
   let matcher = toMatcher(filter);
+  // The spec currently active — kept in sync with `matcher` so timeout
+  // diagnostics can say what was expected.
+  let currentSpec: MatchSpec<M> = filter;
   // Captured from the root's beforeStart; used as the default scope.
   let defaultScope: string[] = [];
   // The plugin is installed on the root first (spawn assembles before any
   // child is forked), so the first install's beforeStart is the root.
   let installed = false;
   let waiters: Array<(result: MatchResult) => void> = [];
+
+  function setSpec(spec: MatchSpec<M>) {
+    currentSpec = spec;
+    matcher = toMatcher(spec);
+  }
 
   function scopePatterns(): string[] {
     if (opts?.scope === undefined) return defaultScope;
@@ -56,14 +94,31 @@ export function createCollector<M extends Message>(
     }
   }
 
-  function resolved(): Promise<MatchResult> {
+  function resolved(timeoutMs?: number): Promise<MatchResult> {
     return new Promise((resolve) => {
       const last = messages[messages.length - 1];
       if (last !== undefined && matcher(last, messages)) {
         resolve({ ok: true });
         return;
       }
-      waiters.push(resolve);
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      const settle = (result: MatchResult) => {
+        const i = waiters.indexOf(settle);
+        if (i >= 0) waiters.splice(i, 1);
+        if (timer) clearTimeout(timer);
+        resolve(result);
+      };
+      waiters.push(settle);
+      if (timeoutMs !== undefined) {
+        timer = setTimeout(() => {
+          settle({
+            ok: false,
+            detail:
+              `timeout after ${timeoutMs}ms — expected: ${describeSpec(currentSpec)} ` +
+              `— received ${messages.length} message(s), last: ${lastSummary(messages)}`,
+          });
+        }, timeoutMs);
+      }
     });
   }
 
@@ -93,12 +148,12 @@ export function createCollector<M extends Message>(
     plugin: collectorPlugin,
     messages,
     resolved,
-    next(nextFilter) {
-      matcher = toMatcher(nextFilter);
-      return resolved();
+    next(nextFilter, timeoutMs) {
+      setSpec(nextFilter);
+      return resolved(timeoutMs);
     },
     reset(newFilter) {
-      if (newFilter) matcher = toMatcher(newFilter);
+      if (newFilter) setSpec(newFilter);
     },
   };
 }

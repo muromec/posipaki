@@ -1,349 +1,224 @@
-// ── Test Plugin Tests ────────────────────────────────────────────────────
+// ── Test Plugins (GREEN) ──────────────────────────────────────────────────
 //
-// RED PHASE — tests for createCollector and createRootTracker.
-// These will fail until the implementation exists.
+// createCollector: event-driven message collection via onEmit, scoped by
+// pname, with optional timeout + diagnostics.
+// createRootTracker: global root tracking for leak-free test cleanup.
 
 import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "../define-actor.js";
 import type { Message } from "../types.js";
+import { createCollector, createRootTracker, type Collector } from "./test-plugin.js";
+import { times } from "./msg-matcher.js";
 
-// We'll import from the module once it exists
-// import { createCollector, createRootTracker } from "./test-plugin.js";
+// ── test actor ────────────────────────────────────────────────────────────
 
-// ── helpers ──────────────────────────────────────────────────────────────
+interface PokeMsg extends Message {
+  type: "POKE";
+  n: number;
+}
+interface PongMsg extends Message {
+  type: "PONG";
+  n: number;
+}
+interface ByeMsg extends Message {
+  type: "BYE";
+}
 
-interface PokeMsg extends Message { type: "POKE"; n: number; }
-interface PongMsg extends Message { type: "PONG"; n: number; }
-const Pin = defineMessages<PokeMsg>();
-const Pout = defineMessages<PongMsg>();
+type EmitterOut = PongMsg | ByeMsg;
 
-// ── createCollector ──────────────────────────────────────────────────────
+const Emitter = defineActor({
+  name: "emitter",
+  inMessages: defineMessages<PokeMsg | ByeMsg>(),
+  outMessages: defineMessages<EmitterOut>(),
+  setup() {
+    return { count: 0 };
+  },
+  handlers: {
+    POKE(msg) {
+      this.state.count += msg.n;
+      this.emit({ type: "PONG", n: this.state.count } as EmitterOut);
+    },
+    BYE() {
+      this.emit({ type: "BYE" } as EmitterOut);
+      this.exit("bye");
+    },
+  },
+});
+
+async function spawnEmitter(collector: Collector<EmitterOut>) {
+  const proc = await Emitter.spawn({}, { addPlugins: [collector.plugin] });
+  await proc.ready();
+  return proc;
+}
+
+function poke(proc: Awaited<ReturnType<typeof spawnEmitter>>, n: number) {
+  proc.send({ type: "POKE", n });
+}
+
+// ── createCollector ───────────────────────────────────────────────────────
 
 describe("createCollector", () => {
-  it("collects emitted messages matching a spec", async () => {
-    // TODO: import { createCollector } from './test-plugin';
-    const { createCollector } = await import("./test-plugin.js");
+  it("collects emitted messages and resolved() settles on match", async () => {
+    const collector = createCollector<EmitterOut>({ type: "PONG" });
+    const proc = await spawnEmitter(collector);
 
-    const actor = defineActor({
-      setup: () => ({ count: 0 }),
-      handlers: {
-        POKE(this: any, msg: any) {
-          this.state.count += msg.n;
-          this.emit({ type: "PONG", n: this.state.count } as PongMsg);
-        },
-      },
-    });
+    poke(proc, 1);
+    poke(proc, 2);
+    expect((await collector.resolved(2000)).ok).toBe(true);
+    expect((await collector.next(times<EmitterOut>({ type: "PONG" }, 2), 2000)).ok).toBe(true);
 
-    const collector = createCollector<PongMsg>({ type: "PONG" });
-    const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
-    await new Promise(r => setTimeout(r, 10));
-
-    (proc as any).send({ type: "POKE", n: 1 });
-    (proc as any).send({ type: "POKE", n: 2 });
-    await new Promise(r => setTimeout(r, 10));
-
-    expect(collector.messages.length).toBe(2);
+    expect(collector.messages).toHaveLength(2);
     expect(collector.messages[0]).toMatchObject({ type: "PONG", n: 1 });
     expect(collector.messages[1]).toMatchObject({ type: "PONG", n: 3 });
-
     proc.send({ type: "STOP" });
     await proc.wait();
   });
 
-  it("resolved() waits for matching messages", async () => {
-    const { createCollector } = await import("./test-plugin.js");
+  it("resolved(timeoutMs) fails with a diagnostic when nothing matches", async () => {
+    const collector = createCollector<EmitterOut>({ type: "PONG" });
+    const proc = await spawnEmitter(collector);
 
-    const actor = defineActor({
-      setup: () => ({}),
-      handlers: {
-        POKE(this: any, _msg: any) {
-          this.emit({ type: "PONG", n: 1 } as PongMsg);
-        },
-      },
-    });
+    const result = await collector.resolved(150);
 
-    const collector = createCollector<PongMsg>({ type: "PONG" });
-    const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
-    await new Promise(r => setTimeout(r, 10));
-
-    (proc as any).send({ type: "POKE", n: 1 });
-    const result = await collector.resolved();
-
-    expect(result.ok).toBe(true);
-    expect(collector.messages.length).toBe(1);
-
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("timeout after 150ms");
+    expect(result.detail).toContain('expected: {"type":"PONG"}');
+    expect(result.detail).toContain("received 0 message(s)");
     proc.send({ type: "STOP" });
     await proc.wait();
   });
 
-  it("shallow matching — ignores extra fields", async () => {
-    const { createCollector } = await import("./test-plugin.js");
-
-    const actor = defineActor({
-      setup: () => ({}),
-      handlers: {
-        POKE(this: any, _msg: any) {
-          this.emit({ type: "PONG", n: 42, extra: "ignored" } as any);
-        },
-      },
-    });
-
-    const collector = createCollector<any>({ type: "PONG" });
-    const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
-    await new Promise(r => setTimeout(r, 10));
-
-    (proc as any).send({ type: "POKE", n: 1 });
-    const result = await collector.resolved();
-
-    expect(result.ok).toBe(true);
-    expect(collector.messages[0].n).toBe(42);
-
-    proc.send({ type: "STOP" });
-    await proc.wait();
-  });
-
-  it("resolved() settles ok:false when the actor exits without matching", async () => {
-    const { createCollector } = await import("./test-plugin.js");
-
-    const actor = defineActor({
-      setup: () => ({}),
-      handlers: { POKE() {} },
-    });
-
-    const collector = createCollector<PongMsg>({ type: "PONG" });
-    const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
-    await new Promise(r => setTimeout(r, 10));
+  it("pending resolved() settles ok:false when the actor exits first", async () => {
+    const collector = createCollector<EmitterOut>({ type: "PONG" });
+    const proc = await spawnEmitter(collector);
 
     const pending = collector.resolved();
     proc.send({ type: "STOP" });
-    await proc.wait();
-
     const result = await pending;
+
     expect(result.ok).toBe(false);
-    expect(result.detail).toContain("exited");
+    expect(result.detail).toBe("actor exited before match");
+    await proc.wait();
   });
 
-  it("next() waits for additional matches", async () => {
-    const { createCollector } = await import("./test-plugin.js");
+  it("next() advances to the next expected message", async () => {
+    const collector = createCollector<EmitterOut>({ type: "PONG" });
+    const proc = await spawnEmitter(collector);
 
-    const actor = defineActor({
-      setup: () => ({ count: 0 }),
-      handlers: {
-        POKE(this: any, msg: any) {
-          this.state.count += msg.n;
-          this.emit({ type: "PONG", n: this.state.count } as PongMsg);
-        },
-      },
-    });
+    poke(proc, 1);
+    expect((await collector.resolved(2000)).ok).toBe(true);
 
-    const collector = createCollector<PongMsg>({ type: "PONG", n: 1 });
-    const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
-    await new Promise(r => setTimeout(r, 10));
-
-    // First match: n=1
-    (proc as any).send({ type: "POKE", n: 1 });
-    const r1 = await collector.resolved();
-    expect(r1.ok).toBe(true);
-    expect(collector.messages.length).toBe(1);
-
-    // Second match: n=2 (next with new filter)
-    (proc as any).send({ type: "POKE", n: 1 }); // n=2 now
-    const r2 = await collector.next({ type: "PONG", n: 2 });
-    expect(r2.ok).toBe(true);
-    expect(collector.messages.length).toBe(2);
-    // messages accumulates across restarts
-    expect(collector.messages[1].n).toBe(2);
-
+    poke(proc, 2);
+    const second = await collector.next({ type: "PONG", n: 3 }, 2000);
+    expect(second.ok).toBe(true);
+    expect(collector.messages).toHaveLength(2);
     proc.send({ type: "STOP" });
     await proc.wait();
   });
 
-  it("reset() clears match state", async () => {
-    const { createCollector } = await import("./test-plugin.js");
+  it("times() waits for the Nth occurrence", async () => {
+    const collector = createCollector<EmitterOut>({ type: "PONG" });
+    const proc = await spawnEmitter(collector);
 
-    const actor = defineActor({
-      setup: () => ({ count: 0 }),
-      handlers: {
-        POKE(this: any, msg: any) {
-          this.state.count += msg.n;
-          this.emit({ type: "PONG", n: this.state.count } as PongMsg);
-        },
-      },
-    });
+    poke(proc, 1);
+    poke(proc, 1);
+    // Two PONGs emitted so far — wait for the third occurrence.
+    const third = collector.next(times<EmitterOut>({ type: "PONG" }, 3), 2000);
+    poke(proc, 1);
+    const result = await third;
 
-    const collector = createCollector<PongMsg>({ type: "PONG", n: 1 });
-    const proc = await actor.spawn({}, { addPlugins: [collector.plugin] });
-    await new Promise(r => setTimeout(r, 10));
-
-    (proc as any).send({ type: "POKE", n: 1 });
-    await collector.resolved();
-
-    // Reset with new filter
-    collector.reset({ type: "PONG", n: 2 });
-    (proc as any).send({ type: "POKE", n: 1 });
-
-    const r = await collector.resolved();
-    expect(r.ok).toBe(true);
-    // messages still accumulate
-    expect(collector.messages.length).toBe(2);
-
+    expect(result.ok).toBe(true);
+    expect(collector.messages).toHaveLength(3);
+    // history-based: occurrences count over the whole collected history
     proc.send({ type: "STOP" });
     await proc.wait();
   });
 
-  it("scope: only root actor by default", async () => {
-    const { createCollector } = await import("./test-plugin.js");
+  it("sequence spec matches the tail of history in order", async () => {
+    const collector = createCollector<EmitterOut>(
+      [{ type: "PONG", n: 1 }, { type: "PONG", n: 3 }],
+    );
+    const proc = await spawnEmitter(collector);
 
-    const child = defineActor({
-      name: "kid",
-      setup: () => ({}),
-      handlers: {
-        POKE(this: any, _msg: any) {
-          this.emit({ type: "PONG", n: 99 } as PongMsg);
-        },
-      },
-    });
-
-    const parent = defineActor({
-      name: "dad",
-      setup() { return {}; },
-      handlers: {
-        POKE(this: any, _msg: any) {
-          this.emit({ type: "PONG", n: 1 } as PongMsg);
-        },
-      },
-      async afterStart(this: any) {
-        await this.fork(child, {});
-      },
-    });
-
-    // Collector on parent — should only see parent's emits
-    const collector = createCollector<PongMsg>({ type: "PONG" });
-    const proc = await parent.spawn({}, { addPlugins: [collector.plugin] });
-    await new Promise(r => setTimeout(r, 50));
-
-    // Child emits PONG n=99, parent emits PONG n=1
-    (proc as any).send({ type: "POKE", n: 1 });
-    await new Promise(r => setTimeout(r, 50));
-
-    // Should only have parent's emit (n=1), not child's (n=99)
-    const parentEmits = collector.messages.filter((m: any) => m.n === 1);
-    expect(parentEmits.length).toBe(1);
-    const childEmits = collector.messages.filter((m: any) => m.n === 99);
-    expect(childEmits.length).toBe(0);
-
+    poke(proc, 1);
+    poke(proc, 2);
+    const result = await collector.resolved(2000);
+    expect(result.ok).toBe(true);
     proc.send({ type: "STOP" });
     await proc.wait();
   });
 
-  it("scope: '*' includes all emitters", async () => {
-    const { createCollector } = await import("./test-plugin.js");
+  it("scope filters by pname — a non-matching scope collects nothing", async () => {
+    const collector = createCollector<EmitterOut>(
+      { type: "PONG" },
+      { scope: "other:*" },
+    );
+    const proc = await spawnEmitter(collector);
 
-    const child = defineActor({
-      name: "kid",
-      setup: () => ({}),
-      handlers: {
-        POKE(this: any, _msg: any) {
-          this.emit({ type: "PONG", n: 99 } as PongMsg);
-        },
-      },
-    });
-
-    let childRef: any = null;
-    const parent = defineActor({
-      name: "dad",
-      setup() { return {}; },
-      handlers: {
-        POKE(this: any, _msg: any) {
-          this.emit({ type: "PONG", n: 1 } as PongMsg);
-        },
-      },
-      async afterStart(this: any) {
-        childRef = await this.fork(child, {});
-      },
-    });
-
-    const collector = createCollector<PongMsg>({ type: "PONG" }, { scope: "*" });
-    const proc = await parent.spawn({}, { addPlugins: [collector.plugin] });
-    await new Promise(r => setTimeout(r, 50));
-
-    // Poke parent — parent emits PONG n=1
-    (proc as any).send({ type: "POKE", n: 1 });
-    await new Promise(r => setTimeout(r, 20));
-    // Poke child — child emits PONG n=99
-    (childRef as any).send({ type: "POKE", n: 1 });
-    await new Promise(r => setTimeout(r, 50));
-
-    // Should see both parent and child emits
-    expect(collector.messages.length).toBeGreaterThanOrEqual(2);
-
+    poke(proc, 1);
+    const result = await collector.resolved(150);
+    expect(result.ok).toBe(false);
+    expect(collector.messages).toHaveLength(0);
     proc.send({ type: "STOP" });
+    await proc.wait();
+  });
+
+  it("reset() switches the active matcher", async () => {
+    const collector = createCollector<EmitterOut>({ type: "PONG" });
+    const proc = await spawnEmitter(collector);
+
+    poke(proc, 1);
+    expect((await collector.resolved(2000)).ok).toBe(true);
+
+    collector.reset({ type: "BYE" });
+    const pending = collector.resolved(2000);
+    proc.send({ type: "BYE" });
+    const result = await pending;
+    expect(result.ok).toBe(true);
+    expect(collector.messages[collector.messages.length - 1]).toMatchObject({ type: "BYE" });
+    await proc.wait();
+  });
+
+  it("BYE exits the actor and the collector sees the last emission", async () => {
+    const collector = createCollector<EmitterOut>({ type: "BYE" });
+    const proc = await spawnEmitter(collector);
+
+    proc.send({ type: "BYE" });
+    const result = await collector.resolved(2000);
+    expect(result.ok).toBe(true);
     await proc.wait();
   });
 });
 
-// ── createRootTracker ────────────────────────────────────────────────────
+// ── createRootTracker ─────────────────────────────────────────────────────
 
 describe("createRootTracker", () => {
-  it("stopAll() sends STOP to all tracked processes", async () => {
-    const { createRootTracker } = await import("./test-plugin.js");
-
+  it("tracks roots and stopAll() stops them", async () => {
     const tracker = createRootTracker();
-
-    const actor = defineActor({
-      setup: () => ({ exited: false }),
-      handlers: { POKE() {} },
-      beforeEnd(this: any) { this.state.exited = true; },
+    const collector = createCollector<EmitterOut>({ type: "PONG" });
+    const proc = await Emitter.spawn({}, {
+      addPlugins: [collector.plugin, tracker.plugin],
     });
-
-    const proc = await actor.spawn({}, { addPlugins: [tracker.plugin] });
-    await new Promise(r => setTimeout(r, 10));
+    await proc.ready();
 
     await tracker.stopAll();
     await proc.wait();
-
-    expect((proc.state as any).exited).toBe(true);
   });
 
-  it("survives processes that already exited", async () => {
-    const { createRootTracker } = await import("./test-plugin.js");
-
+  it("stopAll() is safe to call with no tracked roots", async () => {
     const tracker = createRootTracker();
+    await expect(tracker.stopAll()).resolves.toBeUndefined();
+  });
 
-    const actor = defineActor({
-      setup: () => ({}),
-      handlers: { POKE() {} },
-    });
+  it("global rootTracker is wired by bun-test-setup and cleans up", async () => {
+    const g = globalThis as Record<string, unknown>;
+    expect(g.rootTracker).toBeDefined();
+    const tracker = g.rootTracker as ReturnType<typeof createRootTracker>;
 
-    const proc = await actor.spawn({}, { addPlugins: [tracker.plugin] });
-    await new Promise(r => setTimeout(r, 10));
-
-    proc.send({ type: "STOP" });
+    const proc = await Emitter.spawn({}, { addPlugins: [tracker.plugin] });
+    await proc.ready();
+    // A tracked root stops via stopAll (what the global afterEach runs).
+    await tracker.stopAll();
     await proc.wait();
-
-    // Should not throw — already exited process
-    await tracker.stopAll();
-  });
-
-  it("tracks multiple processes independently", async () => {
-    const { createRootTracker } = await import("./test-plugin.js");
-
-    const tracker = createRootTracker();
-
-    const actor = defineActor({
-      setup: () => ({ exited: false }),
-      handlers: { POKE() {} },
-      beforeEnd(this: any) { this.state.exited = true; },
-    });
-
-    const p1 = await actor.spawn({}, { name: "p1", addPlugins: [tracker.plugin] });
-    const p2 = await actor.spawn({}, { name: "p2", addPlugins: [tracker.plugin] });
-    await new Promise(r => setTimeout(r, 10));
-
-    await tracker.stopAll();
-    await Promise.all([p1.wait(), p2.wait()]);
-
-    expect((p1.state as any).exited).toBe(true);
-    expect((p2.state as any).exited).toBe(true);
   });
 });

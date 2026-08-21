@@ -39,3 +39,15 @@ Object.assign(realVitest.vi, {
 
 // bun is not mocking it, so we don't use it
 delete globalThis.setImmediate
+
+// ── global root tracker ────────────────────────────────────────────────────
+// Shared instance for leak-free tests: pass `rootTracker.plugin` into a
+// spawn's addPlugins and the root is auto-stopped after every test
+// (stopAll in a global afterEach).  Tests that don't use the plugin are
+// unaffected.
+const { createRootTracker } = await import('./src/testing/test-plugin.js');
+const rootTracker = createRootTracker();
+(globalThis as Record<string, unknown>).rootTracker = rootTracker;
+realVitest.afterEach(async () => {
+  await rootTracker.stopAll();
+});
