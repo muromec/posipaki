@@ -35,17 +35,16 @@ describe("spawn addPlugins", () => {
   it("spawn accepts addPlugins in opts", async () => {
     const actor = defineActor({
       setup: () => ({}),
-      handlers: { POKE() {} },
+      handlers: { },
     });
 
     const plug = namedPlugin("spy");
     const proc = await actor.spawn({}, { addPlugins: [plug] });
-    await new Promise(r => setTimeout(r, 10));
+    await proc.ready();
 
     expect(plug.calls).toContain("spy:actor:afterStart");
 
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
   });
 });
 
@@ -58,37 +57,35 @@ describe("spawnAsChild opts", () => {
     const child = defineActor({
       name: "kid",
       setup: () => ({}),
-      handlers: { POKE() {} },
+      handlers: { },
     });
 
     const parent = defineActor({
-      setup() { return {}; },
-      handlers: { POKE() {} },
-      async afterStart(this: any) {
-        // parentPlugins in opts, not 4th positional
+      handlers: { },
+      async setup() {
+        // parentPlugins in opts
         await child.spawnAsChild(this.ctx, {}, { parentPlugins: [plug] });
       },
     });
 
     const proc = await parent.spawn({});
-    await new Promise(r => setTimeout(r, 50));
+    await proc.ready();
 
     expect(plug.calls).toContain("spy:kid:afterStart");
 
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
   });
 
   it("parentPlugins is optional", async () => {
     const child = defineActor({
       setup: () => ({}),
-      handlers: { POKE() {} },
+      handlers: { },
     });
 
     const parent = defineActor({
       setup() { return {}; },
-      handlers: { POKE() {} },
-      async afterStart(this: any) {
+      handlers: { },
+      async setup() {
         await child.spawnAsChild(this.ctx, {});
       },
     });
@@ -105,14 +102,13 @@ describe("spawnAsChild opts", () => {
     const child = defineActor({
       name: "kid",
       setup: () => ({}),
-      handlers: { POKE() {} },
+      handlers: { },
     });
 
     const parent = defineActor({
       name: "dad",
-      setup() { return {}; },
-      handlers: { POKE() {} },
-      async afterStart(this: any) {
+      handlers: { },
+      async setup() {
         await child.spawnAsChild(this.ctx, {}, {
           parentPlugins: [parentPlug],
           addPlugins: [addPlug],
@@ -121,13 +117,12 @@ describe("spawnAsChild opts", () => {
     });
 
     const proc = await parent.spawn({});
-    await new Promise(r => setTimeout(r, 50));
+    await proc.ready();
 
     expect(parentPlug.calls).toContain("parent:kid:afterStart");
     expect(addPlug.calls).toContain("add:kid:afterStart");
 
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
   });
 });
 
@@ -140,15 +135,15 @@ describe("addPlugins non-overridable", () => {
     const grandchild = defineActor({
       name: "grandkid",
       setup: () => ({}),
-      handlers: { POKE() {} },
+      handlers: { },
     });
 
     const child = defineActor({
       name: "kid",
       setup() { return {}; },
-      handlers: { POKE() {} },
+      handlers: { },
       plugins: [], // explicitly replace — strips parent plugins
-      async afterStart(this: any) {
+      async setup() {
         await this.fork(grandchild, {});
       },
     });
@@ -156,21 +151,18 @@ describe("addPlugins non-overridable", () => {
     const parent = defineActor({
       name: "dad",
       setup() { return {}; },
-      handlers: { POKE() {} },
-      async afterStart(this: any) {
+      handlers: { },
+      async setup() {
         await this.fork(child, {});
       },
     });
 
     const proc = await parent.spawn({}, { addPlugins: [addPlug] });
-    await new Promise(r => setTimeout(r, 100));
+    await proc.stop();
 
     // addPlug should reach grandchild even though child replaced plugins
     expect(addPlug.calls).toContain("add:dad:afterStart");
     expect(addPlug.calls).toContain("add:dad:kid:grandkid:afterStart");
-
-    proc.send({ type: "STOP" });
-    await proc.wait();
   });
 });
 
@@ -184,18 +176,17 @@ describe("plugin dedup", () => {
 
     const actor = defineActor({
       setup: () => ({}),
-      handlers: { POKE() {} },
+      handlers: { },
       plugins: [dup],
     });
 
     const proc = await actor.spawn({}, { addPlugins: [dup] });
-    await new Promise(r => setTimeout(r, 10));
+    await proc.ready();
 
     // Should fire only once (deduplicated)
     expect(dup.calls.length).toBe(1);
 
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
   });
 });
 
@@ -206,16 +197,17 @@ describe("spawnAsChild ctx type", () => {
     const child = defineActor({
       name: "kid",
       setup: () => ({}),
-      handlers: { POKE() {} },
+      handlers: { },
     });
 
     const parent = defineActor({
       name: "typed-dad",
+      inMessages: Pin,
       setup: () => ({ x: 1 }),
       handlers: {
-        POKE(msg: any) { this.state.x += msg.n; },
+        POKE() { this.state.x += msg.n; },
       },
-      async afterStart(this: any) {
+      async afterStart() {
         // KEY: this.ctx is a concrete ProcessCtx<{x:number}, ...>.
         // It should be assignable to spawnAsChild without any cast.
         await child.spawnAsChild(this.ctx, {});
@@ -224,8 +216,7 @@ describe("spawnAsChild ctx type", () => {
 
     // If this compiles and runs, the type fix works.
     const proc = await parent.spawn({});
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
   });
 });
 
@@ -244,20 +235,17 @@ describe("self.fork plugin propagation", () => {
     const parent = defineActor({
       name: "dad",
       setup() { return {}; },
-      handlers: { POKE() {} },
+      handlers: { },
       plugins: [spy],
-      async afterStart(this: any) {
+      async afterStart() {
         await this.fork(child, {});
       },
     });
 
     const proc = await parent.spawn({});
-    await new Promise(r => setTimeout(r, 50));
+    await proc.stop();
 
     expect(spy.calls).toContain("fork-spy:dad:afterStart");
     expect(spy.calls).toContain("fork-spy:dad:kid:afterStart");
-
-    proc.send({ type: "STOP" });
-    await proc.wait();
   });
 });
