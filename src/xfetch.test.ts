@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { spawn } from "./index";
 import { xfetch } from "./xfetch";
+import { makeWaiter } from "./util";
 import type { FetchArgs, FetchState, FetchMessage } from "./xfetch";
 import { nextState, nextMessage } from './testing/tick-utils.js';
 
@@ -31,23 +32,19 @@ function mockResponse(
 let mockedFetch;
 
 function withHangResponse(response) {
-  let resume;
-  let lreject;
-  const promise = new Promise<Response>((resolve, reject) => {
-    lreject = reject;
-    resume = () => {
-      resolve(response);
-    };
-  });
+  const waiter = makeWaiter();
   mockedFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
     (url, options) => {
       options.signal.addEventListener("abort", () => {
-        lreject(new DOMException("Aborted", "AbortError"))
+        waiter.reject(new DOMException("Aborted", "AbortError"))
       });
-      return promise;
+      return waiter.promise;
     }
   );
-  return { promise, resume };
+  return {
+    ...waiter,
+    resume: ()=> waiter.resolve(response),
+  };
 }
 
 function withResponse(response) {

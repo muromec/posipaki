@@ -8,6 +8,7 @@ export function debugLog(level: boolean, ...args: Array<unknown>) {
 type ReducerClosure<M> = (msg: M) => void;
 type ReadyFn = () => boolean;
 type NotifyFn = () => void;
+type ErrorFn = (e: Error | null) => void;
 
 /**
  * Generator helper that loops, yielding `null` and feeding incoming
@@ -26,36 +27,6 @@ function* runDispatch<M>(
     debugLog(debugLevel, "msg", name, " <- ", msg);
     fn(msg);
   }
-}
-
-/**
-* @deprecated Use AsyncProcess._watchExit instead.
- *
- * Wrap a process generator so that on completion it sends STOP to
- * all children and EXIT to the parent. Useful for custom process
- * wrappers that need lifecycle management without extending
- * AsyncProcess.
- */
-function watchExit<
-  A,
-  S,
-  IM extends { type: string },
-  OM extends { type: string } | ExitMessage,
->(
-  gen: (ctx: any, args: A) => Generator<S | null, void, IM>,
-): (ctx: any, args: A) => Generator<S | null, void, IM> {
-  return function* (ctx, args) {
-    try {
-      yield* gen(ctx, args);
-    } finally {
-      ctx.children.forEach(
-        child => child.send({ type: "STOP" })
-      );
-      ctx.toParent({
-        type: "EXIT",
-      } as OM);
-    }
-  };
 }
 
 type DeferCb = () => void;
@@ -104,14 +75,17 @@ function defer(fn: DeferCb): DeferredCall {
 export type Waiter = {
   promise: Promise<void>;
   resolve: NotifyFn;
+  reject: ErrorFn;
 };
 /** Create a new {@link Waiter}. */
 function makeWaiter(): Waiter {
-  let resolve: unknown;
-  let promise = new Promise<void>((_resolve) => {
+  let resolve: NotifyFn;
+  let reject: ErrorFn;
+  let promise = new Promise<void>((_resolve, _reject) => {
     resolve = _resolve;
+    reject = _reject;
   });
-  return { promise, resolve: resolve as NotifyFn };
+  return { promise, resolve, reject };
 }
 
 /** Resolve after `ms` milliseconds. */
@@ -133,5 +107,5 @@ export async function withTimeout<O>(promise: Promise<O>, ms: number, kind: stri
   return result as O;
 }
 
-export { runDispatch, defer, makeWaiter, watchExit };
+export { runDispatch, defer, makeWaiter };
 export type { ExitMessage };
