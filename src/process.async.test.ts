@@ -4,9 +4,27 @@ import { runDispatch } from "./index";
 import { spawnAsync, asyncify, runDispatchAsync } from "./index";
 import type { ProcessCtx, Message, WithSender, AsyncProcessFn } from "./index";
 
-import type { ExitMessage } from "./util";
+import { type ExitMessage, withTimeout } from "./util";
 
 import type { PokeM, CountStore } from "./test-helpers.js";
+import { nextMessage, nextState } from './testing';
+
+vi.mocked = vi.mocked || ((v) => v);
+vi.mock('./util.js', async (importOriginal) => {
+  let actual = {}
+  if (importOriginal) {
+    actual = await importOriginal();
+  }
+  const withTimeoutMock = vi.fn().mockImplementation((p) => p);
+  return { ...actual, withTimeout: withTimeoutMock };
+});
+
+function withTimeoutMiss() {
+  return vi.mocked(withTimeout).mockRejectedValueOnce(new Error('Timeout:stop'));
+}
+function withTimeoutHit() {
+  return vi.mocked(withTimeout).mockImplementation((p) => p);
+}
 
 describe("AsyncProcess", () => {
   // ---- basic lifecycle ------------------------------------------------------
@@ -31,8 +49,7 @@ describe("AsyncProcess", () => {
 
       yield* runDispatchAsync<WithSender<Message | PokeM>>(
         pname,
-        async (maybe) => {
-          const [msg, _s] = maybe;
+        async ([msg]) => {
           if (msg.type === "POKE") state.count++;
         },
         () => state.count >= 2,
@@ -40,8 +57,8 @@ describe("AsyncProcess", () => {
     };
 
     const proc = spawnAsync(fn, "counter")(null);
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" });
 
     await proc.wait();
     expect(proc.state?.count).toBe(2);
@@ -65,7 +82,7 @@ describe("AsyncProcess", () => {
     };
 
     const proc = spawnAsync(fn, "timer")(null);
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
 
     await proc.wait();
     expect(proc.state).toEqual({ fired: true });
@@ -91,7 +108,7 @@ describe("AsyncProcess", () => {
 
     const proc = spawnAsync(fn, "counter")(null);
     proc.subscribe(callback);
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
 
     await proc.wait();
     expect(callback).toHaveBeenCalledTimes(1);
@@ -135,8 +152,8 @@ describe("AsyncProcess", () => {
     }
 
     const proc = spawnAsync(asyncify(syncFn), "wrapped")(null);
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" });
 
     await proc.wait();
     expect(proc.state).toEqual({ count: 2 });
@@ -159,7 +176,7 @@ describe("AsyncProcess", () => {
     }
 
     const proc = spawnAsync(asyncify(syncFn), "single")(null);
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
 
     await proc.wait();
     expect(proc.state).toEqual({ count: 1 });
@@ -183,19 +200,29 @@ describe("AsyncProcess", () => {
       );
     };
 
-    const proc = spawnAsync(fn, "pausable")(null);
-    proc.pause();
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    // start two generators, but keep on paused
+    const proc1 = spawnAsync(fn, "pausable-1")(null);
+    const proc2 = spawnAsync(fn, "pausable-2")(null);
+    await proc1.ready();
+    await proc2.ready();
 
-    await vi.waitFor(() => expect(proc.state).toEqual({ hits: 0 }), {
-      timeout: 100,
-    });
+    proc1.pause();
+    expect(proc1.state).toEqual({ hits: 0 });
+    expect(proc2.state).toEqual({ hits: 0 });
 
-    proc.resume();
-    await proc.wait();
+    proc1.send({ type: "POKE" });
+    proc1.send({ type: "POKE" });
+    proc2.send({ type: "POKE" });
+    proc2.send({ type: "POKE" });
 
-    expect(proc.state).toEqual({ hits: 2 });
+    expect(await nextState(proc2)).toEqual({ hits: 2 });
+    expect(proc1.state).toEqual({ hits: 0 });
+
+    proc1.resume();
+    expect(await nextState(proc1)).toEqual({ hits: 2 });
+    await proc1.wait();
+    await proc2.wait();
+
   });
 
   // ---- concurrency guard ----------------------------------------------------
@@ -224,9 +251,9 @@ describe("AsyncProcess", () => {
     };
 
     const proc = spawnAsync(fn, "concurrent")(null);
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" });
 
     await proc.wait();
     expect(proc.state).toEqual({ count: 3 });
@@ -246,7 +273,7 @@ describe("AsyncProcess", () => {
     };
 
     const proc = spawnAsync(fn, "exploder")(null);
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
 
     await expect(proc.wait()).rejects.toThrow("boom");
   });
@@ -273,7 +300,7 @@ describe("AsyncProcess", () => {
             state.trace += "START";
           }
           if (msg.type === "LONG") {
-            await new Promise((r) => setTimeout(r, 200));
+            await new Promise((r) => setTimeout(r, 30));
             state.trace += "-LONG";
           }
           if (msg.type === "SHORT") {
@@ -285,9 +312,9 @@ describe("AsyncProcess", () => {
     };
 
     const proc = spawnAsync(fn, "order-test")(null);
-    proc.send({ type: "START" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "LONG" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "SHORT" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "START" });
+    proc.send({ type: "LONG" });
+    proc.send({ type: "SHORT" });
 
     await proc.wait();
     expect(proc.state?.trace).toBe("START-LONG-SHORT");
@@ -312,7 +339,7 @@ describe("message channel & linking", () => {
     const cb = vi.fn();
     proc.subscribe("message", cb);
 
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
     await proc.wait();
 
     expect(cb).toHaveBeenCalledWith(
@@ -339,7 +366,7 @@ describe("message channel & linking", () => {
     const cb = vi.fn();
     proc.subscribe("state", cb);
 
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
     await proc.wait();
 
     expect(cb).toHaveBeenCalled();
@@ -364,7 +391,7 @@ describe("message channel & linking", () => {
     await parent.ready();
     parent.monitor(child);
 
-    child.send({ type: "POKE" }, { fromName: "t", fromId: Symbol("t") });
+    child.send({ type: "POKE" });
     await parent.wait();
 
     expect(parent.state?.count).toBe(1);
@@ -392,7 +419,7 @@ describe("message channel & linking", () => {
     await parent.ready();
     expect(parent.children.length).toBe(1);
 
-    child.send({ type: "POKE" }, { fromName: "t", fromId: Symbol("t") });
+    child.send({ type: "POKE" });
     await parent.wait();
 
     expect(parent.children.length).toBe(0);
@@ -457,7 +484,7 @@ describe("forceStop", () => {
 
     proc.forceStop();
     expect(() =>
-      proc.send({ type: "POKE" }, { fromName: "t", fromId: Symbol("t") }),
+      proc.send({ type: "POKE" }),
     ).not.toThrow();
     await proc.wait();
   });
@@ -543,6 +570,7 @@ describe("stop", () => {
   });
 
   it("returns false when a non-forced process refuses to stop", async () => {
+    withTimeoutMiss();
     const proc = spawnAsync(stubborn, "stubborn")(null);
     await proc.ready();
     await expect(proc.stop()).resolves.toBe(false);
@@ -552,6 +580,7 @@ describe("stop", () => {
   });
 
   it("force-kills a refusing process and returns true", async () => {
+    withTimeoutMiss();
     const proc = spawnAsync(stubborn, "stubborn")(null);
     await proc.ready();
     await expect(proc.stop({ force: true })).resolves.toBe(true);
