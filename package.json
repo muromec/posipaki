@@ -15,10 +15,10 @@
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
-    "oxlint": "^1.67.0",
-    "tsdown": "^0.22.1",
+    "oxlint": "^1.79.0",
+    "tsdown": "^0.22.14",
     "typescript": "^7.0.2",
-    "vitest": "^4.1.7"
+    "vitest": "^4.1.11"
   },
   "exports": {
     ".": {
@@ -32,14 +32,6 @@
     "./plugins/debug-logger": {
       "types": "./dist/plugins/debug-logger.d.ts",
       "default": "./dist/plugins/debug-logger.js"
-    },
-    "./plugins/timeout-guard": {
-      "types": "./dist/plugins/timeout-guard.d.ts",
-      "default": "./dist/plugins/timeout-guard.js"
-    },
-    "./plugins/rbac": {
-      "types": "./dist/plugins/rbac.d.ts",
-      "default": "./dist/plugins/rbac.js"
     },
     "./plugins/tree-introspection": {
       "types": "./dist/plugins/tree-introspection.d.ts",

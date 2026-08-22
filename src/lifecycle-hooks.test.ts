@@ -3,12 +3,15 @@
 // Tests for defineActor hooks: onMessage, onEmit, onChildExit, onError,
 // onStart, beforeEnd, onStopRequested, and stopPropagation().
 
-import { describe, it, expect, vi } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
+import type { ActorPlugin } from './actor-type.js';
 import { defineActor, defineMessages } from "./define-actor.js";
 import { stopPropagation, mergeConfigs, type HookResult } from "./hooks.js";
 import { withTimeout } from './util.js';
 import type { Message, SenderInfo } from "./types.js";
+import { nextState } from './testing/';
 
+vi.mocked = vi.mocked || ((v) => v);
 vi.mock('./util.js', async (importOriginal) => {
   let actual = {}
   if (importOriginal) {
@@ -19,26 +22,10 @@ vi.mock('./util.js', async (importOriginal) => {
 });
 
 function withTimeoutMiss() {
-  vi.mocked(withTimeout).mockRejectedValueOnce(new Error('Timeout:stop'));
+  return vi.mocked(withTimeout).mockRejectedValueOnce(new Error('Timeout:stop'));
 }
 function withTimeoutHit() {
-  vi.mocked(withTimeout).mockImplementation((p) => p);
-}
-
-/** Let a process's dispatch loop process a message (EXIT) already in its inbox. */
-async function settle() {
-  await new Promise((r) => setTimeout(r, 20));
-}
-
-/** Poll until `fn` is truthy, throwing after `timeoutMs` (deterministic waits). */
-async function until(fn: () => boolean, timeoutMs = 2000): Promise<void> {
-  const start = Date.now();
-  while (!fn()) {
-    if (Date.now() - start > timeoutMs) {
-      throw new Error("until: condition not met within timeout");
-    }
-    await new Promise((r) => setTimeout(r, 5));
-  }
+  return vi.mocked(withTimeout).mockImplementation((p) => p);
 }
 
 // ── helpers ──────────────────────────────────────────────────────────────
@@ -77,11 +64,9 @@ describe("hooks.onMessage", () => {
     });
 
     const proc = await Actor.spawn({});
-    await proc.ready();
     proc.send({ type: "POKE", value: 1 });
-    proc.send!({ type: "STOP" });
+    await proc.stop();
 
-    await proc.wait();
     expect(order).toEqual(["hook:POKE", "handler:POKE"]);
   });
 
@@ -98,13 +83,11 @@ describe("hooks.onMessage", () => {
     });
 
     const proc = await Actor.spawn({});
-    await proc.ready();
     proc.send(
       { type: "POKE", value: 1 },
       { fromName: "caller", fromId: Symbol("caller") },
     );
-    proc.send!({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
 
     expect(capturedSender).not.toBeNull();
     expect(capturedSender!.fromName).toBe("caller");
@@ -133,10 +116,8 @@ describe("stopPropagation", () => {
     });
 
     const proc = await Actor.spawn({});
-    await proc.ready();
     proc.send({ type: "POKE", value: 1 });
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
 
     expect(handlerRan).toBe(false);
     expect(messageRun).toBe(true);
@@ -164,11 +145,9 @@ describe("hooks.onEmit", () => {
     });
 
     const proc = await Actor.spawn({});
-    await proc.ready();
     proc.send({ type: "POKE", value: 1 });
-    proc.send!({ type: "STOP" });
+    await proc.stop();
 
-    await proc.wait();
     expect(emitted).toContain("PONG");
   });
 
@@ -200,8 +179,7 @@ describe("hooks.onEmit", () => {
 
     const proc = await Parent.spawn({});
     await proc.ready();
-    proc.send!({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
 
     expect(proc.state!.pongs).toBe(1);
   });
@@ -243,56 +221,50 @@ describe("hooks.onChildExit", () => {
 describe("hooks.onStart / beforeEnd", () => {
   it("plugin afterStart fires before actor afterStart", async () => {
     const order: string[] = [];
+    const plugin1 : ActorPlugin = (cfg) => mergeConfigs(cfg, {
+      afterStart() {
+        order.push("plugin");
+      },
+    });
 
     const Actor = defineActor({
       name: "test",
       afterStart() {
         order.push("actor");
-        this.exit();
       },
-      plugins: [
-        (cfg) =>
-          mergeConfigs(cfg, {
-            afterStart() {
-              order.push("plugin");
-            },
-          }),
-      ],
+      plugins: [plugin1],
       handlers: {},
     });
 
     const proc = await Actor.spawn({});
-    await proc.wait();
+    await proc.stop();
 
     expect(order).toEqual(["plugin", "actor"]);
   });
 
   it("plugin beforeEnd fires before actor beforeEnd", async () => {
     const order: string[] = [];
+    const plugin2 : ActorPlugin = (cfg) => mergeConfigs(cfg, {
+      beforeEnd() {
+        order.push("plugin");
+      },
+    });
 
     const Actor = defineActor({
       name: "test",
       beforeEnd() {
         order.push("actor");
       },
-      plugins: [
-        (cfg) =>
-          mergeConfigs(cfg, {
-            beforeEnd() {
-              order.push("plugin");
-            },
-          }),
-      ],
+      plugins: [plugin2],
       handlers: {},
     });
 
     const proc = await Actor.spawn({});
-    await proc.ready();
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
 
     expect(order).toEqual(["plugin", "actor"]);
   });
+
   it("beforeEnd fires before EXIT, afterEnd fires after EXIT", async () => {
     const order: string[] = [];
     const Actor = defineActor({
@@ -308,12 +280,10 @@ describe("hooks.onStart / beforeEnd", () => {
 
     const proc = await Actor.spawn({}, {
       toParent: (msg) => {
-        if (msg.type === "EXIT") order.push("EXIT");
+        order.push(msg.type);
       },
     });
-    await proc.ready();
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
 
     expect(order).toEqual(["beforeEnd", "EXIT", "afterEnd"]);
   });
@@ -324,6 +294,11 @@ describe("hooks.onStart / beforeEnd", () => {
 describe("hooks.onStopRequested", () => {
   it("plugin onStopRequested fires before actor onStopRequested", async () => {
     const order: string[] = [];
+    const plugin3 : ActorPlugin = (cfg) => mergeConfigs(cfg, {
+      onStopRequested() {
+        order.push("plugin");
+      },
+    });
 
     const Actor = defineActor({
       name: "test",
@@ -331,21 +306,12 @@ describe("hooks.onStopRequested", () => {
         order.push("actor");
         this.agreeToStop();
       },
-      plugins: [
-        (cfg) =>
-          mergeConfigs(cfg, {
-            onStopRequested() {
-              order.push("plugin");
-            },
-          }),
-      ],
+      plugins: [plugin3],
       handlers: {},
     });
 
     const proc = await Actor.spawn({});
-    await proc.ready();
-    proc.send!({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
 
     expect(order).toEqual(["plugin", "actor"]);
   });
@@ -354,7 +320,7 @@ describe("hooks.onStopRequested", () => {
 // ── onError hooks ────────────────────────────────────────────────────────
 
 describe("hooks.onError", () => {
-  it("fires when a handler throws", async () => {
+  it("fires when a handler throws and prevents actor from crashing", async () => {
     let capturedError: string | null = null;
 
     const Actor = defineActor({
@@ -375,14 +341,12 @@ describe("hooks.onError", () => {
     });
 
     const proc = await Actor.spawn({});
-    proc.notify();
-    await proc.ready();
     proc.send({ type: "POKE", value: 1 });
     proc.send({ type: "POKE", value: 10 });
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
 
     expect(capturedError).toBe("BOOM");
+    // both 1 and 10 were processed
     expect(proc.state!.count).toBe(11);
   });
 
@@ -401,11 +365,11 @@ describe("hooks.onError", () => {
     });
 
     const proc = await Actor.spawn({});
-    await proc.ready();
-    proc.send!({ type: "POKE", value: 1 });
-    proc.send!({ type: "POKE", value: 10 });
+    proc.send({ type: "POKE", value: 1 });
+    proc.send({ type: "POKE", value: 10 });
 
     await expect(proc.wait()).rejects.toThrow();
+    // second message was not processed
     expect(proc.state!.count).toBe(1);
   });
 });
@@ -432,11 +396,9 @@ describe("hooks — adversarial", () => {
     });
 
     const proc = await Actor.spawn({});
-    await proc.ready();
     proc.send({ type: "POKE", value: 1 });
     proc.send({ type: "POKE", value: 10 });
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
     expect(proc.state!.count).toBe(11);
   });
 
@@ -458,11 +420,8 @@ describe("hooks — adversarial", () => {
     });
 
     const proc = await Actor.spawn({});
-    await proc.ready();
-    proc.send!({ type: "POKE", value: 1 });
-    proc.send!({ type: "STOP" }, { fromName: "test", fromId: Symbol("test") });
-    await proc.wait();
-
+    proc.send({ type: "POKE", value: 1 });
+    await proc.stop();
     expect(handlerRan).toBe(true);
   });
 
@@ -486,9 +445,8 @@ describe("hooks — adversarial", () => {
     const proc = await Actor.spawn({});
     await proc.ready();
     proc.send({ type: "POKE", value: 1 });
-    proc.send({ type: "STOP" });
+    await proc.stop();
 
-    await proc.wait();
     expect(handlerRan).toBe(false);
   });
 });
@@ -504,6 +462,9 @@ describe("cascading stop", () => {
       beforeEnd() {
         order.push("child:beforeEnd");
       },
+      afterEnd() {
+        order.push("child:afterEnd");
+      },
       handlers: {},
     });
     const Parent = defineActor({
@@ -512,19 +473,24 @@ describe("cascading stop", () => {
         await this.fork(Child, undefined, {});
         return {};
       },
+      beforeEnd() {
+        order.push("parent:beforeEnd");
+      },
+      afterEnd() {
+        order.push("parent:afterEnd");
+      },
       handlers: {},
     });
 
-    const proc = await Parent.spawn({}, {
-      toParent: (msg) => {
-        if (msg.type === "EXIT") order.push("parent:EXIT");
-      },
-    });
-    await proc.ready();
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    const proc = await Parent.spawn({});
+    await proc.stop();
 
-    expect(order).toEqual(["child:beforeEnd", "parent:EXIT"]);
+    expect(order).toEqual([
+      "parent:beforeEnd",
+      "child:beforeEnd",
+      "child:afterEnd",
+      "parent:afterEnd",
+    ]);
   });
 
   it("warns when a child refuses to stop", async () => {
@@ -549,7 +515,8 @@ describe("cascading stop", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       const proc = await Parent.spawn({});
-      await proc.ready();
+      // FIXME: this should be the same as await proc.stop()
+      // but its not!
       proc.send({ type: "STOP" });
       await proc.wait();
       expect(warn).toHaveBeenCalledWith(
@@ -595,14 +562,17 @@ describe("orphans", () => {
 
     const proc = await Parent.spawn({});
     await proc.ready();
+    expect(proc.orphans.length).toBe(0);
+
     // Child self-exits; its grandchild refuses to stop (1s cascade timeout), so
     // Parent collects the survivor into its orphans. Await the child's own
     // completion rather than sleeping.
     const child = proc.children[0];
+    const grandChild = child.children[0];
     await child.wait();
-    expect(proc.orphans.map((o) => o.pname)).toEqual(["parent:child:grandchild"]);
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    expect(proc.orphans.length).toBe(1);
+    expect(proc.orphans[0].id).toBe(grandChild.id);
+    await proc.stop();
   });
 
   it("keeps orphan list empty if all children exit on time", async () => {
@@ -633,14 +603,15 @@ describe("orphans", () => {
 
     const proc = await Parent.spawn({});
     await proc.ready();
+    expect(proc.orphans.length).toBe(0);
+
     // Child self-exits; its grandchild refuses to stop (1s cascade timeout), so
     // Parent collects the survivor into its orphans. Await the child's own
     // completion rather than sleeping.
     const child = proc.children[0];
     await child.wait();
-    expect(proc.orphans.map((o) => o.pname)).toEqual([]);
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    expect(proc.orphans.length).toBe(0);
+    await proc.stop();
   });
 });
 
@@ -667,6 +638,7 @@ describe("orphan policy (onOrphan)", () => {
   it("adopts an orphan via onOrphan 'adopt'", async () => {
     withTimeoutMiss(); // child's cascade: grandchild refuses → orphaned
     withTimeoutMiss(); // parent's cascade: adopted grandchild refuses → orphaned again
+
     const Parent = defineActor({
       name: "parent",
       onOrphan() {
@@ -682,13 +654,19 @@ describe("orphan policy (onOrphan)", () => {
     const proc = await Parent.spawn({});
     await proc.ready();
     const child = proc.children[0];
+    expect(child.pname).toBe('parent:child');
     await child.wait();
-    await settle();
+
+    // before parent processed the message
+    // orphans are kept in the temporary map
+    expect(proc.orphans.length).toBe(1);
+
+    // wait for parent process exit message
+    await nextState(proc);
 
     expect(proc.orphans.length).toBe(0);
     expect(proc.children.map((c) => c.pname)).toContain("parent:child:grandchild");
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
   });
 
   it("force-stops an orphan via onOrphan 'force-stop'", async () => {
@@ -709,11 +687,12 @@ describe("orphan policy (onOrphan)", () => {
     await proc.ready();
     const child = proc.children[0];
     await child.wait();
-    await settle();
 
+    expect(proc.orphans.length).toBe(1);
+    await nextState(proc);
     expect(proc.orphans.length).toBe(0);
-    proc.send({ type: "STOP" });
-    await proc.wait();
+
+    await proc.stop();
   });
 
   it("force-stops an orphan by default (no onOrphan)", async () => {
@@ -731,12 +710,14 @@ describe("orphan policy (onOrphan)", () => {
     await proc.ready();
     const child = proc.children[0];
     await child.wait();
-    await settle();
 
     // No onOrphan → the orphan is hard-killed and removed.
+
+    expect(proc.orphans.length).toBe(1);
+    await nextState(proc);
     expect(proc.orphans.length).toBe(0);
-    proc.send({ type: "STOP" });
-    await proc.wait();
+
+    await proc.stop();
   });
 
   it("leaves an orphan via onOrphan 'leave'", async () => {
@@ -757,11 +738,15 @@ describe("orphan policy (onOrphan)", () => {
     await proc.ready();
     const child = proc.children[0];
     await child.wait();
-    await settle();
 
+    // keep the grandchild after child exit
+    // is processed
+    expect(proc.orphans.length).toBe(1);
+    await nextState(proc);
+    expect(proc.orphans.length).toBe(1);
     expect(proc.orphans.map((o) => o.pname)).toEqual(["parent:child:grandchild"]);
-    proc.send({ type: "STOP" });
-    await proc.wait();
+
+    await proc.stop();
   });
 
   it("unparents an orphan via onOrphan 'unparent'", async () => {
@@ -782,12 +767,16 @@ describe("orphan policy (onOrphan)", () => {
     await proc.ready();
     const child = proc.children[0];
     await child.wait();
-    await settle();
 
     // Buffer dropped but the orphan keeps running, still accounted for.
+    // FIXME: this does not check the buffer is removed
+
+    expect(proc.orphans.length).toBe(1);
+    await nextState(proc);
+    expect(proc.orphans.length).toBe(1);
     expect(proc.orphans.map((o) => o.pname)).toEqual(["parent:child:grandchild"]);
-    proc.send({ type: "STOP" });
-    await proc.wait();
+
+    await proc.stop();
   });
 });
 
@@ -795,6 +784,10 @@ describe("orphan policy (onOrphan)", () => {
 // ── orphan handoff (lossless adopt) ──────────────────────────────────────
 
 describe("orphan handoff (lossless adopt)", () => {
+  beforeEach(() => {
+    vi.resetAllMocks();
+  });
+
   interface HandoffMsg extends Message {
     type: "HANDOFF";
     value: number;
@@ -822,6 +815,7 @@ describe("orphan handoff (lossless adopt)", () => {
     const Child = defineActor({
       name: "child",
       outMessages: HandoffOut,
+      inMessages: HandoffIn,
       async setup() {
         await this.fork(Grandchild, undefined, {});
         return {};
@@ -829,7 +823,11 @@ describe("orphan handoff (lossless adopt)", () => {
       afterStart() {
         this.exit();
       },
-      handlers: {},
+      handlers: {
+        HANDOFF(msg) {
+          received.push('never');
+        },
+      },
     });
     const Parent = defineActor({
       name: "parent",
@@ -852,15 +850,20 @@ describe("orphan handoff (lossless adopt)", () => {
     await proc.ready();
     const child = proc.children[0];
     await child.wait();
-    await settle();
+
+    expect(received).toEqual([]);
+ 
+    // let parent process the exit which
+    // adopts the orphan and empties the buffered
+    // out-queue of the grand-child into parent inbox
+    await nextState(proc);
+    await proc.stop();
 
     expect(received).toEqual([42]);
     expect(proc.orphans.length).toBe(0);
     expect(proc.children.map((c) => c.pname)).toContain(
       "parent:child:grandchild",
     );
-    proc.send({ type: "STOP" });
-    await proc.wait();
   });
 
   it("back-feeds a message the orphan emitted into the dying parent's inbox", async () => {
@@ -877,7 +880,7 @@ describe("orphan handoff (lossless adopt)", () => {
     );
     withTimeoutMiss(); // parent's cascade: adopted grandchild refuses
 
-    const received: number[] = [];
+    const order: string[] = [];
 
     const Grandchild = defineActor({
       name: "grandchild",
@@ -885,25 +888,40 @@ describe("orphan handoff (lossless adopt)", () => {
       async onStopRequested() {
         await this.emit({ type: "HANDOFF", value: 7 });
         emitted = true;
+        order.push('gc:emit');
       },
       handlers: {},
     });
     const Child = defineActor({
       name: "child",
       outMessages: HandoffOut,
+      inMessages: HandoffIn,
+
       async setup() {
         await this.fork(Grandchild, undefined, {});
         return {};
       },
       afterStart() {
         this.exit();
+        order.push('child:after-start');
       },
-      handlers: {},
+      beforeEnd() {
+        order.push('child:before-end');
+      },
+      afterEnd() {
+        order.push('child:after-end');
+      },
+      handlers: {
+        HANDOFF(msg) {
+          order.push('child:msg'); // never hits
+        },
+      },
     });
     const Parent = defineActor({
       name: "parent",
       inMessages: HandoffIn,
       onOrphan() {
+        order.push('parent:adopt');
         return "adopt";
       },
       async setup() {
@@ -912,7 +930,7 @@ describe("orphan handoff (lossless adopt)", () => {
       },
       handlers: {
         HANDOFF(msg) {
-          received.push(msg.value);
+          order.push('parent:msg:'+ msg.value); // never hits
         },
       },
     });
@@ -920,27 +938,31 @@ describe("orphan handoff (lossless adopt)", () => {
     const proc = await Parent.spawn({});
     await proc.ready();
     const child = proc.children[0];
+    const grandChild = child.children[0];
     // Wait until the grandchild has processed STOP and emitted into the child's
     // still-live inbox, then release the cascade timeout so the child finishes
     // exiting (and back-feeds the message to the adopting parent).
-    await until(() => emitted);
+
+    await nextState(grandChild);
     release!();
     await child.wait();
-    await settle();
 
-    expect(received).toEqual([7]);
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await nextState(proc);
+    await proc.stop();
+
+    expect(order).toEqual([
+      'child:after-start',
+      'child:before-end',
+      'gc:emit',
+      'child:after-end',
+      'parent:adopt',
+      'parent:msg:7',
+    ]);
+
   });
 
   it("drains an orphan that self-stops while unowned (its EXIT lands in the collector)", async () => {
     withTimeoutMiss(); // child's cascade: grandchild refuses → orphaned
-
-    let gateReached = false;
-    let releaseGate: (() => void) | null = null;
-    const gate = new Promise<void>((resolve) => {
-      releaseGate = resolve;
-    });
 
     const exitedNames: string[] = [];
 
@@ -968,9 +990,9 @@ describe("orphan handoff (lossless adopt)", () => {
     });
     const Parent = defineActor({
       name: "parent",
-      async onOrphan() {
-        gateReached = true;
-        await gate; // hold the orphan unowned while we make it self-stop
+      async onOrphan(orphan) {
+        orphan.send({ type: "DIE"});
+        await orphan.wait();
         return "adopt" as const;
       },
       onChildExit(name) {
@@ -987,27 +1009,22 @@ describe("orphan handoff (lossless adopt)", () => {
     await proc.ready();
     const child = proc.children[0];
     await child.wait();
+
+    expect(proc.orphans.length).toBe(1);
+
     // Parent is now holding onOrphan at the gate: the grandchild is unowned and
     // its collector is buffering. Make it self-stop so its EXIT lands in the
     // collector's buffer rather than reaching anyone in real time.
-    await until(() => gateReached);
-    const gc = proc.orphans[0];
-    gc.send({ type: "DIE" });
-    await gc.wait();
-
-    releaseGate!();
-    await settle();
+    await nextState(proc);
+    expect(proc.orphans.length).toBe(0);
 
     // The drained EXIT removed the (dead) orphan from children and fired
     // onChildExit for it — the handoff closes cleanly.
-    expect(proc.children.map((c) => c.pname)).not.toContain(
-      "parent:child:grandchild",
-    );
+    expect(proc.children.length).toBe(0);
     expect(proc.orphans.length).toBe(0);
     expect(exitedNames).toContain("parent:child:grandchild");
 
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
   });
 });
 
@@ -1038,20 +1055,24 @@ describe("orphan policy: buffer drop (unparent vs leave)", () => {
       await this.fork(Grandchild, undefined, {});
       return {};
     },
-    afterStart() {
-      this.exit();
-    },
     handlers: {},
   });
 
   async function runTree(decision: "unparent" | "leave") {
-    let pDecided = false;
-    let receivedPong = false;
+    /*
+    This spawns a tree of four actors:
+    grand parent (gg), parent, child, grandchild.
 
+    child (depth=3) exits, but grandchild (depth=4)
+    refuses and is handed over to parent as orphan.
+
+    Depending on the decision parent (depth=2) makes,
+    messages emitted by grandchild either reach grandparent
+    or not.
+    */
     const Parent = defineActor({
       name: "parent",
       onOrphan() {
-        pDecided = true;
         return decision;
       },
       async setup() {
@@ -1067,11 +1088,11 @@ describe("orphan policy: buffer drop (unparent vs leave)", () => {
       },
       async setup() {
         await this.fork(Parent, undefined, {});
-        return {};
+        return { pong: false };
       },
       handlers: {
         PONG() {
-          receivedPong = true;
+          this.state.pong = true;
         },
       },
     });
@@ -1079,34 +1100,50 @@ describe("orphan policy: buffer drop (unparent vs leave)", () => {
     const gg = await GrandParent.spawn({});
     await gg.ready();
     const parent = gg.children[0];
-    await until(() => pDecided);
+    const child = parent.children[0];
+    const grandchild = child.children[0];
+
+    // everything is started
+    expect(parent.children.length).toBe(1);
+
+    // wait for child to exit on start and
+    // grandchild to end up as 
+    await child.stop();
+    await nextState(parent);
+    expect(parent.children.length).toBe(0);
+    expect(parent.orphans.length).toBe(1);
+    expect(parent.orphans[0]).toBe(grandchild);
+
     // Parent has made its decision; ping the still-orphaned grandchild, then
     // stop Parent so the grandchild bubbles up and the grandparent adopts it.
-    const gc = parent.orphans[0];
-    gc.send({ type: "PING" });
-    await settle();
-    parent.send({ type: "STOP" });
-    await parent.wait();
-    await settle();
+    grandchild.send({ type: "PING" });
+    parent.send({ type: "STOP"} );
+    await nextState(gg);
 
-    return { gg, receivedPong };
+    expect(gg.children.length).toBe(1);
+    expect(gg.orphans.length).toBe(0);
+
+    // grandparent (d=1) adopted the grandchild (d=4)
+    expect(gg.children[0]).toBe(grandchild);
+
+    return gg;
   }
 
   it("unparent drops the orphan's in-flight buffer", async () => {
     withTimeoutMiss(); // child's cascade
+    withTimeoutMiss(); // parent's cascade
     withTimeoutMiss(); // grandparent's cascade (adopted grandchild refuses)
-    const { gg, receivedPong } = await runTree("unparent");
-    expect(receivedPong).toBe(false);
-    gg.send({ type: "STOP" });
-    await gg.wait();
+    const gg = await runTree("unparent");
+    expect(gg.state.pong).toBe(false);
+    await gg.stop();
   });
 
   it("leave preserves the orphan's in-flight buffer", async () => {
-    withTimeoutMiss();
-    withTimeoutMiss();
-    const { gg, receivedPong } = await runTree("leave");
-    expect(receivedPong).toBe(true);
-    gg.send({ type: "STOP" });
-    await gg.wait();
+    withTimeoutMiss(); // child's cascade
+    withTimeoutMiss(); // parent's cascade
+    withTimeoutMiss(); // grandparent's cascade (adopted grandchild refuses)
+    const gg = await runTree("leave");
+    expect(gg.state.pong).toBe(true);
+    await gg.stop();
   });
 });

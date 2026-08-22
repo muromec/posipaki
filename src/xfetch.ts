@@ -103,7 +103,7 @@ function* xfetch<Type>(
       const serializedBody =
         method === "GET" ? undefined : JSON.stringify(body);
       const headers = new Headers(callerHeaders ?? {});
-      if (serializedBody) {
+      if (serializedBody && !headers.get('content-type')) {
         headers.set("content-type", "application/json");
       }
       const res: Response = await fetch(url.href, {

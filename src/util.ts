@@ -42,20 +42,16 @@ function watchExit<
   IM extends { type: string },
   OM extends { type: string } | ExitMessage,
 >(
-  proc: {
-    toAllChildren: (m: { type: string }) => void;
-    toParent: (m: OM) => void;
-    id: symbol;
-    pname: string;
-  },
   gen: (ctx: any, args: A) => Generator<S | null, void, IM>,
 ): (ctx: any, args: A) => Generator<S | null, void, IM> {
   return function* (ctx, args) {
     try {
       yield* gen(ctx, args);
     } finally {
-      proc.toAllChildren({ type: "STOP" });
-      proc.toParent({
+      ctx.children.forEach(
+        child => child.send({ type: "STOP" })
+      );
+      ctx.toParent({
         type: "EXIT",
       } as OM);
     }

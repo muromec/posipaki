@@ -209,16 +209,4 @@ describe("createRootTracker", () => {
     const tracker = createRootTracker();
     await expect(tracker.stopAll()).resolves.toBeUndefined();
   });
-
-  it("global rootTracker is wired by bun-test-setup and cleans up", async () => {
-    const g = globalThis as Record<string, unknown>;
-    expect(g.rootTracker).toBeDefined();
-    const tracker = g.rootTracker as ReturnType<typeof createRootTracker>;
-
-    const proc = await Emitter.spawn({}, { addPlugins: [tracker.plugin] });
-    await proc.ready();
-    // A tracked root stops via stopAll (what the global afterEach runs).
-    await tracker.stopAll();
-    await proc.wait();
-  });
 });

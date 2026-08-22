@@ -280,6 +280,9 @@ export function defineActor<
             return;
           }
           if (msg.type === "EXIT") {
+            // FIXME: process name are user-specified
+            // and should not be used for indexing so
+            // we don't get into name conflicts
             const childName = sender.fromName;
             if (childName && self.$child[childName]) {
               delete self.$child[childName];
