@@ -22,6 +22,7 @@ import type {
 
 import type { PokeM } from "./test-helpers.js";
 import { defineMessages } from "./define-actor.js";
+import { nextState, nextMessage } from "./testing";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Shared types
@@ -58,6 +59,7 @@ const counterFn_vA = async function* counterFn(
     },
     () => state.count >= state.max,
   );
+  ctx.toParent({ type: "EXIT"});
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -116,12 +118,7 @@ describe.each([
 
     await proc.ready();
     expect(proc.state).toEqual({ count: 0, max: 3, name: "counter" });
-
-    proc.send({ type: "STOP" } as CounterIn, {
-      fromName: "test",
-      fromId: Symbol("test"),
-    });
-    await proc.wait();
+    await proc.stop();
   });
 
   it("increments count on POKE", async () => {
@@ -131,16 +128,11 @@ describe.each([
     )({ max: 3 });
 
     await proc.ready();
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    await new Promise((r) => setTimeout(r, 50));
+    proc.send({ type: "POKE" });
 
-    expect(proc.state!.count).toBe(1);
+    expect(await nextState(proc)).toMatchObject({ count: 1 });
 
-    proc.send({ type: "STOP" } as CounterIn, {
-      fromName: "test",
-      fromId: Symbol("test"),
-    });
-    await proc.wait();
+    await proc.stop();
   });
 
   it("increments multiple times", async () => {
@@ -150,18 +142,13 @@ describe.each([
     )({ max: 5 });
 
     await proc.ready();
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    await new Promise((r) => setTimeout(r, 50));
+    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" });
 
-    expect(proc.state!.count).toBe(3);
+    expect(await nextState(proc)).toMatchObject({ count: 3 });
 
-    proc.send({ type: "STOP" } as CounterIn, {
-      fromName: "test",
-      fromId: Symbol("test"),
-    });
-    await proc.wait();
+    await proc.stop();
   });
 
   it("exits when count reaches max, ignoring further POKEs", async () => {
@@ -171,9 +158,9 @@ describe.each([
     )({ max: 2 });
 
     await proc.ready();
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") }); // dropped — exit condition already met
+    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" });
+    proc.send({ type: "POKE" }); // dropped — exit condition already met
 
     await proc.wait();
     expect(proc.state!.count).toBe(2);
@@ -190,28 +177,20 @@ describe.each([
     expect(typeof proc.id).toBe("symbol");
     expect(proc.id.toString()).toBe("Symbol(my-counter)");
 
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
     await proc.wait();
   });
 
   it("emits DONE to parent with final count", async () => {
-    const messages: CounterOut[] = [];
     const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
       getFn(),
       "counter",
-      (msg) => {
-        messages.push(msg);
-      },
     )({ max: 1 });
 
     await proc.ready();
-    proc.send({ type: "POKE" }, { fromName: "test", fromId: Symbol("test") });
+    proc.send({ type: "POKE" });
+    expect(await nextMessage(proc)).toMatchObject({ type: "DONE", count: 1});
     await proc.wait();
-
-    const doneMsg = messages.find((m) => m.type === "DONE") as
-      { type: "DONE"; count: number } | undefined;
-    expect(doneMsg).toBeDefined();
-    expect(doneMsg!.count).toBe(1);
   });
 });
 
@@ -223,22 +202,20 @@ describe('spawn with opts', () => {
     const actor = defineActor({
       setup: () => ({ sent: false }),
       handlers: {
-        POKE(this: any) {
-          this.emit({ type: 'DONE', value: 1 } as any);
+        POKE() {
+          this.emit({ type: 'DONE', value: 1 });
         },
       },
     });
 
-    const received: any[] = [];
+    const received: Message[] = [];
     const proc = await actor.spawn({}, {
       toParent: (msg) => { received.push(msg); },
     });
 
     await proc.ready();
-    proc.send({ type: 'POKE' } as any, { fromName: 't', fromId: Symbol('t') });
-    await new Promise(r => setTimeout(r, 20));
-    proc.send({ type: 'STOP' } as any, { fromName: 't', fromId: Symbol('t') });
-    await proc.wait();
+    proc.send({ type: 'POKE' });
+    await proc.stop();
 
     expect(received.length).toBeGreaterThanOrEqual(1);
     expect(received[0].type).toBe('DONE');
@@ -249,17 +226,15 @@ describe('spawn with opts', () => {
     const actor = defineActor({
       setup: () => ({ x: 0 }),
       handlers: {
-        POKE(this: any) { this.state.x = 1; },
+        POKE(this) { this.state.x = 1; },
       },
     });
 
     const proc = await actor.spawn({});
     await proc.ready();
-    proc.send({ type: 'POKE' } as any, { fromName: 't', fromId: Symbol('t') });
-    await new Promise(r => setTimeout(r, 20));
-    proc.send({ type: 'STOP' } as any, { fromName: 't', fromId: Symbol('t') });
-    await proc.wait();
+    proc.send({ type: 'POKE' });
+    await proc.stop();
 
-    expect((proc.state as any).x).toBe(1);
+    expect((proc.state).x).toBe(1);
   });
 });
