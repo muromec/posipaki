@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { FifoUtf8NlineTransport } from "./fifo.js";
 import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
-import { makeWaiter } from "../util";
+import { makeWaiter } from "../util.js";
 
 const cleanupPaths: string[] = [];
 
