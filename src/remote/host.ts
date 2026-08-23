@@ -169,20 +169,19 @@ function scriptConnector(runner: string, runnerArgs: string[]): (scriptPath: str
 }
 
 /** Spawn via `bun run <script>`. */
-export const bunConnector = scriptConnector("bun", ["run"]);
+export const bunConnector = scriptConnector("bun", []);
 
 /** Spawn via `node <script>`. */
 export const nodeConnector = scriptConnector("node", []);
 
 /**
- * Auto-detect: prefers `bun run` if the script is a .ts file and bun is
+ * Auto-detect: prefers `bun run` if bun is
  * the current runtime, otherwise falls back to `node`.
  */
 export function defaultConnector(scriptPath: string): Connector {
   // Check if we're running under bun
   const isBun = typeof (globalThis as any).Bun !== "undefined";
-  const isTs = scriptPath.endsWith(".ts");
-  if (isBun && isTs) return bunConnector(scriptPath);
+  if (isBun) return bunConnector(scriptPath);
   return nodeConnector(scriptPath);
 }
 

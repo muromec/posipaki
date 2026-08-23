@@ -40,7 +40,7 @@ fi
 
 # ── tests ─────────────────────────────────────────────────────────
 echo -n "  test … "
-if bash "$ROOT/scripts/test.sh" 2>&1; then
+if bash "$ROOT/scripts/test.sh" --reporter=dots 2>&1; then
   echo -e "${GREEN}ok${NC}"
 else
   echo -e "${RED}FAIL${NC}"
