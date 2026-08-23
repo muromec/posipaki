@@ -142,7 +142,7 @@ export async function spawnRemote<
     async ready() {},
     send(msg: InMsg) {
       const from = opts.parentName ?? "host";
-      transport.send(encode("$msg", { type: msg.type, fromName: from, body: msg }));
+      transport.send(encode("$msg", { fromName: from, body: msg }));
     },
     async wait() { return exitPromise; },
     onMessage(handler: (msg: OutMsg) => void) { msgHandler = handler; },

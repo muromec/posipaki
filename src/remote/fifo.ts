@@ -4,7 +4,10 @@
 // onMessage() throws if a handler is already set; call removeHandler() first.
 
 import { open, type FileHandle } from "node:fs/promises";
-import { createReadStream, type ReadStream } from "node:fs";
+import {
+  createReadStream, createWriteStream, 
+  type ReadStream, type WriteStream,
+ } from "node:fs";
 import * as readline from "node:readline";
 
 export class FifoUtf8NlineTransport {
@@ -12,6 +15,7 @@ export class FifoUtf8NlineTransport {
   private writeFd: FileHandle | null;
   private rl: readline.Interface | null;
   private rs: ReadStream | null;
+  private ws: WriteSteeam | null;
   private pvtOnMessage: ((line: string) => void) | null = null;
   private closed = false;
   private pvtError: Error | null = null;
@@ -36,7 +40,9 @@ export class FifoUtf8NlineTransport {
         if (this.pvtOnMessage && !this.closed) this.pvtOnMessage(line);
       });
 
-      this.rl.on("close", () => { this.closed = true; });
+      this.rl.on("close", () => { 
+        this.closed = true;
+      });
 
       this.rs.on("error", (err: Error) => {
         this.pvtError = err;
@@ -50,6 +56,16 @@ export class FifoUtf8NlineTransport {
     } else {
       this.rs = null;
       this.rl = null;
+    }
+
+    if (this.writeFd) {
+      this.ws = createWriteStream("", {
+        fd: this.writeFd.fd,
+        encoding: "utf-8",
+        autoclose: false,
+      });
+    } else {
+      this.ws = null;
     }
   }
 
@@ -153,7 +169,7 @@ export class FifoUtf8NlineTransport {
     if (this.closed) throw new Error("FifoUtf8NlineTransport: closed");
     if (this.writeFd === null) throw new Error("FifoUtf8NlineTransport: not a writer");
     if (!line.endsWith("\n")) line += "\n";
-    await this.writeFd.write(line);
+    await this.ws.write(line);
   }
 
   async close(): Promise<void> {
@@ -161,6 +177,12 @@ export class FifoUtf8NlineTransport {
     this.closed = true;
     if (this.rl) this.rl.close();
     if (this.rs) this.rs.destroy();
+    if (this.ws) {
+      await new Promise((resolve) => {
+        this.ws.end('', resolve);
+      });
+    }
+
     if (this.readFd) { try { await this.readFd.close(); } catch {} }
     if (this.writeFd) { try { await this.writeFd.close(); } catch {} }
     if (this.pvtWriter) { await this.pvtWriter.close(); }

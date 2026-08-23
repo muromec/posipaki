@@ -56,36 +56,39 @@ export async function runChild<
   const parentId = parentIdName ? Symbol.for(parentIdName) : null;
   const { parentName: _pn, parentIdName: _pid, ...initArgs } = initMsg;
 
-  // 3. Spawn the actor
   const wrappedFn: typeof fn = async function* (ctx, args) {
     (ctx as Record<string, unknown>).parentName = parentName;
     (ctx as Record<string, unknown>).parentId = parentId;
     return yield* fn(ctx, args);
   };
 
-  const proc = spawnAsync(wrappedFn, "remote", (msg, sender) => {
-    transport
-      .send(
-        encode("$msg", {
-          type: msg.type,
-          fromName: sender.fromName,
-          body: msg,
-        }),
-      )
-      .catch(() => {});
-  })(initArgs as unknown as Args);
-  await proc.ready();
-
-  // 4. Send initial state
-  await transport.send(encode("$state", proc.state as Record<string, unknown>));
-
-  // 5. Subscribe to state changes
-  proc.subscribe(() => {
-    transport
-      .send(encode("$state", proc.state as Record<string, unknown>))
-      .catch(() => {});
+  const proc = spawnAsync(wrappedFn, "remote")(initArgs as unknown as Args)
+  proc.subscribe('message', async (msg, sender) => {
+    try {
+      const encodedMsg = encode("$msg", {
+        fromName: sender.fromName,
+        body: msg,
+      });
+      await transport.send(encodedMsg);
+    } catch (e) {
+      console.error('Error sending out the message');
+    }
   });
 
+  proc.subscribe('state', async () => {
+    try {
+      const encodedState = encode("$state", proc.state as Record<string, unknown>);
+      await transport.send(encodedState)
+    } catch (e) {
+      console.error('Error sending out the message', e);
+    }
+  });
+
+  await proc.ready();
+
+  await transport.send(encode("$state", proc.state as Record<string, unknown>));
+
+  
   // 6. Forward incoming messages to the actor
   transport.onMessage((line) => {
     const msg = decode(line);
@@ -98,7 +101,7 @@ export async function runChild<
   // 7. On actor exit, send $exit
   const shutdown = async (code: number) => {
     await transport.send(encode("$exit", { code, state: proc.state }));
-    transport.close();
+    await transport.close();
     process.exit(code);
   };
   proc.wait().then(
