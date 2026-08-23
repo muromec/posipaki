@@ -879,6 +879,7 @@ describe("orphan handoff (lossless adopt)", () => {
         }),
     );
     withTimeoutMiss(); // parent's cascade: adopted grandchild refuses
+    withTimeoutMiss(); // parent's cascade: adopted grandchild refuses
 
     const order: string[] = [];
 
@@ -1133,6 +1134,8 @@ describe("orphan policy: buffer drop (unparent vs leave)", () => {
     withTimeoutMiss(); // child's cascade
     withTimeoutMiss(); // parent's cascade
     withTimeoutMiss(); // grandparent's cascade (adopted grandchild refuses)
+    withTimeoutMiss();
+
     const gg = await runTree("unparent");
     expect(gg.state.pong).toBe(false);
     await gg.stop();
@@ -1142,6 +1145,8 @@ describe("orphan policy: buffer drop (unparent vs leave)", () => {
     withTimeoutMiss(); // child's cascade
     withTimeoutMiss(); // parent's cascade
     withTimeoutMiss(); // grandparent's cascade (adopted grandchild refuses)
+    withTimeoutMiss();
+
     const gg = await runTree("leave");
     expect(gg.state.pong).toBe(true);
     await gg.stop();
