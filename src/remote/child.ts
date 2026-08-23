@@ -19,15 +19,10 @@ export function makeSender(
 import { encode, decode, isInit, isMsg, PROTO_VERSION } from "./protocol.js";
 import { spawnAsync } from "../index.js";
 
-export async function runChild<
-  Args,
-  State,
-  InMsg extends Message,
-  OutMsg extends Message,
->(fn: AsyncProcessFn<Args, State, InMsg, OutMsg>): Promise<void> {
-  const fifoIn = process.argv
-    .find((a) => a.startsWith("--fifo-in="))
-    ?.slice("--fifo-in=".length);
+export async function runChild<Args, State, InMsg extends Message, OutMsg extends Message>(
+  fn: AsyncProcessFn<Args, State, InMsg, OutMsg>,
+): Promise<void> {
+  const fifoIn = process.argv.find((a) => a.startsWith("--fifo-in="))?.slice("--fifo-in=".length);
   const fifoOut = process.argv
     .find((a) => a.startsWith("--fifo-out="))
     ?.slice("--fifo-out=".length);
@@ -62,8 +57,8 @@ export async function runChild<
     return yield* fn(ctx, args);
   };
 
-  const proc = spawnAsync(wrappedFn, "remote")(initArgs as unknown as Args)
-  proc.subscribe('message', async (msg, sender) => {
+  const proc = spawnAsync(wrappedFn, "remote")(initArgs as unknown as Args);
+  proc.subscribe("message", async (msg, sender) => {
     try {
       const encodedMsg = encode("$msg", {
         fromName: sender.fromName,
@@ -71,16 +66,16 @@ export async function runChild<
       });
       await transport.send(encodedMsg);
     } catch (e) {
-      console.error('Error sending out the message');
+      console.error("Error sending out the message");
     }
   });
 
-  proc.subscribe('state', async () => {
+  proc.subscribe("state", async () => {
     try {
       const encodedState = encode("$state", proc.state as Record<string, unknown>);
-      await transport.send(encodedState)
+      await transport.send(encodedState);
     } catch (e) {
-      console.error('Error sending out the message', e);
+      console.error("Error sending out the message", e);
     }
   });
 
@@ -88,7 +83,6 @@ export async function runChild<
 
   await transport.send(encode("$state", proc.state as Record<string, unknown>));
 
-  
   // 6. Forward incoming messages to the actor
   transport.onMessage((line) => {
     const msg = decode(line);

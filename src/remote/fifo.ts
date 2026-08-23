@@ -4,10 +4,7 @@
 // onMessage() throws if a handler is already set; call removeHandler() first.
 
 import { open, type FileHandle } from "node:fs/promises";
-import {
-  createReadStream, createWriteStream, 
-  type ReadStream, type WriteStream,
- } from "node:fs";
+import { createReadStream, createWriteStream, type ReadStream, type WriteStream } from "node:fs";
 import * as readline from "node:readline";
 
 export class FifoUtf8NlineTransport {
@@ -21,10 +18,7 @@ export class FifoUtf8NlineTransport {
   private pvtError: Error | null = null;
   private pvtWriter: FifoUtf8NlineTransport | null = null;
 
-  private constructor(opts: {
-    readFd?: FileHandle;
-    writeFd?: FileHandle;
-  }) {
+  private constructor(opts: { readFd?: FileHandle; writeFd?: FileHandle }) {
     this.readFd = opts.readFd ?? null;
     this.writeFd = opts.writeFd ?? null;
 
@@ -40,7 +34,7 @@ export class FifoUtf8NlineTransport {
         if (this.pvtOnMessage && !this.closed) this.pvtOnMessage(line);
       });
 
-      this.rl.on("close", () => { 
+      this.rl.on("close", () => {
         this.closed = true;
       });
 
@@ -123,10 +117,7 @@ export class FifoUtf8NlineTransport {
    * (i.e. you don't need to interleave any setup between the read and write
    * opens).
    */
-  static async connect(
-    readPath: string,
-    writePath: string,
-  ): Promise<FifoUtf8NlineTransport> {
+  static async connect(readPath: string, writePath: string): Promise<FifoUtf8NlineTransport> {
     const readerPromise = FifoUtf8NlineTransport.openReader(readPath);
     const writer = await FifoUtf8NlineTransport.openWriter(writePath);
     const reader = await readerPromise;
@@ -179,12 +170,22 @@ export class FifoUtf8NlineTransport {
     if (this.rs) this.rs.destroy();
     if (this.ws) {
       await new Promise((resolve) => {
-        this.ws.end('', resolve);
+        this.ws.end("", resolve);
       });
     }
 
-    if (this.readFd) { try { await this.readFd.close(); } catch {} }
-    if (this.writeFd) { try { await this.writeFd.close(); } catch {} }
-    if (this.pvtWriter) { await this.pvtWriter.close(); }
+    if (this.readFd) {
+      try {
+        await this.readFd.close();
+      } catch {}
+    }
+    if (this.writeFd) {
+      try {
+        await this.writeFd.close();
+      } catch {}
+    }
+    if (this.pvtWriter) {
+      await this.pvtWriter.close();
+    }
   }
 }

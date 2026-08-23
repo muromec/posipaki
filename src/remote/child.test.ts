@@ -7,15 +7,7 @@ import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { FifoUtf8NlineTransport } from "./fifo.js";
-import {
-  encode,
-  decode,
-  isProto,
-  isState,
-  isMsg,
-  isExit,
-  PROTO_VERSION,
-} from "./protocol.js";
+import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
 import { makeWaiter } from "../util";
 
 const cleanupPaths: string[] = [];
@@ -33,7 +25,7 @@ function getRuntime() {
 describe("runChild integration", () => {
   it("handshake + PING/PONG + STOP/exit with real actor", async () => {
     const thisDir = dirname(import.meta.url.slice(7));
-    const childScriptPath = join(thisDir, './fixtures/pong.js');
+    const childScriptPath = join(thisDir, "./fixtures/pong.js");
     const basePath = join(tmpdir(), `child-test-${randomUUID()}`);
     const pathIn = basePath + ".in";
     const pathOut = basePath + ".out";
@@ -81,8 +73,8 @@ describe("runChild integration", () => {
     expect((stateMsg.$state as Record<string, unknown>).pings).toBe(0);
     host.removeHandler();
 
-    const messages : Message[] = [];
-    const exitWaiter = makeWaiter<{ code: number, state: unknown}>();
+    const messages: Message[] = [];
+    const exitWaiter = makeWaiter<{ code: number; state: unknown }>();
     let messageWaiter = makeWaiter<null>();
     let expectedMessageCount = 2;
 
@@ -128,12 +120,12 @@ describe("runChild integration", () => {
       }),
     );
     await expect(await messageWaiter.promise).toEqual([
-      { $msg : { body: { type: 'PONG', count: 1 }, fromName: 'remote' } },
+      { $msg: { body: { type: "PONG", count: 1 }, fromName: "remote" } },
       { $state: { pings: 1 } },
-      { $msg : { body: { type: 'PONG', count: 2 }, fromName: 'remote' } },
+      { $msg: { body: { type: "PONG", count: 2 }, fromName: "remote" } },
       { $state: { pings: 2 } },
 
-      { $msg : { body: { type: 'PONG', count: 3 }, fromName: 'remote' } },
+      { $msg: { body: { type: "PONG", count: 3 }, fromName: "remote" } },
       { $state: { pings: 3 } },
     ]);
 

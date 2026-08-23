@@ -47,9 +47,7 @@ export async function spawnRemote<
   InMsg extends Message = Message,
   OutMsg extends Message = Message,
   Args = Record<string, unknown>,
->(
-  opts: CommandSpawnOptions<Args>,
-): Promise<RemoteProxy<State, InMsg, OutMsg>> {
+>(opts: CommandSpawnOptions<Args>): Promise<RemoteProxy<State, InMsg, OutMsg>> {
   const basePath = join(tmpdir(), `posipaki-${randomUUID()}`);
 
   execSync(`mkfifo "${basePath}.in"`);
@@ -79,11 +77,13 @@ export async function spawnRemote<
   }
   transport.removeHandler();
 
-  await transport.send(encode("$init", {
-    ...opts.args as Record<string, unknown>,
-    parentName: opts.parentName ?? "host",
-    parentIdName: opts.parentName ?? "host",
-  }));
+  await transport.send(
+    encode("$init", {
+      ...(opts.args as Record<string, unknown>),
+      parentName: opts.parentName ?? "host",
+      parentIdName: opts.parentName ?? "host",
+    }),
+  );
 
   let currentState: Record<string, unknown> = {};
   await new Promise<void>((resolve) => {
@@ -138,23 +138,26 @@ export async function spawnRemote<
   });
 
   return {
-    get state(): State { return currentState as State; },
+    get state(): State {
+      return currentState as State;
+    },
     async ready() {},
     send(msg: InMsg) {
       const from = opts.parentName ?? "host";
       transport.send(encode("$msg", { fromName: from, body: msg }));
     },
-    async wait() { return exitPromise; },
-    onMessage(handler: (msg: OutMsg) => void) { msgHandler = handler; },
+    async wait() {
+      return exitPromise;
+    },
+    onMessage(handler: (msg: OutMsg) => void) {
+      msgHandler = handler;
+    },
   };
 }
 
 // ── connector wrappers ─────────────────────────────────────────────────────
 
-function scriptConnector(
-  runner: string,
-  runnerArgs: string[],
-): (scriptPath: string) => Connector {
+function scriptConnector(runner: string, runnerArgs: string[]): (scriptPath: string) => Connector {
   return (scriptPath: string) => {
     return ((opts: CommandSpawnOptions) => {
       return commandConnector({
