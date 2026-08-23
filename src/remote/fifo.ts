@@ -15,6 +15,7 @@ export class FifoUtf8NlineTransport {
   private ws: WriteSteeam | null;
   private pvtOnMessage: ((line: string) => void) | null = null;
   private closed = false;
+  private closingPromise: Promise<void> | null;
   private pvtError: Error | null = null;
   private pvtWriter: FifoUtf8NlineTransport | null = null;
 
@@ -35,17 +36,12 @@ export class FifoUtf8NlineTransport {
       });
 
       this.rl.on("close", () => {
-        this.closed = true;
+        this.close();
       });
 
       this.rs.on("error", (err: Error) => {
         this.pvtError = err;
-        if (!this.closed) this.closed = true;
-      });
-
-      this.rl.on("error", (err: Error) => {
-        this.pvtError = err;
-        if (!this.closed) this.closed = true;
+        this.close();
       });
     } else {
       this.rs = null;
@@ -57,6 +53,10 @@ export class FifoUtf8NlineTransport {
         fd: this.writeFd.fd,
         encoding: "utf-8",
         autoclose: false,
+      });
+      this.ws.on("error", (err: Error) => {
+        this.pvtError = err;
+        this.close();
       });
     } else {
       this.ws = null;
@@ -164,25 +164,47 @@ export class FifoUtf8NlineTransport {
   }
 
   async close(): Promise<void> {
-    if (this.closed) return;
+    this.closingPromise = this.closingPromise || this.pvtClose();
+    await this.closingPromise;
     this.closed = true;
-    if (this.rl) this.rl.close();
-    if (this.rs) this.rs.destroy();
+  }
+
+  private async pvtClose(): Promise<void> {
+    // tranfser control back to caller
+    // so they can capture the promise reference
+    // and prevent reentry
+    await Promise.resolve();
+
+    if (this.rl) {
+      this.rl.close();
+      this.rl = null;
+    }
+    if (this.rs) {
+      this.rs.destroy();
+      this.rs = null;
+    }
     if (this.ws) {
-      await new Promise((resolve) => {
-        this.ws.end("", resolve);
+      await new Promise(async (resolve) => {
+        try {
+          await this.ws.end("", resolve);
+        } catch {
+          resolve();
+        }
       });
+      this.ws = null;
     }
 
     if (this.readFd) {
       try {
         await this.readFd.close();
       } catch {}
+      this.readFd = null;
     }
     if (this.writeFd) {
       try {
         await this.writeFd.close();
       } catch {}
+      this.writeFd = null;
     }
     if (this.pvtWriter) {
       await this.pvtWriter.close();

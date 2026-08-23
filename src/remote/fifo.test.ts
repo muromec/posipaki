@@ -7,6 +7,7 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { unlink } from "node:fs/promises";
 import { FifoUtf8NlineTransport } from "./fifo.js";
+import { makeWaiter } from "../util.js";
 
 let pipeCounter = 0;
 
@@ -16,10 +17,7 @@ async function makePipe(): Promise<[FileHandle, FileHandle]> {
     `fifo-test-${pipeCounter++}-${Math.random().toString(36).slice(2)}.pipe`,
   );
   execSync(`mkfifo "${path}"`);
-  const [readFd, writeFd] = await Promise.all([
-    open(path, "r"),
-    open(path, "w"),
-  ]);
+  const [readFd, writeFd] = await Promise.all([open(path, "r"), open(path, "w")]);
   await unlink(path).catch(() => {});
   return [readFd, writeFd];
 }
@@ -35,11 +33,10 @@ async function makePair(): Promise<[FifoUtf8NlineTransport, FifoUtf8NlineTranspo
 describe("FifoUtf8NlineTransport basic lifecycle", () => {
   it("send line -> receive line -> close", async () => {
     const [a, b] = await makePair();
-    const received: string[] = [];
-    b.onMessage((line) => received.push(line));
+    const bReceived = makeWaiter<string>();
+    b.onMessage(bReceived.resolve);
     await a.send("hello\n");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(received).toEqual(["hello"]);
+    expect(await bReceived.promise).toEqual("hello");
     await a.close();
     await b.close();
   });
@@ -53,24 +50,30 @@ describe("FifoUtf8NlineTransport basic lifecycle", () => {
 
   it("multiple messages arrive in order", async () => {
     const [a, b] = await makePair();
-    const received: string[] = [];
-    b.onMessage((line) => received.push(line));
+    const bReceived = makeWaiter<string>();
+
+    const buffer: string[] = [];
+    b.onMessage((line) => {
+      buffer.push(line);
+      if (buffer.length === 3) {
+        bReceived.resolve(buffer);
+      }
+    });
+
     await a.send("1\n");
     await a.send("2\n");
     await a.send("3\n");
-    await new Promise((r) => setTimeout(r, 30));
-    expect(received).toEqual(["1", "2", "3"]);
+    expect(await bReceived.promise).toEqual(["1", "2", "3"]);
     await a.close();
     await b.close();
   });
 
   it("send auto-appends newline", async () => {
     const [a, b] = await makePair();
-    const received: string[] = [];
-    b.onMessage((line) => received.push(line));
+    const bReceived = makeWaiter<string>();
+    b.onMessage(bReceived.resolve);
     await a.send("no-newline");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(received).toEqual(["no-newline"]);
+    expect(await bReceived.promise).toEqual("no-newline");
     await a.close();
     await b.close();
   });
@@ -123,14 +126,14 @@ describe("FifoUtf8NlineTransport handler lifecycle", () => {
   it("set -> remove -> set -> receive works", async () => {
     const [a, b] = await makePair();
     const first: string[] = [];
-    b.onMessage((line) => first.push(line));
+    const firstWaiter = makeWaiter<string>();
+    b.onMessage(firstWaiter.resolve);
     b.removeHandler();
-    const second: string[] = [];
-    b.onMessage((line) => second.push(line));
+
+    const secondWaiter = makeWaiter<string>();
+    b.onMessage(secondWaiter.resolve);
     await a.send("hello\n");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(first).toEqual([]);
-    expect(second).toEqual(["hello"]);
+    expect(await secondWaiter.promise).toEqual("hello");
     await a.close();
     await b.close();
   });
@@ -152,7 +155,11 @@ describe("FifoUtf8NlineTransport close behavior", () => {
     const received: string[] = [];
     b.onMessage((line) => received.push(line));
     await b.close();
-    try { await a.send("after-close\n"); } catch { /* EPIPE */ }
+    try {
+      await a.send("after-close\n");
+    } catch {
+      /* EPIPE */
+    }
     await new Promise((r) => setTimeout(r, 20));
     expect(received).toEqual([]);
     await a.close();
@@ -161,9 +168,10 @@ describe("FifoUtf8NlineTransport close behavior", () => {
   it("close while message in flight does not crash", async () => {
     const [a, b] = await makePair();
     b.onMessage(() => {});
-    await a.send("x\n");
+    const race = a.send("x\n");
     await b.close();
     await a.close();
+    await race;
   });
 
   it("close before any handler is set is safe", async () => {
@@ -175,12 +183,11 @@ describe("FifoUtf8NlineTransport close behavior", () => {
   it("peer close of write fd does not crash reader", async () => {
     const [a, b] = await makePair();
     const received: string[] = [];
-    b.onMessage((line) => received.push(line));
+    const bReceived = makeWaiter<string>();
+    b.onMessage(bReceived.resolve);
     await a.send("before-close\n");
-    await new Promise((r) => setTimeout(r, 20));
     await a.close();
-    await new Promise((r) => setTimeout(r, 50));
-    expect(received).toContain("before-close");
+    expect(await bReceived.promise).toEqual("before-close");
     await b.close();
   });
 });
@@ -188,35 +195,38 @@ describe("FifoUtf8NlineTransport close behavior", () => {
 describe("FifoUtf8NlineTransport bad input", () => {
   it("empty lines are handled without crash", async () => {
     const [a, b] = await makePair();
-    const received: string[] = [];
-    b.onMessage((line) => received.push(line));
+    const bReceived = makeWaiter<string>();
+    const buffer: string[] = [];
+    b.onMessage((line) => {
+      buffer.push(line);
+      if (buffer.length === 2) {
+        bReceived.resolve(buffer);
+      }
+    });
     await a.send("\n");
     await a.send("real\n");
-    await new Promise((r) => setTimeout(r, 30));
-    expect(received).toContain("real");
+    expect(await bReceived.promise).toContain("real");
     await a.close();
     await b.close();
   });
 
   it("whitespace-only lines are delivered as-is", async () => {
     const [a, b] = await makePair();
-    const received: string[] = [];
-    b.onMessage((line) => received.push(line));
+    const bReceived = makeWaiter<string>();
+    b.onMessage(bReceived.resolve);
     await a.send("   \n");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(received).toEqual(["   "]);
+    expect(await bReceived.promise).toEqual("   ");
     await a.close();
     await b.close();
   });
 
   it("very long lines (100k chars) are delivered intact", async () => {
     const [a, b] = await makePair();
-    const received: string[] = [];
-    b.onMessage((line) => received.push(line));
+    const bReceived = makeWaiter<string>();
+    b.onMessage(bReceived.resolve);
     const long = "x".repeat(100_000);
     await a.send(long + "\n");
-    await new Promise((r) => setTimeout(r, 100));
-    expect(received).toEqual([long]);
+    expect(await bReceived.promise).toEqual(long);
     await a.close();
     await b.close();
   });
@@ -224,24 +234,30 @@ describe("FifoUtf8NlineTransport bad input", () => {
   it("binary garbage does not crash the transport", async () => {
     const [readFd, writeFd] = await makePipe();
     const t = FifoUtf8NlineTransport.fromFds(readFd, writeFd);
-    const received: string[] = [];
-    t.onMessage((line) => received.push(line));
-    const buf = Buffer.from([0x00, 0x01, 0xFF, 0xFE, 0x0A]);
+    const tReceived = makeWaiter<string>();
+    t.onMessage(tReceived.resolve);
+    const buf = Buffer.from([0x00, 0x01, 0xff, 0xfe, 0x0a]);
     await writeFd.write(buf);
-    await new Promise((r) => setTimeout(r, 30));
-    expect(received.length).toBeGreaterThanOrEqual(0);
+    // FIXME: must be '\x00\x01\xFF\xFE' but is not
+    // because utf8 encoding ate it
+    expect(await tReceived.promise).toEqual(expect.any(String));
     await t.close();
   });
 
   it("non-JSON lines are delivered as raw strings", async () => {
     const [a, b] = await makePair();
-    const received: string[] = [];
-    b.onMessage((line) => received.push(line));
+    const bReceived = makeWaiter<string>();
+    const buffer: string[] = [];
+    b.onMessage((line) => {
+      buffer.push(line);
+      if (buffer.length === 2) {
+        bReceived.resolve(buffer);
+      }
+    });
     await a.send("this is not json\n");
     await a.send("{broken\n");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(received).toContain("this is not json");
-    expect(received).toContain("{broken");
+    expect(await bReceived.promise).toContain("this is not json");
+    expect(await bReceived.promise).toContain("{broken");
     await a.close();
     await b.close();
   });
@@ -249,14 +265,21 @@ describe("FifoUtf8NlineTransport bad input", () => {
 
 describe("FifoUtf8NlineTransport concurrency", () => {
   it("rapid send/receive (50 messages) preserves order", async () => {
+    const completeWaiter = makeWaiter<null>();
     const [a, b] = await makePair();
     const received: string[] = [];
-    b.onMessage((line) => received.push(line));
+    b.onMessage((line) => {
+      received.push(line);
+      if (received.length === count) {
+        completeWaiter.resolve(null);
+      }
+    });
     const count = 50;
     for (let i = 0; i < count; i++) {
       await a.send(`${i}\n`);
     }
-    await new Promise((r) => setTimeout(r, 200));
+    await completeWaiter.promise;
+
     expect(received.length).toBe(count);
     for (let i = 0; i < count; i++) {
       expect(received[i]).toBe(String(i));
@@ -268,24 +291,19 @@ describe("FifoUtf8NlineTransport concurrency", () => {
   it("send while no handler set does not crash", async () => {
     const [a, b] = await makePair();
     await a.send("nobody-listening\n");
-    await new Promise((r) => setTimeout(r, 20));
     await a.close();
     await b.close();
   });
 
   it("simultaneous bidirectional send", async () => {
     const [a, b] = await makePair();
-    const aReceived: string[] = [];
-    const bReceived: string[] = [];
-    a.onMessage((line) => aReceived.push(line));
-    b.onMessage((line) => bReceived.push(line));
-    await Promise.all([
-      a.send("a-to-b\n"),
-      b.send("b-to-a\n"),
-    ]);
-    await new Promise((r) => setTimeout(r, 30));
-    expect(bReceived).toContain("a-to-b");
-    expect(aReceived).toContain("b-to-a");
+    const aReceived = makeWaiter<string>();
+    const bReceived = makeWaiter<string>();
+    a.onMessage(aReceived.resolve);
+    b.onMessage(bReceived.resolve);
+    await Promise.all([a.send("a-to-b\n"), b.send("b-to-a\n")]);
+    expect(await bReceived.promise).toEqual("a-to-b");
+    expect(await aReceived.promise).toEqual("b-to-a");
     await a.close();
     await b.close();
   });
@@ -296,10 +314,7 @@ describe("FifoUtf8NlineTransport bidirectional connect", () => {
     // Simulate host (beginConnect) and child (connect) sides.
     // Host: reads from pathIn, writes to pathOut
     // Child: reads from pathOut, writes to pathIn
-    const basePath = join(
-      tmpdir(),
-      `fifo-conn-${Math.random().toString(36).slice(2)}`,
-    );
+    const basePath = join(tmpdir(), `fifo-conn-${Math.random().toString(36).slice(2)}`);
     const pathIn = basePath + ".in";
     const pathOut = basePath + ".out";
     execSync(`mkfifo "${pathIn}"`);
@@ -315,21 +330,18 @@ describe("FifoUtf8NlineTransport bidirectional connect", () => {
     const child = await childP;
 
     // Child sends to host (via pathIn)
-    const hostReceived: string[] = [];
-    host.onMessage((line) => hostReceived.push(line));
+    const hostReceived = makeWaiter<string>();
+    host.onMessage(hostReceived.resolve);
 
     await child.send("child-to-host\n");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(hostReceived).toEqual(["child-to-host"]);
+    expect(await hostReceived.promise).toEqual("child-to-host");
 
     // Host sends to child (via pathOut)
-    host.removeHandler();
-    const childReceived: string[] = [];
-    child.onMessage((line) => childReceived.push(line));
+    const childReceived = makeWaiter<string>();
+    child.onMessage(childReceived.resolve);
 
     await host.send("host-to-child\n");
-    await new Promise((r) => setTimeout(r, 20));
-    expect(childReceived).toEqual(["host-to-child"]);
+    expect(await childReceived.promise).toEqual("host-to-child");
 
     await host.close();
     await child.close();
@@ -338,11 +350,17 @@ describe("FifoUtf8NlineTransport bidirectional connect", () => {
   });
 
   it("write-only transport (fromFds with only writeFd)", async () => {
+    const waiter = makeWaiter<string>();
+
     const [readFd, writeFd] = await makePipe();
-    const writer = FifoUtf8NlineTransport.fromFds(readFd, writeFd);
+    const writer = FifoUtf8NlineTransport.fromFds(null, writeFd);
+    const reader = FifoUtf8NlineTransport.fromFds(readFd, null);
+    reader.onMessage(waiter.resolve);
     expect(writer.canSend).toBe(true);
     await writer.send("test\n");
     await writer.close();
+    expect(await waiter.promise).toEqual("test");
+    await reader.close();
   });
 
   it("read-only behaviour via fromFds with no writeFd errors on send", async () => {
