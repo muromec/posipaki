@@ -3,6 +3,10 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
 import { defineActor, defineMessages } from "../index.js";
 import { defineRemoteActor } from "./define.js";
+import { join, dirname } from "node:path";
+
+import { createHash } from "node:crypto";
+import { fileURLToPath } from "node:url";
 
 vi.mock("./child.js", () => ({
   runChild: vi.fn(() => Promise.resolve()),
@@ -35,7 +39,7 @@ function makeDummyActor() {
   });
 }
 
-const TEST_URL = "file:///home/test/project/src/actors/echo.ts";
+const TEST_URL = "file://" + join(dirname(fileURLToPath(import.meta.url)), "./fixtures/manual.js");
 
 // ── pathHash ───────────────────────────────────────────────────────────────
 
@@ -66,13 +70,8 @@ describe("defineRemoteActor — isRemoteRoot detection", () => {
   });
 
   it("isRemoteRoot is true when marker is in argv", async () => {
-    const { createHash } = await import("node:crypto");
-    const { fileURLToPath } = await import("node:url");
     const scriptPath = fileURLToPath(TEST_URL);
-    const hash = createHash("sha256")
-      .update(scriptPath)
-      .digest("hex")
-      .slice(0, 12);
+    const hash = createHash("sha256").update(scriptPath).digest("hex").slice(0, 12);
     const marker = `--remote=${hash}`;
 
     process.argv = ["bun", "script.ts", marker];
@@ -81,13 +80,8 @@ describe("defineRemoteActor — isRemoteRoot detection", () => {
   });
 
   it("manual: true prevents auto remote root detection", async () => {
-    const { createHash } = await import("node:crypto");
-    const { fileURLToPath } = await import("node:url");
     const scriptPath = fileURLToPath(TEST_URL);
-    const hash = createHash("sha256")
-      .update(scriptPath)
-      .digest("hex")
-      .slice(0, 12);
+    const hash = createHash("sha256").update(scriptPath).digest("hex").slice(0, 12);
     const marker = `--remote=${hash}`;
 
     process.argv = ["bun", "script.ts", marker];
@@ -137,13 +131,8 @@ describe("defineRemoteActor — marker format", () => {
   });
 
   it("correct hash triggers isRemoteRoot", async () => {
-    const { createHash } = await import("node:crypto");
-    const { fileURLToPath } = await import("node:url");
     const scriptPath = fileURLToPath(TEST_URL);
-    const expectedHash = createHash("sha256")
-      .update(scriptPath)
-      .digest("hex")
-      .slice(0, 12);
+    const expectedHash = createHash("sha256").update(scriptPath).digest("hex").slice(0, 12);
 
     process.argv = ["bun", "script.ts", `--remote=${expectedHash}`];
     const def = defineRemoteActor(makeDummyActor(), TEST_URL);
