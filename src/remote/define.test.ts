@@ -13,17 +13,25 @@ vi.mock("./child.js", () => ({
   makeSender: vi.fn(),
 }));
 
-vi.mock("./host.js", () => ({
-  spawnRemote: vi.fn(() =>
-    Promise.resolve({
-      state: { pings: 0 },
-      ready: async () => {},
-      send: () => {},
-      wait: async () => ({ code: 0, state: {} }),
-      onMessage: () => {},
-    }),
-  ),
-}));
+vi.mock("./host.js", async (importOriginal) => {
+  let actual = {};
+  if (importOriginal) {
+    actual = await importOriginal();
+  }
+
+  return {
+    ...actual,
+    spawnRemote: vi.fn(() =>
+      Promise.resolve({
+        state: { pings: 0 },
+        ready: async () => {},
+        send: () => {},
+        wait: async () => ({ code: 0, state: {} }),
+        onMessage: () => {},
+      }),
+    ),
+  };
+});
 
 function makeDummyActor() {
   return defineActor({

@@ -9,11 +9,7 @@
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import type { Message } from "../types.js";
-import type {
-  HandlerOptions,
-  MethodOptions,
-  ReflectionOptions,
-} from "../actor-types.js";
+import type { HandlerOptions, MethodOptions, ReflectionOptions } from "../actor-types.js";
 import { defineActor } from "../define-actor.js";
 import { stopPropagation } from "../hooks.js";
 import type { HookResult } from "../hooks.js";

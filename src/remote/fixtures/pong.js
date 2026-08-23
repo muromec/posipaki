@@ -1,5 +1,15 @@
-import { defineActor } from "../../index.js";
-import { runChild } from "../child.js";
+let defineActor;
+let runChild;
+
+try {
+  ({ defineActor } = await import("../../../dist/index.js"));
+  ({ runChild } = await import("../../../dist/remote/index.js"));
+} catch (e) {
+  console.error(
+    "Posipaki remote actor failed to start.\nFailed to import, no built version of the library found.\nRun npm run build or bun run build first.\nExiting now",
+  );
+  process.exit(1);
+}
 
 const echoActor = defineActor({
   name: "echo",
