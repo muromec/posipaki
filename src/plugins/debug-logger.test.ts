@@ -6,6 +6,7 @@ import type { Message } from "../types.js";
 import { debugLogger, defaultMsgFilter } from "./debug-logger.js";
 import type { Logger } from "./debug-logger.js";
 import assert from "assert";
+import { nextState } from '../testing/tick-utils.js';
 
 // ── messages ─────────────────────────────────────────────────────────────
 
@@ -69,9 +70,8 @@ async function sendAndStop(
   msg: PokeMsg | NopMsg,
 ) {
   await proc.ready();
-  proc.send!(msg);
-  proc.send!({ type: "STOP" });
-  await proc.wait();
+  proc.send(msg);
+  await proc.stop();
 }
 
 // ── tests ────────────────────────────────────────────────────────────────
@@ -88,8 +88,7 @@ describe("debugLogger", () => {
       const Actor = makeActor("lifecycle-test", { factory: recordFactory(calls) });
       const proc = await Actor.spawn({});
       await proc.ready();
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      await proc.stop();
 
       const events = calls.filter((c) => c.kind === "lifecycle").map((c) => c.event);
       expect(events).toContain("started");
@@ -116,9 +115,8 @@ describe("debugLogger", () => {
       });
       const proc = await Parent.spawn({});
       await proc.ready();
-      await new Promise((r) => setTimeout(r, 20));
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      await nextState(proc);
+      await proc.stop();
 
       const childExits = calls.filter(
         (c) => c.kind === "lifecycle" && c.event === "child-exited",
@@ -128,7 +126,7 @@ describe("debugLogger", () => {
     });
 
     it("registers hooks regardless of the DEBUG env var", async () => {
-      delete process.env.DEBUG;
+      process.env.DEBUG = '';
       const Actor = makeActor("no-debug-gate", { factory: recordFactory(calls) });
       await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 1 });
       expect(calls.filter((c) => c.kind === "lifecycle").length).toBeGreaterThan(0);
@@ -196,8 +194,7 @@ describe("debugLogger", () => {
       const proc = await Actor.spawn({});
       await proc.ready();
       proc.send({ type: "NOP", history: Array.from({ length: 50 }, () => "x") } as unknown as NopMsg);
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      await proc.stop();
       const logged = calls.find((c) => c.kind === "msg" && c.msgType === "NOP");
       expect(logged).toBeDefined();
       expect((logged!.payload as Record<string, unknown>).history).toBe("[50 items]");
@@ -209,7 +206,7 @@ describe("debugLogger", () => {
       let decoratedLog: Logger = undefined as unknown as Logger;
       const Actor = defineActor({
         name: "decoration-test",
-        afterStart() {
+        beforeStart() {
           decoratedLog = this.log;
         },
         plugins: [debugLogger()],
@@ -217,12 +214,12 @@ describe("debugLogger", () => {
       });
       const proc = await Actor.spawn({});
       await proc.ready();
-      await new Promise((r) => setTimeout(r, 0)); // afterStart is chained (async)
+
       assert(decoratedLog);
       expect(decoratedLog.debug).toBeTypeOf("function");
       expect(decoratedLog.lifecycle).toBeTypeOf("function");
-      proc.send({ type: "STOP" });
-      await proc.wait();
+
+      await proc.stop();
     });
   });
 
@@ -256,10 +253,8 @@ describe("debugLogger", () => {
       const proc = await Actor.spawn({});
       await proc.ready();
       proc.send({ type: "POKE", value: 1 });
-      await new Promise((r) => setTimeout(r, 0));
-      expect(proc.state!.x).toBe(42);
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      expect(await nextState(proc)).toEqual({ x: 42 });
+      await proc.stop();
     });
   });
 });

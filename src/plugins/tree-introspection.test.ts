@@ -4,6 +4,7 @@ import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "../define-actor.js";
 import type { Message } from "../types.js";
 import { inspect, type TreeNode } from "./tree-introspection.js";
+import { nextState } from '../testing/tick-utils.js';
 
 // ── messages ─────────────────────────────────────────────────────────────
 
@@ -32,8 +33,7 @@ describe("inspect", () => {
       expect(tree.children).toEqual([]);
       expect(tree.status).toBe("running");
 
-      proc.send!({ type: "STOP" }, { fromName: "t", fromId: Symbol("t") });
-      await proc.wait();
+      await proc.stop();
     });
 
     it("returns recursive child trees", async () => {
@@ -64,8 +64,7 @@ describe("inspect", () => {
       expect(child!.status).toBe("running");
       expect(child!.parentName).toBe("parent");
 
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      await proc.stop();
     });
 
     it('marks children without inspect as "no introspection"', async () => {
@@ -93,8 +92,7 @@ describe("inspect", () => {
       expect(child.status).toBe("no introspection");
       expect(child.children).toEqual([]);
 
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      await proc.stop();
     });
 
     it("prefix filters nodes by pname", async () => {
@@ -129,8 +127,7 @@ describe("inspect", () => {
       expect(filtered.pname).toBe("main");
       expect(filtered.children.length).toBe(1);
       expect(filtered.children[0].pname).toBe("main:worker");
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      await proc.stop();
     });
 
     it("does not clobber across spawns", async () => {
@@ -151,23 +148,21 @@ describe("inspect", () => {
       expect(t1.pname).toBe("clobber-test");
       expect(t2.pname).toBe("clobber-test");
 
-      proc1.send({ type: "STOP" });
-      proc2.send({ type: "STOP" });
-      await proc1.wait();
-      await proc2.wait();
+      await proc1.stop();
+      await proc2.stop();
     });
   });
 
   describe("getState", () => {
-    it("returns raw state", async () => {
+    it("returns raw internal state", async () => {
       const Actor = defineActor({
         name: "state-test",
         inMessages: Pin,
-        setup: () => ({ count: 0 }),
+        setup: () => ({ public: null, private: { count: 0 }}),
         plugins: [inspect()],
         handlers: {
           POKE() {
-            this.state.count++;
+            this.state.private.count++;
           },
         },
       });
@@ -175,13 +170,12 @@ describe("inspect", () => {
       const proc = await Actor.spawn({});
       await proc.ready();
       proc.send({ type: "POKE" });
-      await new Promise((r) => setTimeout(r, 0));
+      expect(await nextState(proc)).toBe(null);
 
       const state = proc.$reflection["inspect.getState"]();
-      expect(state).toEqual({ count: 1 });
+      expect(state).toEqual({ private: { count: 1 }, public: null });
 
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      await proc.stop();
     });
   });
 
@@ -224,9 +218,9 @@ describe("inspect", () => {
       const found = proc.$reflection["inspect.find"]("parent:kid");
       expect(found).not.toBeNull();
       expect(found!.pname).toBe("parent:kid");
+      expect(found.id).toBe(proc.children[0].id);
 
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      await proc.stop();
     });
 
     it("reaches children without the inspect plugin", async () => {
@@ -252,8 +246,7 @@ describe("inspect", () => {
       expect(found).not.toBeNull();
       expect(found!.pname).toBe("root:plain-child");
 
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      await proc.stop();
     });
 
     it("returns null for an unknown pname", async () => {
@@ -268,8 +261,7 @@ describe("inspect", () => {
 
       expect(proc.$reflection["inspect.find"]("nope")).toBeNull();
 
-      proc.send({ type: "STOP" });
-      await proc.wait();
+      await proc.stop();
     });
   });
 });
