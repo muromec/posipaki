@@ -13,6 +13,9 @@ import { mergeConfigs, type ActorPlugin } from "../hooks.js";
 import type { Message, StopMessage, SenderInfo, ProcessCtx } from "../types.js";
 import { toMatcher, type MatchSpec } from "./msg-matcher.js";
 import { pnameMatch } from "./pname-match.js";
+import { withTimeout, makeWaiter, type Waiter } from "../util.js";
+
+const DEFAULT_TIMEOUT = 4500;
 
 // ── types ────────────────────────────────────────────────────────────────
 
@@ -26,12 +29,11 @@ export interface Collector<M extends Message> {
   plugin: ActorPlugin;
   messages: M[];
   /**
-   * Wait until the collected history matches the current filter.
+   * Wait until the collected history matches the current filter,
+   * the actor exits or timeout deadline hits.
    *
-   * @param timeoutMs - optional deadline.  Without one, the promise settles
-   *   when the actor exits (with `ok: false`) — pass a timeout for a hard
-   *   failure with a diagnostic instead of relying on the test runner's
-   *   global timeout.
+   * @param timeoutMs - deadline, defaults to 4.5 seconds
+   *
    */
   resolved(timeoutMs?: number): Promise<MatchResult>;
   next(filter: MatchSpec<M>, timeoutMs?: number): Promise<MatchResult>;
@@ -74,7 +76,7 @@ export function createCollector<M extends Message>(
   // The plugin is installed on the root first (spawn assembles before any
   // child is forked), so the first install's beforeStart is the root.
   let installed = false;
-  let waiters: Array<(result: MatchResult) => void> = [];
+  let waiters: Waiter<MatchResult> = [];
 
   function setSpec(spec: MatchSpec<M>) {
     currentSpec = spec;
@@ -90,36 +92,32 @@ export function createCollector<M extends Message>(
     const last = messages[messages.length - 1];
     if (last !== undefined && matcher(last, messages)) {
       const ws = waiters.splice(0);
-      for (const w of ws) w({ ok: true });
+      for (const w of ws) w.resolve({ ok: true });
     }
   }
 
-  function resolved(timeoutMs?: number): Promise<MatchResult> {
-    return new Promise((resolve) => {
-      const last = messages[messages.length - 1];
-      if (last !== undefined && matcher(last, messages)) {
-        resolve({ ok: true });
-        return;
+  async function resolved(timeoutMs: number = DEFAULT_TIMEOUT): Promise<MatchResult> {
+    const last = messages[messages.length - 1];
+    if (last !== undefined && matcher(last, messages)) {
+      return { ok: true };
+    }
+    const matchWaiter = makeWaiter<MatchResult>();
+    waiters.push(matchWaiter);
+
+    try {
+      return await withTimeout(matchWaiter.promise, timeoutMs, 'test-match');
+    } catch (e) {
+      if ((e as Error)?.message !== 'Timeout:test-match') {
+        throw e;
       }
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      const settle = (result: MatchResult) => {
-        const i = waiters.indexOf(settle);
-        if (i >= 0) waiters.splice(i, 1);
-        if (timer) clearTimeout(timer);
-        resolve(result);
+
+      return {
+          ok: false,
+          detail:
+            `timeout after ${timeoutMs}ms — expected: ${describeSpec(currentSpec)} ` +
+            `— received ${messages.length} message(s), last: ${lastSummary(messages)}`,
       };
-      waiters.push(settle);
-      if (timeoutMs !== undefined) {
-        timer = setTimeout(() => {
-          settle({
-            ok: false,
-            detail:
-              `timeout after ${timeoutMs}ms — expected: ${describeSpec(currentSpec)} ` +
-              `— received ${messages.length} message(s), last: ${lastSummary(messages)}`,
-          });
-        }, timeoutMs);
-      }
-    });
+    }
   }
 
   const collectorPlugin: ActorPlugin = (config) => {
@@ -136,7 +134,7 @@ export function createCollector<M extends Message>(
       },
       beforeEnd() {
         const ws = waiters.splice(0);
-        for (const w of ws) w({ ok: false, detail: "actor exited before match" });
+        for (const w of ws) w.resolve({ ok: false, detail: "actor exited before match" });
       },
     });
   };
@@ -148,7 +146,7 @@ export function createCollector<M extends Message>(
     plugin: collectorPlugin,
     messages,
     resolved,
-    next(nextFilter, timeoutMs) {
+    next(nextFilter, timeoutMs = DEFAULT_TIMEOUT) {
       setSpec(nextFilter);
       return resolved(timeoutMs);
     },
@@ -166,7 +164,7 @@ export function createRootTracker(): RootTracker {
   const rootTrackerPlugin: ActorPlugin = (config) =>
     mergeConfigs(config, {
       beforeStart(this: { ctx: ProcessCtx<unknown, unknown, Message, Message> }) {
-        roots.add(this.ctx);
+        roots.add(this);
       },
       afterEnd(this: { ctx: ProcessCtx<unknown, unknown, Message, Message> }) {
         roots.delete(this.ctx);
@@ -180,7 +178,7 @@ export function createRootTracker(): RootTracker {
     async stopAll() {
       for (const root of roots) {
         try {
-          root.sendSelf({ type: "STOP" });
+          root.exit();
         } catch {}
       }
       roots.clear();

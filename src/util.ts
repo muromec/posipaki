@@ -7,7 +7,7 @@ export function debugLog(level: boolean, ...args: Array<unknown>) {
 
 type ReducerClosure<M> = (msg: M) => void;
 type ReadyFn = () => boolean;
-type NotifyFn = () => void;
+type NotifyFn<T = void> = (v: T) => void;
 type ErrorFn = (e: Error | null) => void;
 
 /**
@@ -72,9 +72,9 @@ function defer(fn: DeferCb): DeferredCall {
 }
 /** A promise paired with its resolve function — used to signal
  * process completion. */
-export type Waiter = {
-  promise: Promise<void>;
-  resolve: NotifyFn;
+export type Waiter<T = void> = {
+  promise: Promise<T>;
+  resolve: NotifyFn<T>;
   reject: ErrorFn;
 };
 /** Create a new {@link Waiter}. */

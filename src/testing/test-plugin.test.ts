@@ -36,10 +36,10 @@ const Emitter = defineActor({
   handlers: {
     POKE(msg) {
       this.state.count += msg.n;
-      this.emit({ type: "PONG", n: this.state.count } as EmitterOut);
+      this.emit({ type: "PONG", n: this.state.count });
     },
     BYE() {
-      this.emit({ type: "BYE" } as EmitterOut);
+      this.emit({ type: "BYE" });
       this.exit("bye");
     },
   },
@@ -63,29 +63,42 @@ describe("createCollector", () => {
     const proc = await spawnEmitter(collector);
 
     poke(proc, 1);
+    expect((await collector.resolved()).ok).toBe(true);
+
     poke(proc, 2);
-    expect((await collector.resolved(2000)).ok).toBe(true);
-    expect((await collector.next(times<EmitterOut>({ type: "PONG" }, 2), 2000)).ok).toBe(true);
+    expect((await collector.next(times<EmitterOut>({ type: "PONG" }, 2))).ok).toBe(true);
 
     expect(collector.messages).toHaveLength(2);
     expect(collector.messages[0]).toMatchObject({ type: "PONG", n: 1 });
     expect(collector.messages[1]).toMatchObject({ type: "PONG", n: 3 });
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
   });
 
   it("resolved(timeoutMs) fails with a diagnostic when nothing matches", async () => {
     const collector = createCollector<EmitterOut>({ type: "PONG" });
     const proc = await spawnEmitter(collector);
 
-    const result = await collector.resolved(150);
+    const result = await collector.resolved(0);
 
     expect(result.ok).toBe(false);
-    expect(result.detail).toContain("timeout after 150ms");
+    expect(result.detail).toContain("timeout after 0ms");
     expect(result.detail).toContain('expected: {"type":"PONG"}');
     expect(result.detail).toContain("received 0 message(s)");
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
+  });
+
+  it("resolved(timeoutMs) fails with a diagnostic when nothing matches (wrong count)", async () => {
+    const collector = createCollector<EmitterOut>({ type: "PONG", n: 99 });
+    const proc = await spawnEmitter(collector);
+    poke(proc, 2);
+
+    const result = await collector.resolved(0);
+
+    expect(result.ok).toBe(false);
+    expect(result.detail).toContain("timeout after 0ms");
+    expect(result.detail).toContain('expected: {"type":"PONG"');
+    expect(result.detail).toContain("received 1 message(s)");
+    await proc.stop();
   });
 
   it("pending resolved() settles ok:false when the actor exits first", async () => {
@@ -93,12 +106,11 @@ describe("createCollector", () => {
     const proc = await spawnEmitter(collector);
 
     const pending = collector.resolved();
-    proc.send({ type: "STOP" });
+    await proc.stop();
     const result = await pending;
 
     expect(result.ok).toBe(false);
     expect(result.detail).toBe("actor exited before match");
-    await proc.wait();
   });
 
   it("next() advances to the next expected message", async () => {
@@ -106,14 +118,14 @@ describe("createCollector", () => {
     const proc = await spawnEmitter(collector);
 
     poke(proc, 1);
-    expect((await collector.resolved(2000)).ok).toBe(true);
+    expect((await collector.resolved()).ok).toBe(true);
 
     poke(proc, 2);
-    const second = await collector.next({ type: "PONG", n: 3 }, 2000);
+    const second = await collector.next({ type: "PONG", n: 3 });
     expect(second.ok).toBe(true);
     expect(collector.messages).toHaveLength(2);
-    proc.send({ type: "STOP" });
-    await proc.wait();
+
+    await proc.stop();
   });
 
   it("times() waits for the Nth occurrence", async () => {
@@ -123,15 +135,14 @@ describe("createCollector", () => {
     poke(proc, 1);
     poke(proc, 1);
     // Two PONGs emitted so far — wait for the third occurrence.
-    const third = collector.next(times<EmitterOut>({ type: "PONG" }, 3), 2000);
+    const third = collector.next(times<EmitterOut>({ type: "PONG" }, 3));
     poke(proc, 1);
     const result = await third;
 
     expect(result.ok).toBe(true);
     expect(collector.messages).toHaveLength(3);
     // history-based: occurrences count over the whole collected history
-    proc.send({ type: "STOP" });
-    await proc.wait();
+    await proc.stop();
   });
 
   it("sequence spec matches the tail of history in order", async () => {
@@ -142,10 +153,39 @@ describe("createCollector", () => {
 
     poke(proc, 1);
     poke(proc, 2);
-    const result = await collector.resolved(2000);
+    const result = await collector.resolved();
     expect(result.ok).toBe(true);
-    proc.send({ type: "STOP" });
-    await proc.wait();
+
+    expect(collector.messages).toEqual([
+      { type: "PONG", n: 1 },
+      { type: "PONG", n: 3 },
+    ]);
+
+    await proc.stop();
+  });
+
+  it("sequence spec matches the tail of history in order (negative)", async () => {
+    const collector = createCollector<EmitterOut>([
+      { type: "PONG", n: 1 },
+      /* actual emitted will have n: 2 in between */
+      { type: "PONG", n: 4 },
+    ]);
+    const proc = await spawnEmitter(collector);
+
+    poke(proc, 1);
+    poke(proc, 1);
+    poke(proc, 2);
+
+    const result = await collector.resolved(0);
+    expect(result.ok).toBe(false);
+
+    expect(collector.messages).toEqual([
+      { type: "PONG", n: 1 },
+      { type: "PONG", n: 2 },
+      { type: "PONG", n: 4 },
+    ]);
+
+    await proc.stop();
   });
 
   it("scope filters by pname — a non-matching scope collects nothing", async () => {
@@ -156,11 +196,11 @@ describe("createCollector", () => {
     const proc = await spawnEmitter(collector);
 
     poke(proc, 1);
-    const result = await collector.resolved(150);
+    const result = await collector.resolved(0);
+    await proc.stop();
+
     expect(result.ok).toBe(false);
     expect(collector.messages).toHaveLength(0);
-    proc.send({ type: "STOP" });
-    await proc.wait();
   });
 
   it("reset() switches the active matcher", async () => {
@@ -168,14 +208,18 @@ describe("createCollector", () => {
     const proc = await spawnEmitter(collector);
 
     poke(proc, 1);
-    expect((await collector.resolved(2000)).ok).toBe(true);
+    expect((await collector.resolved()).ok).toBe(true);
 
     collector.reset({ type: "BYE" });
-    const pending = collector.resolved(2000);
+    const pending = collector.resolved();
     proc.send({ type: "BYE" });
+
     const result = await pending;
     expect(result.ok).toBe(true);
-    expect(collector.messages[collector.messages.length - 1]).toMatchObject({ type: "BYE" });
+    expect(collector.messages).toMatchObject([
+      { type: "PONG", n: 1 },
+      { type: "BYE" }
+    ]);
     await proc.wait();
   });
 
@@ -184,7 +228,7 @@ describe("createCollector", () => {
     const proc = await spawnEmitter(collector);
 
     proc.send({ type: "BYE" });
-    const result = await collector.resolved(2000);
+    const result = await collector.resolved();
     expect(result.ok).toBe(true);
     await proc.wait();
   });
