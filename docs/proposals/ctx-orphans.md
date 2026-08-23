@@ -24,7 +24,7 @@ A child that survives its parent (refuses STOP, or the parent dies) is today
 disconnected: nobody observes it, nobody can signal it, and it can hold
 sockets / timers / state forever. The fix has two halves — **collection** (this
 proposal, the small core-level half) and **policy** (the actor-level proposal,
-`orphan-policy.md`). This one only makes the orphan *reachable*.
+`orphan-policy.md`). This one only makes the orphan _reachable_.
 
 ## Design
 
@@ -36,7 +36,7 @@ proposal, the small core-level half) and **policy** (the actor-level proposal,
   the exiting child from `this.children`.
 - **Propagate on own EXIT.** In `pvtWatchExit`'s `finally`, after the STOP
   cascade + await, my surviving `children` plus my `orphans` are carried in my
-  EXIT to my parent, which collects them into *its* `orphans`. An orphan keeps
+  EXIT to my parent, which collects them into _its_ `orphans`. An orphan keeps
   bubbling up until some actor handles it.
 - **No policy.** The low level does not auto-stop or auto-adopt orphans — that is
   the actor-level proposal's job.

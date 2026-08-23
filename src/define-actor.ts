@@ -3,12 +3,7 @@
 // Compiles a declarative config into an AsyncProcessFn.  Built on top of
 // the existing runDispatchAsync / spawnAsync primitives.
 //
-import {
-  type AsyncProcess,
-  runDispatchAsync,
-  spawnAsync,
-  AnyProcess,
-} from "./process.async.js";
+import { type AsyncProcess, runDispatchAsync, spawnAsync, AnyProcess } from "./process.async.js";
 import type {
   WithSender,
   SenderInfo,
@@ -30,26 +25,14 @@ import type {
   HidePrivate,
 } from "./actor-types.js";
 import { STOP_SENTINEL } from "./actor-types.js";
-import {
-  ActorDecorated,
-  type ActorPlugin,
-  ActorReflection,
-  callHook,
-} from "./hooks.js";
+import { ActorDecorated, type ActorPlugin, ActorReflection, callHook } from "./hooks.js";
 
-export function defineMessages<
-  OutMsg extends Message = Message,
->(): ActorMessages<OutMsg> {
+export function defineMessages<OutMsg extends Message = Message>(): ActorMessages<OutMsg> {
   return undefined as unknown as ActorMessages<OutMsg>;
 }
 
 function hidePrivate<T>(value: T): HidePrivate<T> {
-  if (
-    value &&
-    typeof value === "object" &&
-    "private" in value &&
-    "public" in value
-  ) {
+  if (value && typeof value === "object" && "private" in value && "public" in value) {
     return value.public as HidePrivate<T>;
   }
   return value as HidePrivate<T>;
@@ -60,10 +43,13 @@ function resolvePlugins(
   parentPlugins?: ActorPlugin[],
   addPlugins?: ActorPlugin[],
 ): ActorPlugin[] {
-  const resolved =
-    !raw ? (parentPlugins ? [...parentPlugins] : [])
-    : Array.isArray(raw) ? [...raw]
-    : raw(parentPlugins ?? []);
+  const resolved = !raw
+    ? parentPlugins
+      ? [...parentPlugins]
+      : []
+    : Array.isArray(raw)
+      ? [...raw]
+      : raw(parentPlugins ?? []);
 
   const combined = addPlugins ? [...resolved, ...addPlugins] : resolved;
 
@@ -81,17 +67,18 @@ function resolvePlugins(
   });
 }
 
-async function assembleActor<C>(config: C, plugins: ActorPlugin[], addPlugins?: ActorPlugin[]): Promise<C> {
+async function assembleActor<C>(
+  config: C,
+  plugins: ActorPlugin[],
+  addPlugins?: ActorPlugin[],
+): Promise<C> {
   // Work with the default ActorPlugin type internally, cast back on return
   let cur = config as AnyConfig;
   for (const p of plugins) {
     try {
-          cur = await p(cur);
+      cur = await p(cur);
     } catch (e: unknown) {
-      console.error(
-        `[assembleActor] plugin "${p.name || "?"}" failed:`,
-        e,
-      );
+      console.error(`[assembleActor] plugin "${p.name || "?"}" failed:`, e);
     }
   }
   cur.resolvedPlugins = plugins;
@@ -108,48 +95,20 @@ export function defineActor<
   Handlers extends HandlerOptions<InMsg>,
   ReflectionMethods extends ReflectionOptions,
 >(
-  config: ActorConfig<
-    Args,
-    InternalState,
-    InMsg,
-    OutMsg,
-    Methods,
-    Handlers,
-    ReflectionMethods
-  >,
+  config: ActorConfig<Args, InternalState, InMsg, OutMsg, Methods, Handlers, ReflectionMethods>,
 ): ActorDefinition<Args, InternalState, InMsg, OutMsg, ReflectionMethods> {
   const actorCtxMap = new Map<
     symbol,
-    ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods
-    >
+    ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers, ReflectionMethods>
   >();
 
   function makeRuntime(
-    assembly: ActorConfig<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods
-    >,
+    assembly: ActorConfig<Args, InternalState, InMsg, OutMsg, Methods, Handlers, ReflectionMethods>,
   ): AsyncProcessFn<Args, HidePrivate<InternalState>, InMsg, OutMsg> {
     return async function* (
       ctx,
       args,
-    ): AsyncGenerator<
-      HidePrivate<InternalState | null>,
-      void,
-      WithSender<InMsg>
-    > {
+    ): AsyncGenerator<HidePrivate<InternalState | null>, void, WithSender<InMsg>> {
       let done = false;
       let exitReason: unknown;
       let rawState: InternalState = undefined as unknown as InternalState;
@@ -188,36 +147,21 @@ export function defineActor<
         },
         $child: {} as Record<string, AnyProcess>,
         decorators: {},
-        fork: async <
-          A,
-          S,
-          IM extends Message,
-          OM extends InMsg,
-          R extends ReflectionOptions,
-        >(
+        fork: async <A, S, IM extends Message, OM extends InMsg, R extends ReflectionOptions>(
           childActor: ActorDefinition<A, S, IM, OM, R>,
           childArgs?: A,
           forkOpts?: { name?: string; addPlugins?: ActorPlugin[] },
         ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R & ActorReflection>> => {
           let child: AsyncProcess<A, HidePrivate<S>, IM, OM, R & ActorReflection>;
           const childName =
-            forkOpts?.name ??
-            childActor?.name ??
-            `child-${Object.keys(self.$child).length}`;
+            forkOpts?.name ?? childActor?.name ?? `child-${Object.keys(self.$child).length}`;
           const treeName = `${ctx.pname}:${childName}`;
-          const childAddPlugins = [
-            ...(assembly.addPlugins || []),
-            ...(forkOpts?.addPlugins || []),
-          ];
-          child = await childActor.spawnAsChild(
-            ctx,
-            childArgs!,
-            {
-              name: treeName,
-              parentPlugins: assembly.resolvedPlugins || [],
-              ...(childAddPlugins.length ? { addPlugins: childAddPlugins } : {}),
-            },
-          );
+          const childAddPlugins = [...(assembly.addPlugins || []), ...(forkOpts?.addPlugins || [])];
+          child = await childActor.spawnAsChild(ctx, childArgs!, {
+            name: treeName,
+            parentPlugins: assembly.resolvedPlugins || [],
+            ...(childAddPlugins.length ? { addPlugins: childAddPlugins } : {}),
+          });
           self.$child[child.pname] = child as unknown as AnyProcess;
           return child;
         },
@@ -301,12 +245,7 @@ export function defineActor<
               for (const orphan of orphans) {
                 // Default when no hook is defined: hard-kill the orphan.
                 const decision = assembly.onOrphan
-                  ? await callHook(
-                      assembly.onOrphan,
-                      assembly.onError,
-                      self,
-                      orphan,
-                    )
+                  ? await callHook(assembly.onOrphan, assembly.onError, self, orphan)
                   : "force-stop";
                 if (decision === "adopt") {
                   ctx.adopt(orphan);
@@ -325,11 +264,7 @@ export function defineActor<
             }
           }
           let hookStopped = false;
-          if (
-            msg.type !== "STOP" &&
-            msg.type !== "EXIT" &&
-            assembly.onMessage
-          ) {
+          if (msg.type !== "STOP" && msg.type !== "EXIT" && assembly.onMessage) {
             const result = await callHook(
               assembly.onMessage,
               assembly.onError,
@@ -345,13 +280,7 @@ export function defineActor<
                 msg.type as keyof Handlers
               ] as HandlerFn<InMsg>) || assembly.onUnhandled;
 
-            await callHook(
-              handler,
-              assembly.onError,
-              self,
-              msg as InMsg,
-              sender,
-            );
+            await callHook(handler, assembly.onError, self, msg as InMsg, sender);
           }
         },
         () => done,
@@ -402,7 +331,11 @@ export function defineActor<
       const plugs = resolvePlugins(config.plugins, undefined, opts?.addPlugins);
       const assembly = await assembleActor(config, plugs, opts?.addPlugins);
       const runtime = makeRuntime(assembly);
-      const proc = spawnAsync(runtime, opts?.name ?? assembly.name ?? "actor", opts?.toParent)(args);
+      const proc = spawnAsync(
+        runtime,
+        opts?.name ?? assembly.name ?? "actor",
+        opts?.toParent,
+      )(args);
       attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);
       return proc as AsyncProcess<
         Args,

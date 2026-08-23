@@ -4,12 +4,12 @@
 
 ## Summary
 
-`pause()` currently freezes only the *incoming* direction — it stops scheduling
+`pause()` currently freezes only the _incoming_ direction — it stops scheduling
 ticks, so the process stops **processing** messages. It does **not** stop the
-*outgoing* direction: a process can still emit via `ctx.toParent` (and, via async
+_outgoing_ direction: a process can still emit via `ctx.toParent` (and, via async
 callbacks, even while paused). This makes `pause()` a half-working quiesce.
 
-Make `pause()` freeze **both** directions: no processing *and* no emission.
+Make `pause()` freeze **both** directions: no processing _and_ no emission.
 
 ## Motivation
 

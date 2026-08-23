@@ -16,7 +16,7 @@ the gap between the old parent dying and the new parent subscribing.
 
 ## Motivation
 
-The low level only *collects* orphans — it makes them reachable but takes no
+The low level only _collects_ orphans — it makes them reachable but takes no
 action. A naive `adopt` ("subscribe to the orphan") loses every message the
 orphan emits during the handoff window. This proposal defines `adopt` so that
 window has no hole.
@@ -27,7 +27,7 @@ When parent P exits and its child C survives (refuses STOP), C is handed up as
 an orphan. Two loss windows:
 
 - **Window A — addressed to a dying process.** C emits M to P while P is
-  exiting; M lands in P's inbox and is discarded with P. For a child that *also*
+  exiting; M lands in P's inbox and is discarded with P. For a child that _also_
   exits (stops cleanly), this is accepted — it's going away and its in-flight
   messages die with it.
 - **Window B — the handoff limbo.** After P unsubscribes from C but before the
@@ -66,7 +66,7 @@ onOrphan(orphan) {
 
 #### force-stop is a hard kill, not a STOP message
 
-`force-stop` is *not* `send(STOP)`. STOP is graceful — the generator cooperates
+`force-stop` is _not_ `send(STOP)`. STOP is graceful — the generator cooperates
 and emits EXIT. `force-stop` terminates the process immediately: no generator
 `finally`, no EXIT, nothing left to observe. It is `AsyncProcess.forceStop()`,
 and the caller removes the process from its `children` / `orphans` list
@@ -86,15 +86,15 @@ process can do it):
 2. For each orphan, **swap its callback to a dumb collector** — replace the
    `pvtChildMessage` subscriber with one that only buffers `[msg, from]` (no EXIT
    filtering, no policy). The swap is two synchronous statements, so it is an
-   *atomic cut* (see below).
-3. **Back-feed** — sweep P's *own* inbox for undrained messages from each orphan
+   _atomic cut_ (see below).
+3. **Back-feed** — sweep P's _own_ inbox for undrained messages from each orphan
    (`sender.fromId === orphan.id`) and distribute them into the orphan's buffer,
-   *ahead of* whatever the collector has already buffered (they predate the cut).
+   _ahead of_ whatever the collector has already buffered (they predate the cut).
 4. **Hand off** — P's EXIT carries the orphans (in-process handles). Each
    orphan carries its own live pending buffer (`pvtPending`) and collector
    unsubscribe (`pvtCollectorUnsub`) on the process object, so no separate
    `pending` payload field is needed — the buffer travels with the orphan. It is
-   *live*: the collector keeps appending while the handoff is in flight.
+   _live_: the collector keeps appending while the handoff is in flight.
 5. **On adopt** — G subscribes to the orphan first, removes the collector, then
    drains the (still-growing) buffer into G's inbox. Order is back-fed →
    collector → live.

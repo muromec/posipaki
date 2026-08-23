@@ -12,7 +12,10 @@ import type { Message } from "./types.js";
 
 // ── helpers ──────────────────────────────────────────────────────────────
 
-interface PokeMsg extends Message { type: "POKE"; n: number; }
+interface PokeMsg extends Message {
+  type: "POKE";
+  n: number;
+}
 const Pin = defineMessages<PokeMsg>();
 
 /** A named plugin that records hook calls. */
@@ -20,11 +23,15 @@ function namedPlugin(name: string): ActorPlugin & { calls: string[] } {
   const calls: string[] = [];
   const fn = function (this: any, config: any) {
     return mergeConfigs(config, {
-      afterStart() { calls.push(`${name}:${this.name}:afterStart`); },
-      beforeEnd() { calls.push(`${name}:${this.name}:beforeEnd`); },
+      afterStart() {
+        calls.push(`${name}:${this.name}:afterStart`);
+      },
+      beforeEnd() {
+        calls.push(`${name}:${this.name}:beforeEnd`);
+      },
     });
   } as ActorPlugin & { calls: string[] };
-  Object.defineProperty(fn, 'name', { value: name });
+  Object.defineProperty(fn, "name", { value: name });
   fn.calls = calls;
   return fn;
 }
@@ -35,7 +42,7 @@ describe("spawn addPlugins", () => {
   it("spawn accepts addPlugins in opts", async () => {
     const actor = defineActor({
       setup: () => ({}),
-      handlers: { },
+      handlers: {},
     });
 
     const plug = namedPlugin("spy");
@@ -57,11 +64,11 @@ describe("spawnAsChild opts", () => {
     const child = defineActor({
       name: "kid",
       setup: () => ({}),
-      handlers: { },
+      handlers: {},
     });
 
     const parent = defineActor({
-      handlers: { },
+      handlers: {},
       async setup() {
         // parentPlugins in opts
         await child.spawnAsChild(this.ctx, {}, { parentPlugins: [plug] });
@@ -79,11 +86,11 @@ describe("spawnAsChild opts", () => {
   it("parentPlugins is optional", async () => {
     const child = defineActor({
       setup: () => ({}),
-      handlers: { },
+      handlers: {},
     });
 
     const parent = defineActor({
-      handlers: { },
+      handlers: {},
       async setup() {
         await child.spawnAsChild(this.ctx, {});
       },
@@ -101,17 +108,21 @@ describe("spawnAsChild opts", () => {
     const child = defineActor({
       name: "kid",
       setup: () => ({}),
-      handlers: { },
+      handlers: {},
     });
 
     const parent = defineActor({
       name: "dad",
-      handlers: { },
+      handlers: {},
       async setup() {
-        await child.spawnAsChild(this.ctx, {}, {
-          parentPlugins: [parentPlug],
-          addPlugins: [addPlug],
-        });
+        await child.spawnAsChild(
+          this.ctx,
+          {},
+          {
+            parentPlugins: [parentPlug],
+            addPlugins: [addPlug],
+          },
+        );
       },
     });
 
@@ -134,12 +145,12 @@ describe("addPlugins non-overridable", () => {
     const grandchild = defineActor({
       name: "grandkid",
       setup: () => ({}),
-      handlers: { },
+      handlers: {},
     });
 
     const child = defineActor({
       name: "kid",
-      handlers: { },
+      handlers: {},
       plugins: [], // explicitly replace — strips parent plugins
       async setup() {
         await this.fork(grandchild, {});
@@ -148,7 +159,7 @@ describe("addPlugins non-overridable", () => {
 
     const parent = defineActor({
       name: "dad",
-      handlers: { },
+      handlers: {},
       async setup() {
         await this.fork(child, {});
       },
@@ -173,7 +184,7 @@ describe("plugin dedup", () => {
 
     const actor = defineActor({
       setup: () => ({}),
-      handlers: { },
+      handlers: {},
       plugins: [dup],
     });
 
@@ -195,7 +206,7 @@ describe("spawnAsChild ctx type", () => {
       name: "kid",
       outMessages: Pin,
       setup: () => ({}),
-      handlers: { },
+      handlers: {},
     });
 
     const parent = defineActor({
@@ -203,7 +214,9 @@ describe("spawnAsChild ctx type", () => {
       inMessages: Pin,
       setup: () => ({ x: 1 }),
       handlers: {
-        POKE(msg) { this.state.x += msg.n; },
+        POKE(msg) {
+          this.state.x += msg.n;
+        },
       },
       async afterStart() {
         // KEY: this.ctx is a concrete ProcessCtx<{x:number}, ...>.
@@ -232,8 +245,10 @@ describe("self.fork plugin propagation", () => {
 
     const parent = defineActor({
       name: "dad",
-      setup() { return {}; },
-      handlers: { },
+      setup() {
+        return {};
+      },
+      handlers: {},
       plugins: [spy],
       async afterStart() {
         await this.fork(child, {});

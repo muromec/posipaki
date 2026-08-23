@@ -5,7 +5,7 @@
 ## Summary
 
 Replace the single `onEnd(reason)` lifecycle hook with two hooks that let an
-actor choose *when* it frees resources relative to the EXIT signal it sends to
+actor choose _when_ it frees resources relative to the EXIT signal it sends to
 its parent:
 
 - **`beforeEnd(reason)`** — fires after the dispatch loop ends but **before**
@@ -22,7 +22,7 @@ downstream usages and two internal uses in this repo's test-plugin.
 ## Motivation
 
 Today `onEnd` has a single, undocumented timing. In the current end-of-life
-sequence it runs after the dispatch loop exits but *before* `pvtWatchExit`'s
+sequence it runs after the dispatch loop exits but _before_ `pvtWatchExit`'s
 `finally` broadcasts STOP to children and emits EXIT to the parent:
 
 ```
@@ -38,10 +38,10 @@ That single position is wrong for two different kinds of teardown:
 
 - **Teardown that must precede EXIT** — e.g. flushing a checkpoint file so a
   replacement actor resumes from the right point — is correct here, but it
-  *blocks* the EXIT signal. A slow "announce offline" call delays the parent's
+  _blocks_ the EXIT signal. A slow "announce offline" call delays the parent's
   knowledge that the child is gone.
 - **Teardown that should not block EXIT** — best-effort cleanup — has nowhere to
-  go *after* EXIT, so authors either inline it before EXIT (blocking) or skip
+  go _after_ EXIT, so authors either inline it before EXIT (blocking) or skip
   it.
 
 Splitting the hook gives each category a home and makes the timing explicit.

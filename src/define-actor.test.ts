@@ -13,12 +13,7 @@
 
 import { describe, it, expect } from "vitest";
 import { spawnAsync, runDispatchAsync, defineActor } from "./index.js";
-import type {
-  AsyncProcessFn,
-  Message,
-  WithSender,
-  ProcessCtx,
-} from "./index.js";
+import type { AsyncProcessFn, Message, WithSender, ProcessCtx } from "./index.js";
 
 import type { PokeM } from "./test-helpers.js";
 import { defineMessages } from "./define-actor.js";
@@ -32,7 +27,7 @@ type CounterIn = PokeM | { type: "STOP" } | { type: "PING"; count: number };
 type CountState = { count: number; max: number; name: string };
 type CounterArgs = { max: number };
 type DoneMessage = { type: "DONE"; count: number };
-type CounterOut =  DoneMessage | Message;
+type CounterOut = DoneMessage | Message;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Variant A (GREEN): normal async generator — ctx param carries the types
@@ -60,7 +55,7 @@ const counterFn_vA = async function* counterFn(
     },
     () => state.count >= state.max,
   );
-  ctx.toParent({ type: "EXIT"});
+  ctx.toParent({ type: "EXIT" });
 };
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -104,12 +99,7 @@ describe.each([
   { variant: "A: normal async generator", fn: () => counterFn_vA },
   { variant: "B: defineActor", fn: () => counterDef_vB.fn },
 ])("counter process — $variant", ({ fn }) => {
-  const getFn = fn as () => AsyncProcessFn<
-    CounterArgs,
-    CountState,
-    CounterIn,
-    CounterOut
-  >;
+  const getFn = fn as () => AsyncProcessFn<CounterArgs, CountState, CounterIn, CounterOut>;
 
   it("starts with count 0", async () => {
     const proc = spawnAsync<CounterArgs, CountState, CounterIn, CounterOut>(
@@ -190,51 +180,57 @@ describe.each([
 
     await proc.ready();
     proc.send({ type: "POKE" });
-    expect(await nextMessage(proc)).toMatchObject({ type: "DONE", count: 1});
+    expect(await nextMessage(proc)).toMatchObject({ type: "DONE", count: 1 });
     await proc.wait();
   });
 });
 
-
 // ── spawn with opts ───────────────────────────────────────────────────
 
-describe('spawn with opts', () => {
-  it('delivers emitted messages to toParent callback', async () => {
+describe("spawn with opts", () => {
+  it("delivers emitted messages to toParent callback", async () => {
     const actor = defineActor({
       outMessages: defineMessages<DoneMessage>(),
       setup: () => ({ sent: false }),
       handlers: {
         POKE() {
-          this.emit({ type: 'DONE', count: 1 });
+          this.emit({ type: "DONE", count: 1 });
         },
       },
     });
 
     const received: DoneMessage[] = [];
-    const proc = await actor.spawn({}, {
-      toParent: (msg) => { received.push(msg); },
-    });
+    const proc = await actor.spawn(
+      {},
+      {
+        toParent: (msg) => {
+          received.push(msg);
+        },
+      },
+    );
 
     await proc.ready();
-    proc.send({ type: 'POKE' });
+    proc.send({ type: "POKE" });
     await proc.stop();
 
     expect(received.length).toBeGreaterThanOrEqual(1);
-    expect(received[0].type).toBe('DONE');
+    expect(received[0].type).toBe("DONE");
     expect(received[0].count).toBe(1);
   });
 
-  it('works without opts (backward compatible)', async () => {
+  it("works without opts (backward compatible)", async () => {
     const actor = defineActor({
       setup: () => ({ x: 0 }),
       handlers: {
-        POKE(this) { this.state.x = 1; },
+        POKE(this) {
+          this.state.x = 1;
+        },
       },
     });
 
     const proc = await actor.spawn({});
     await proc.ready();
-    proc.send({ type: 'POKE' });
+    proc.send({ type: "POKE" });
     await proc.stop();
 
     expect(proc.state!.x).toBe(1);

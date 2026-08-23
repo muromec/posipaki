@@ -16,7 +16,7 @@ JavaScript has three ways to model async work:
 
 What's missing is a primitive for something that **receives messages, updates its
 own state, and sends messages back** — a thing with its own lifecycle, can be started
-and aborted before it resolves. 
+and aborted before it resolves.
 
 A **process**.
 
@@ -42,11 +42,10 @@ await proc.ready();
 proc.send({ type: "POKE" });
 ```
 
-
 A process can do everything a promise, a stream, or a store can do —
 but it can also fork children, pause/resume, and exit on its own terms.
 And every handler receives the sender's identity in the `[msg, sender]` tuple,
-so you always know *who* sent what.
+so you always know _who_ sent what.
 Of course processes are composable into trees.
 
 ## Quick start
@@ -64,8 +63,8 @@ const counter = defineActor({
 });
 
 const proc = counter.spawn(null);
-await proc.ready();           // state is available
-proc.send({ type: "POKE" });  // delivers [msg, sender] to the generator
+await proc.ready(); // state is available
+proc.send({ type: "POKE" }); // delivers [msg, sender] to the generator
 // proc.state.count === 1
 ```
 
@@ -90,7 +89,6 @@ proc.send({ type: "POKE" });
 await proc.wait();
 ```
 
-
 ## Okay, but what do I use it for?
 
 To call the `/chat_complete` endpoint and emit effects (tool calls)
@@ -111,7 +109,6 @@ Get the new message, process it, maybe emit something, wait for the next message
 This means when you send three messages to a process -- they will be processed serially
 and their results will not produce a race. You can also ask the process to exit
 and it will not produce any messages once it does. This also cascades to their children.
-
 
 ## Features
 

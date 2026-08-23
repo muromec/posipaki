@@ -26,11 +26,11 @@ via reflection methods.
 
 The plugin registers these methods on every actor it's installed on:
 
-| Method | Returns | Description |
-|--------|---------|-------------|
-| `getTree()` | `{ pname, parentName, children, status, startedAt }` | Actor identity and children |
-| `getState()` | `unknown` | JSON-serializable snapshot of exposed state |
-| `stop()` | `void` | Graceful shutdown (calls `agreeToStop()`) |
+| Method       | Returns                                              | Description                                 |
+| ------------ | ---------------------------------------------------- | ------------------------------------------- |
+| `getTree()`  | `{ pname, parentName, children, status, startedAt }` | Actor identity and children                 |
+| `getState()` | `unknown`                                            | JSON-serializable snapshot of exposed state |
+| `stop()`     | `void`                                               | Graceful shutdown (calls `agreeToStop()`)   |
 
 ### Usage
 
@@ -76,25 +76,25 @@ from multiple responses.
 ```ts
 export function treeIntrospection(): ActorPlugin {
   return {
-    name: 'treeIntrospection',
+    name: "treeIntrospection",
     install(ctx) {
-      ctx.registerMethod('getTree', () => ({
+      ctx.registerMethod("getTree", () => ({
         pname: ctx.pname,
         parentName: ctx.parentName ?? null,
         children: Object.keys(ctx.$child ?? {}),
-        status: 'running',
+        status: "running",
         startedAt: Date.now(),
       }));
 
-      ctx.registerMethod('getState', () => {
+      ctx.registerMethod("getState", () => {
         try {
           return JSON.parse(JSON.stringify(ctx.state));
         } catch {
-          return '(state not serializable)';
+          return "(state not serializable)";
         }
       });
 
-      ctx.registerMethod('stop', () => {
+      ctx.registerMethod("stop", () => {
         ctx.agreeToStop();
       });
     },

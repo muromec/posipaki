@@ -93,16 +93,16 @@ export function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-const TIMEOUT_SENTINEL = Symbol.for('__timeout__posipaki_internal');
+const TIMEOUT_SENTINEL = Symbol.for("__timeout__posipaki_internal");
 export async function timeout(ms: number) {
   await sleep(ms);
   return TIMEOUT_SENTINEL;
 }
 
-export async function withTimeout<O>(promise: Promise<O>, ms: number, kind: string) : Promise<O> {
+export async function withTimeout<O>(promise: Promise<O>, ms: number, kind: string): Promise<O> {
   const result = await Promise.race([promise, timeout(ms)]);
   if (result === TIMEOUT_SENTINEL) {
-    throw Error('Timeout:'+ kind);
+    throw Error("Timeout:" + kind);
   }
   return result as O;
 }

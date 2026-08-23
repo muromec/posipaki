@@ -22,6 +22,7 @@ control — discoverable, typed, and available both locally and across
 process boundaries.
 
 Concrete use cases:
+
 - **Process tree introspection**: walk the actor tree, show hierarchy
 - **State inspection**: read an actor's current state for debugging
 - **Health checks**: ping actors, check uptime, detect stuck processes
@@ -54,10 +55,10 @@ Plugins register reflection methods via `ctx.registerMethod()`:
 
 ```ts
 const myPlugin: ActorPlugin = {
-  name: 'myPlugin',
+  name: "myPlugin",
   install(ctx) {
-    ctx.registerMethod('ping', () => 'pong');
-    ctx.registerMethod('stop', () => ctx.agreeToStop());
+    ctx.registerMethod("ping", () => "pong");
+    ctx.registerMethod("stop", () => ctx.agreeToStop());
   },
 };
 ```
@@ -145,7 +146,7 @@ method signatures:
 
 ```ts
 type ReflectionOf<T extends ActorDefinition<...>> = {
-  [K in keyof T['config']['$reflectionMethods']]: 
+  [K in keyof T['config']['$reflectionMethods']]:
     T['config']['$reflectionMethods'][K] extends (...args: infer A) => infer R
       ? (...args: A) => Promise<R>
       : never;

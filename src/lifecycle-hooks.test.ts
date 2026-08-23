@@ -4,16 +4,16 @@
 // onStart, beforeEnd, onStopRequested, and stopPropagation().
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActorPlugin } from './actor-types.js';
+import type { ActorPlugin } from "./actor-types.js";
 import { defineActor, defineMessages } from "./define-actor.js";
 import { stopPropagation, mergeConfigs, type HookResult } from "./hooks.js";
-import { withTimeout } from './util.js';
+import { withTimeout } from "./util.js";
 import type { Message, SenderInfo } from "./types.js";
-import { nextState } from './testing/';
+import { nextState } from "./testing/";
 
 vi.mocked = vi.mocked || ((v) => v);
-vi.mock('./util.js', async (importOriginal) => {
-  let actual = {}
+vi.mock("./util.js", async (importOriginal) => {
+  let actual = {};
   if (importOriginal) {
     actual = await importOriginal();
   }
@@ -22,7 +22,7 @@ vi.mock('./util.js', async (importOriginal) => {
 });
 
 function withTimeoutMiss() {
-  return vi.mocked(withTimeout).mockRejectedValueOnce(new Error('Timeout:stop'));
+  return vi.mocked(withTimeout).mockRejectedValueOnce(new Error("Timeout:stop"));
 }
 function withTimeoutHit() {
   return vi.mocked(withTimeout).mockImplementation((p) => p);
@@ -83,10 +83,7 @@ describe("hooks.onMessage", () => {
     });
 
     const proc = await Actor.spawn({});
-    proc.send(
-      { type: "POKE", value: 1 },
-      { fromName: "caller", fromId: Symbol("caller") },
-    );
+    proc.send({ type: "POKE", value: 1 }, { fromName: "caller", fromId: Symbol("caller") });
     await proc.stop();
 
     expect(capturedSender).not.toBeNull();
@@ -221,11 +218,12 @@ describe("hooks.onChildExit", () => {
 describe("hooks.onStart / beforeEnd", () => {
   it("plugin afterStart fires before actor afterStart", async () => {
     const order: string[] = [];
-    const plugin1 : ActorPlugin = (cfg) => mergeConfigs(cfg, {
-      afterStart() {
-        order.push("plugin");
-      },
-    });
+    const plugin1: ActorPlugin = (cfg) =>
+      mergeConfigs(cfg, {
+        afterStart() {
+          order.push("plugin");
+        },
+      });
 
     const Actor = defineActor({
       name: "test",
@@ -244,11 +242,12 @@ describe("hooks.onStart / beforeEnd", () => {
 
   it("plugin beforeEnd fires before actor beforeEnd", async () => {
     const order: string[] = [];
-    const plugin2 : ActorPlugin = (cfg) => mergeConfigs(cfg, {
-      beforeEnd() {
-        order.push("plugin");
-      },
-    });
+    const plugin2: ActorPlugin = (cfg) =>
+      mergeConfigs(cfg, {
+        beforeEnd() {
+          order.push("plugin");
+        },
+      });
 
     const Actor = defineActor({
       name: "test",
@@ -278,11 +277,14 @@ describe("hooks.onStart / beforeEnd", () => {
       handlers: {},
     });
 
-    const proc = await Actor.spawn({}, {
-      toParent: (msg) => {
-        order.push(msg.type);
+    const proc = await Actor.spawn(
+      {},
+      {
+        toParent: (msg) => {
+          order.push(msg.type);
+        },
       },
-    });
+    );
     await proc.stop();
 
     expect(order).toEqual(["beforeEnd", "EXIT", "afterEnd"]);
@@ -294,11 +296,12 @@ describe("hooks.onStart / beforeEnd", () => {
 describe("hooks.onStopRequested", () => {
   it("plugin onStopRequested fires before actor onStopRequested", async () => {
     const order: string[] = [];
-    const plugin3 : ActorPlugin = (cfg) => mergeConfigs(cfg, {
-      onStopRequested() {
-        order.push("plugin");
-      },
-    });
+    const plugin3: ActorPlugin = (cfg) =>
+      mergeConfigs(cfg, {
+        onStopRequested() {
+          order.push("plugin");
+        },
+      });
 
     const Actor = defineActor({
       name: "test",
@@ -529,7 +532,6 @@ describe("cascading stop", () => {
 });
 
 describe("orphans", () => {
-
   it("collects a surviving grandchild into the parent's orphans", async () => {
     withTimeoutMiss();
 
@@ -654,7 +656,7 @@ describe("orphan policy (onOrphan)", () => {
     const proc = await Parent.spawn({});
     await proc.ready();
     const child = proc.children[0];
-    expect(child.pname).toBe('parent:child');
+    expect(child.pname).toBe("parent:child");
     await child.wait();
 
     // before parent processed the message
@@ -780,7 +782,6 @@ describe("orphan policy (onOrphan)", () => {
   });
 });
 
-
 // ── orphan handoff (lossless adopt) ──────────────────────────────────────
 
 describe("orphan handoff (lossless adopt)", () => {
@@ -852,7 +853,7 @@ describe("orphan handoff (lossless adopt)", () => {
     await child.wait();
 
     expect(received).toEqual([]);
- 
+
     // let parent process the exit which
     // adopts the orphan and empties the buffered
     // out-queue of the grand-child into parent inbox
@@ -861,9 +862,7 @@ describe("orphan handoff (lossless adopt)", () => {
 
     expect(received).toEqual([42]);
     expect(proc.orphans.length).toBe(0);
-    expect(proc.children.map((c) => c.pname)).toContain(
-      "parent:child:grandchild",
-    );
+    expect(proc.children.map((c) => c.pname)).toContain("parent:child:grandchild");
   });
 
   it("back-feeds a message the orphan emitted into the dying parent's inbox", async () => {
@@ -889,7 +888,7 @@ describe("orphan handoff (lossless adopt)", () => {
       async onStopRequested() {
         await this.emit({ type: "HANDOFF", value: 7 });
         emitted = true;
-        order.push('gc:emit');
+        order.push("gc:emit");
       },
       handlers: {},
     });
@@ -904,17 +903,17 @@ describe("orphan handoff (lossless adopt)", () => {
       },
       afterStart() {
         this.exit();
-        order.push('child:after-start');
+        order.push("child:after-start");
       },
       beforeEnd() {
-        order.push('child:before-end');
+        order.push("child:before-end");
       },
       afterEnd() {
-        order.push('child:after-end');
+        order.push("child:after-end");
       },
       handlers: {
         HANDOFF(msg) {
-          order.push('child:msg'); // never hits
+          order.push("child:msg"); // never hits
         },
       },
     });
@@ -922,7 +921,7 @@ describe("orphan handoff (lossless adopt)", () => {
       name: "parent",
       inMessages: HandoffIn,
       onOrphan() {
-        order.push('parent:adopt');
+        order.push("parent:adopt");
         return "adopt";
       },
       async setup() {
@@ -931,7 +930,7 @@ describe("orphan handoff (lossless adopt)", () => {
       },
       handlers: {
         HANDOFF(msg) {
-          order.push('parent:msg:'+ msg.value); // never hits
+          order.push("parent:msg:" + msg.value); // never hits
         },
       },
     });
@@ -952,14 +951,13 @@ describe("orphan handoff (lossless adopt)", () => {
     await proc.stop();
 
     expect(order).toEqual([
-      'child:after-start',
-      'child:before-end',
-      'gc:emit',
-      'child:after-end',
-      'parent:adopt',
-      'parent:msg:7',
+      "child:after-start",
+      "child:before-end",
+      "gc:emit",
+      "child:after-end",
+      "parent:adopt",
+      "parent:msg:7",
     ]);
-
   });
 
   it("drains an orphan that self-stops while unowned (its EXIT lands in the collector)", async () => {
@@ -992,7 +990,7 @@ describe("orphan handoff (lossless adopt)", () => {
     const Parent = defineActor({
       name: "parent",
       async onOrphan(orphan) {
-        orphan.send({ type: "DIE"});
+        orphan.send({ type: "DIE" });
         await orphan.wait();
         return "adopt" as const;
       },
@@ -1028,7 +1026,6 @@ describe("orphan handoff (lossless adopt)", () => {
     await proc.stop();
   });
 });
-
 
 // ── orphan policy: buffer drop (unparent vs leave) ───────────────────────
 
@@ -1108,7 +1105,7 @@ describe("orphan policy: buffer drop (unparent vs leave)", () => {
     expect(parent.children.length).toBe(1);
 
     // wait for child to exit on start and
-    // grandchild to end up as 
+    // grandchild to end up as
     await child.stop();
     await nextState(parent);
     expect(parent.children.length).toBe(0);
@@ -1118,7 +1115,7 @@ describe("orphan policy: buffer drop (unparent vs leave)", () => {
     // Parent has made its decision; ping the still-orphaned grandchild, then
     // stop Parent so the grandchild bubbles up and the grandparent adopts it.
     grandchild.send({ type: "PING" });
-    parent.send({ type: "STOP"} );
+    parent.send({ type: "STOP" });
     await nextState(gg);
 
     expect(gg.children.length).toBe(1);

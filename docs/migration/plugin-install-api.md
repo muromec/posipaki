@@ -7,20 +7,20 @@
 
 ## Summary of changes
 
-| Old | New |
-|-----|-----|
-| `install(ctx: any)` | `install(self)` — typed `ActorContext` |
-| `ctx.onMessage?.(fn)` | `self.hooks.onMessage(fn)` |
-| `ctx.onEmit?.(fn)` | `self.hooks.onEmit(fn)` |
-| `ctx.onChildExit?.(fn)` | `self.hooks.onChildExit(fn)` |
-| `ctx.onStart?.(fn)` | `self.hooks.onStart(fn)` |
-| `ctx.onStopRequested?.(fn)` | `self.hooks.onStopRequested(fn)` |
-| `ctx.onError?.(fn)` | `self.hooks.onError(fn)` |
-| `ctx.onEnd?.(fn)` | `self.hooks.onEnd(fn)` |
-| `ctx.decorate?.(key, val)` | `self.decorate(key, val)` |
-| `ctx.pname` | `self.name` |
-| Raw `ctx` (fork, toParent, etc.) | `self.ctx` |
-| *(new)* | `self.reflection.register(name, method)` |
+| Old                              | New                                      |
+| -------------------------------- | ---------------------------------------- |
+| `install(ctx: any)`              | `install(self)` — typed `ActorContext`   |
+| `ctx.onMessage?.(fn)`            | `self.hooks.onMessage(fn)`               |
+| `ctx.onEmit?.(fn)`               | `self.hooks.onEmit(fn)`                  |
+| `ctx.onChildExit?.(fn)`          | `self.hooks.onChildExit(fn)`             |
+| `ctx.onStart?.(fn)`              | `self.hooks.onStart(fn)`                 |
+| `ctx.onStopRequested?.(fn)`      | `self.hooks.onStopRequested(fn)`         |
+| `ctx.onError?.(fn)`              | `self.hooks.onError(fn)`                 |
+| `ctx.onEnd?.(fn)`                | `self.hooks.onEnd(fn)`                   |
+| `ctx.decorate?.(key, val)`       | `self.decorate(key, val)`                |
+| `ctx.pname`                      | `self.name`                              |
+| Raw `ctx` (fork, toParent, etc.) | `self.ctx`                               |
+| _(new)_                          | `self.reflection.register(name, method)` |
 
 ## Step-by-step
 
@@ -108,23 +108,23 @@ needed for `this.state`, `this.name`, `this.$child`, etc.
 ```ts
 // Before
 const myPlugin: ActorPlugin = {
-  name: 'myPlugin',
+  name: "myPlugin",
   install(ctx: any) {
     ctx.onMessage?.((msg) => {
       console.log(`[${ctx.pname}] received ${msg.type}`);
     });
-    ctx.decorate?.('logger', { name: ctx.pname, count: 0 });
+    ctx.decorate?.("logger", { name: ctx.pname, count: 0 });
   },
 };
 
 // After
 const myPlugin: ActorPlugin = {
-  name: 'myPlugin',
+  name: "myPlugin",
   install(self) {
     self.hooks.onMessage((msg) => {
       console.log(`[${self.name}] received ${msg.type}`);
     });
-    self.decorate('logger', { name: self.name, count: 0 });
+    self.decorate("logger", { name: self.name, count: 0 });
   },
 };
 ```

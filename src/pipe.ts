@@ -22,19 +22,9 @@ export interface PipeState<Params, Result> {
  */
 function pipe<Params, Result>(
   fns: ProcessFn<unknown, { result: object }, Message, Message>[],
-): ProcessFn<
-  Params,
-  PipeState<Params, Result>,
-  Message,
-  Message | ExitMessage
-> {
+): ProcessFn<Params, PipeState<Params, Result>, Message, Message | ExitMessage> {
   return function* (
-    ctx: ProcessCtx<
-      Params,
-      PipeState<Params, Result>,
-      Message,
-      Message | ExitMessage
-    >,
+    ctx: ProcessCtx<Params, PipeState<Params, Result>, Message, Message | ExitMessage>,
     params: Params,
   ) {
     const state: PipeState<Params, Result> = {
@@ -49,10 +39,7 @@ function pipe<Params, Result>(
 
     function spawnNext(): void {
       const fn = queue.shift()!;
-      task = ctx.forkSync(
-        fn,
-        `${ctx.pname} [${fn.name || "<anonymous>"}]`,
-      )(state.params as Params);
+      task = ctx.forkSync(fn, `${ctx.pname} [${fn.name || "<anonymous>"}]`)(state.params as Params);
     }
 
     function hasNext(): boolean {

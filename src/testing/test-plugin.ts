@@ -51,8 +51,7 @@ export interface RootTracker {
 
 function describeSpec<M extends Message>(spec: MatchSpec<M>): string {
   if (typeof spec === "function") return "predicate";
-  if (Array.isArray(spec))
-    return `sequence [${spec.map((s) => JSON.stringify(s)).join(" → ")}]`;
+  if (Array.isArray(spec)) return `sequence [${spec.map((s) => JSON.stringify(s)).join(" → ")}]`;
   return JSON.stringify(spec);
 }
 
@@ -107,17 +106,17 @@ export function createCollector<M extends Message>(
     waiters.push(matchWaiter);
 
     try {
-      return await withTimeout(matchWaiter.promise, timeoutMs, 'test-match');
+      return await withTimeout(matchWaiter.promise, timeoutMs, "test-match");
     } catch (e) {
-      if ((e as Error)?.message !== 'Timeout:test-match') {
+      if ((e as Error)?.message !== "Timeout:test-match") {
         throw e;
       }
 
       return {
-          ok: false,
-          detail:
-            `timeout after ${timeoutMs}ms — expected: ${describeSpec(currentSpec)} ` +
-            `— received ${messages.length} message(s), last: ${lastSummary(messages)}`,
+        ok: false,
+        detail:
+          `timeout after ${timeoutMs}ms — expected: ${describeSpec(currentSpec)} ` +
+          `— received ${messages.length} message(s), last: ${lastSummary(messages)}`,
       };
     }
   }
@@ -161,7 +160,9 @@ export function createCollector<M extends Message>(
 // ── createRootTracker ────────────────────────────────────────────────────
 
 export function createRootTracker(): RootTracker {
-  const roots = new Set<ActorContext<unknown, unknown, Message, Message, {}, {}, ReflectionOptions & ActorReflection>>();
+  const roots = new Set<
+    ActorContext<unknown, unknown, Message, Message, {}, {}, ReflectionOptions & ActorReflection>
+  >();
 
   const rootTrackerPlugin: ActorPlugin = (config) =>
     mergeConfigs(config, {

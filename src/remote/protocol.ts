@@ -26,9 +26,13 @@ export function isInit(msg: Record<string, unknown>): msg is { $init: Record<str
 export function isState(msg: Record<string, unknown>): msg is { $state: Record<string, unknown> } {
   return "$state" in msg;
 }
-export function isMsg(msg: Record<string, unknown>): msg is { $msg: {  fromName: string; body: Message } } {
+export function isMsg(
+  msg: Record<string, unknown>,
+): msg is { $msg: { fromName: string; body: Message } } {
   return "$msg" in msg;
 }
-export function isExit(msg: Record<string, unknown>): msg is { $exit: { code: number; state: unknown } } {
+export function isExit(
+  msg: Record<string, unknown>,
+): msg is { $exit: { code: number; state: unknown } } {
   return "$exit" in msg;
 }

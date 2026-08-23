@@ -3,16 +3,15 @@ import { spawn } from "./index";
 import { xfetch } from "./xfetch";
 import { makeWaiter } from "./util";
 import type { FetchArgs, FetchState, FetchMessage } from "./xfetch";
-import { nextState, nextMessage } from './testing/tick-utils.js';
+import { nextState, nextMessage } from "./testing/tick-utils.js";
 
 // bun shim
-vi.stubGlobal = vi.stubGlobal || (
-  (name, value) => {
+vi.stubGlobal =
+  vi.stubGlobal ||
+  ((name, value) => {
     (globalThis as Record<string | symbol, unknown>)[name] = value;
-  }
-);
+  });
 vi.mocked = vi.mocked || ((v) => v);
-
 
 // ---- helpers ----------------------------------------------------------------
 
@@ -34,27 +33,25 @@ let mockedFetch = vi.mocked(fetch);
 
 function withHangResponse(response: Response) {
   const waiter = makeWaiter<Response>();
-  mockedFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
-    (url, options) => {
-      options?.signal?.addEventListener("abort", () => {
-        waiter.reject(new DOMException("Aborted", "AbortError"))
-      });
-      return waiter.promise;
-    }
-  );
+  mockedFetch = vi.spyOn(globalThis, "fetch").mockImplementation((url, options) => {
+    options?.signal?.addEventListener("abort", () => {
+      waiter.reject(new DOMException("Aborted", "AbortError"));
+    });
+    return waiter.promise;
+  });
   return {
     ...waiter,
-    resume: ()=> waiter.resolve(response),
+    resume: () => waiter.resolve(response),
   };
 }
 
 function withResponse(response: Response) {
-  mockedFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(response);
+  mockedFetch = vi.spyOn(globalThis, "fetch").mockResolvedValueOnce(response);
   return mockedFetch;
 }
 
-function withError(err : Error) {
-  mockedFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(err);
+function withError(err: Error) {
+  mockedFetch = vi.spyOn(globalThis, "fetch").mockRejectedValue(err);
   return mockedFetch;
 }
 
@@ -68,9 +65,7 @@ describe("xfetch", () => {
 
   it("performs a GET and returns OK with data", async () => {
     const data = { items: [1, 2, 3] };
-    withResponse(
-      mockResponse(data, { headers: { "content-type": "application/json" } })
-    );
+    withResponse(mockResponse(data, { headers: { "content-type": "application/json" } }));
 
     const proc = spawn(
       xfetch<typeof data>,
@@ -83,10 +78,15 @@ describe("xfetch", () => {
     await proc.ready();
     expect(proc.state).toMatchObject({ code: "pending", data: null });
 
-    expect(mockedFetch).toHaveBeenCalledWith("https://example.com/api/items", expect.objectContaining({ method: 'GET' }));
+    expect(mockedFetch).toHaveBeenCalledWith(
+      "https://example.com/api/items",
+      expect.objectContaining({ method: "GET" }),
+    );
 
     expect(await nextMessage(proc)).toMatchObject({
-      type: "OK", data, status: 200,
+      type: "OK",
+      data,
+      status: 200,
     });
     expect(proc.state).toMatchObject({ code: "ok", data });
     expect(await nextMessage(proc)).toMatchObject({
@@ -96,9 +96,7 @@ describe("xfetch", () => {
 
   it("returns OK with text for non-JSON content-type", async () => {
     const text = "plain text response";
-    withResponse(
-      mockResponse(text, { headers: { "content-type": "text/plain" } }),
-    );
+    withResponse(mockResponse(text, { headers: { "content-type": "text/plain" } }));
     const proc = spawn(
       xfetch<string>,
       "xfetch-text",
@@ -111,7 +109,9 @@ describe("xfetch", () => {
 
     // FIXME: protocol makes no sense
     expect(await nextMessage(proc)).toMatchObject({
-      type: "OK", text: JSON.stringify(text), status: 200,
+      type: "OK",
+      text: JSON.stringify(text),
+      status: 200,
     });
     expect(proc.state).toMatchObject({
       code: "ok",
@@ -127,7 +127,7 @@ describe("xfetch", () => {
     withResponse(
       mockResponse(responseData, {
         headers: { "content-type": "application/json" },
-      })
+      }),
     );
 
     const proc = spawn(
@@ -141,17 +141,18 @@ describe("xfetch", () => {
 
     await proc.ready();
 
-    expect(mockedFetch).toHaveBeenCalledWith('https://example.com/api/items', expect.objectContaining({
-      method: 'POST',
-      body: JSON.stringify(body),
-      headers: new Headers({
-        "content-type": "application/json",
+    expect(mockedFetch).toHaveBeenCalledWith(
+      "https://example.com/api/items",
+      expect.objectContaining({
+        method: "POST",
+        body: JSON.stringify(body),
+        headers: new Headers({
+          "content-type": "application/json",
+        }),
       }),
-    }));
-    
-    expect(await nextMessage(proc)).toMatchObject(
-      { type: "OK", data: responseData },
     );
+
+    expect(await nextMessage(proc)).toMatchObject({ type: "OK", data: responseData });
     expect(proc.state).toMatchObject({ code: "ok", data: responseData });
   });
 
@@ -187,7 +188,7 @@ describe("xfetch", () => {
       responseHeaders: expect.objectContaining({
         "x-ratelimit-remaining": "42",
       }),
-    })
+    });
   });
 
   it("exposes status and responseHeaders in FetchState", async () => {
@@ -397,10 +398,7 @@ describe("xfetch", () => {
   it("aborts the request when STOP is received", async () => {
     // Make fetch hang so we can send STOP before it settles
     const hang = withHangResponse(
-      mockResponse(
-        { done: true },
-        { headers: { "content-type": "application/json" } },
-      ),
+      mockResponse({ done: true }, { headers: { "content-type": "application/json" } }),
     );
 
     const proc = spawn(
@@ -420,17 +418,13 @@ describe("xfetch", () => {
     expect(await nextMessage(proc)).toMatchObject({ type: "ABORTED" });
     expect(await nextState(proc)).toMatchObject({ code: "aborted" });
     await proc.wait();
-
   });
 
   // -- state transitions -----------------------------------------------------
 
   it("transitions pending → loading → ok", async () => {
     const hang = withHangResponse(
-      mockResponse(
-        { done: true },
-        { headers: { "content-type": "application/json" } },
-      ),
+      mockResponse({ done: true }, { headers: { "content-type": "application/json" } }),
     );
 
     const proc = spawn(
@@ -450,9 +444,8 @@ describe("xfetch", () => {
     expect(mockedFetch).toHaveBeenCalledWith(
       "https://example.com/api/item",
       expect.objectContaining({
-         method: 'GET',
-      })
-
+        method: "GET",
+      }),
     );
 
     expect(await nextMessage(proc)).toMatchObject({
@@ -465,12 +458,7 @@ describe("xfetch", () => {
   // -- wait() ----------------------------------------------------------------
 
   it("wait() resolves when the fetch completes", async () => {
-    withResponse(
-      mockResponse(
-        { ok: true },
-        { headers: { "content-type": "application/json" } },
-      ),
-    );
+    withResponse(mockResponse({ ok: true }, { headers: { "content-type": "application/json" } }));
 
     const proc = spawn(
       xfetch<{ ok: boolean }>,

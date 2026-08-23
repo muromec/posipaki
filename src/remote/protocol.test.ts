@@ -1,7 +1,16 @@
 // ── Protocol encoding tests ────────────────────────────────────────────────
 
 import { describe, it, expect } from "vitest";
-import { encode, decode, isProto, isInit, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
+import {
+  encode,
+  decode,
+  isProto,
+  isInit,
+  isState,
+  isMsg,
+  isExit,
+  PROTO_VERSION,
+} from "./protocol.js";
 
 describe("protocol encoding", () => {
   it("encodes and decodes $proto", () => {
@@ -38,7 +47,7 @@ describe("protocol encoding", () => {
     const msg = decode(line);
     expect(isMsg(msg)).toBe(true);
     if (isMsg(msg)) {
-      expect(msg.$msg.body).toEqual({ type: "PING", count: 1});
+      expect(msg.$msg.body).toEqual({ type: "PING", count: 1 });
       expect(msg.$msg.fromName).toBe("host");
     }
   });

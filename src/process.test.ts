@@ -68,7 +68,9 @@ describe("Process", () => {
     await expect(res).resolves.toBe(undefined);
   });
 
-  function* p3(ctx: ProcessCtx<unknown, null, Message, ExitMessage | PongM>): Generator<null, void, WithSender<Message>> {
+  function* p3(
+    ctx: ProcessCtx<unknown, null, Message, ExitMessage | PongM>,
+  ): Generator<null, void, WithSender<Message>> {
     yield null;
     const [msg, _s] = yield null;
     ctx.toParent({ type: "PONG", pseq: 0 } as any);
@@ -79,21 +81,22 @@ describe("Process", () => {
 
   it("emits to parent and sends EXIT", async () => {
     const bus = vi.fn();
-    const proc = spawn(
-      p3,
-      "p3",
-      bus,
-    )(null);
+    const proc = spawn(p3, "p3", bus)(null);
     await proc.ready();
     proc.send({ type: "TRIGGER" } as Message, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: 0 }), expect.any(Object));
+    expect(bus).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "PONG", pseq: 0 }),
+      expect.any(Object),
+    );
     expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }), expect.any(Object));
   });
 
   type CountStore = { seq: number };
 
-  function* p4(ctx: ProcessCtx<unknown, { seq: number }, PingM, ExitMessage | PongM>): Generator<{ seq: number } | null, void, WithSender<PingM>> {
+  function* p4(
+    ctx: ProcessCtx<unknown, { seq: number }, PingM, ExitMessage | PongM>,
+  ): Generator<{ seq: number } | null, void, WithSender<PingM>> {
     const state = { seq: 0 };
     yield state;
     while (state.seq < 5) {
@@ -107,49 +110,40 @@ describe("Process", () => {
 
   it("plays ping-pong and exits after five messages", async () => {
     const bus = vi.fn();
-    const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(
-      p4,
-      "p4",
-      bus,
-    )(null);
+    const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(p4, "p4", bus)(null);
     await proc.ready();
     for (let i = 0; i < 5; i++) {
       proc.send({ type: "PING", pseq: i }, { fromName: "test", fromId: Symbol("test") });
       await proc.tick();
-      expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: i }), expect.any(Object));
+      expect(bus).toHaveBeenCalledWith(
+        expect.objectContaining({ type: "PONG", pseq: i }),
+        expect.any(Object),
+      );
     }
-    expect(bus).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "EXIT" }), expect.any(Object),
-    );
+    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }), expect.any(Object));
     expect(bus).toHaveBeenCalledTimes(6);
   });
 
   it("exits early on sequence break", async () => {
     const bus = vi.fn();
-    const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(
-      p4,
-      "p4",
-      bus,
-    )(null);
+    const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(p4, "p4", bus)(null);
     await proc.ready();
     proc.send({ type: "PING", pseq: 0 }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "PONG", pseq: 0 }), expect.any(Object));
+    expect(bus).toHaveBeenCalledWith(
+      expect.objectContaining({ type: "PONG", pseq: 0 }),
+      expect.any(Object),
+    );
     proc.send({ type: "PING", pseq: 2 }, { fromName: "test", fromId: Symbol("test") });
     await proc.tick();
-    expect(bus).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "EXIT" }), expect.any(Object),
-    );
+    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }), expect.any(Object));
     expect(bus).toHaveBeenCalledTimes(2);
   });
 
   it("supports multiple subscribers with unsubscribe", async () => {
     const s1 = vi.fn(),
       s2 = vi.fn();
-    const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(
-      p4,
-      "p4",
-    )(null);
+    const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(p4, "p4")(null);
     await proc.ready();
     const cb1 = () => s1(proc.state ? proc.state.seq : null);
     const cb2 = () => s2(proc.state ? proc.state.seq : null);
@@ -179,10 +173,7 @@ describe("Process", () => {
   });
 
   it("buffers while paused, processes on resume", async () => {
-    const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(
-      p4,
-      "p4",
-    )(null);
+    const proc = spawn<Nil, CountStore, PingM, ExitMessage | PongM>(p4, "p4")(null);
     await proc.ready();
     proc.pause();
     proc.send({ type: "PING", pseq: 0 }, { fromName: "test", fromId: Symbol("test") });

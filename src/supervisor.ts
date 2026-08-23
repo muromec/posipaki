@@ -90,7 +90,10 @@ function attach<Args extends any[]>(
   pname: string,
 ): (...args: Args) => void {
   return (...args) => {
-    supervisor.send({ type: "RUN", fn, args, pname } as SupMsg, { fromName: "external", fromId: Symbol("external") });
+    supervisor.send({ type: "RUN", fn, args, pname } as SupMsg, {
+      fromName: "external",
+      fromId: Symbol("external"),
+    });
   };
 }
 

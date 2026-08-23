@@ -5,7 +5,12 @@ const timer = setTimeout(() => null, 1000 * 30);
 async function* fast({ pname }) {
   const state = true;
   yield state;
-  yield* runDispatch(pname, () => {}, () => state, true);
+  yield* runDispatch(
+    pname,
+    () => {},
+    () => state,
+    true,
+  );
 }
 
 async function* slow({ pname, sendSelf }) {

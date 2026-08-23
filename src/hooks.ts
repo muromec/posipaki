@@ -5,12 +5,7 @@
 // point, and they fire in registration order.
 
 import { STOP_SENTINEL, stopPropagation } from "./actor-types.js";
-import type {
-  HookResult,
-  ActorPlugin,
-  PluginTransform,
-  AnyConfig,
-} from "./actor-types.js";
+import type { HookResult, ActorPlugin, PluginTransform, AnyConfig } from "./actor-types.js";
 
 // ── stop propagation sentinel ────────────────────────────────────────────
 
@@ -52,9 +47,7 @@ export interface ActorReflection {}
  * @returns a composed hook suitable for ActorConfig
  */
 export function chainHook<TThis, TArgs extends unknown[]>(
-  existing:
-    | ((this: TThis, ...args: TArgs) => HookResult | Promise<HookResult>)
-    | undefined,
+  existing: ((this: TThis, ...args: TArgs) => HookResult | Promise<HookResult>) | undefined,
   plugin: (this: TThis, ...args: TArgs) => HookResult | Promise<HookResult>,
 ): (this: TThis, ...args: TArgs) => HookResult | Promise<HookResult> {
   if (!existing) return plugin;
@@ -95,10 +88,7 @@ export function mergeConfigs<C extends AnyConfig>(base: C, overlay: Partial<C>):
           this: unknown,
           ...args: unknown[]
         ) => HookResult | Promise<HookResult>,
-        val as (
-          this: unknown,
-          ...args: unknown[]
-        ) => HookResult | Promise<HookResult>,
+        val as (this: unknown, ...args: unknown[]) => HookResult | Promise<HookResult>,
       );
     } else {
       result[key] = val;

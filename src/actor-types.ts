@@ -4,13 +4,7 @@
 // to reference the config/context/definition shapes without importing the
 // implementation module directly.
 
-import type {
-  SenderInfo,
-  AsyncProcessFn,
-  Message,
-  ProcessCtx,
-  ExitMessage,
-} from "./types.js";
+import type { SenderInfo, AsyncProcessFn, Message, ProcessCtx, ExitMessage } from "./types.js";
 import type { ActorDecorated, ActorReflection } from "./hooks.js";
 import type { AnyProcess, AsyncProcess } from "./process.async.js";
 
@@ -34,8 +28,7 @@ export type HandlerOptions<InMsg extends Message> = Omit<
 export type ReflectionMethod = (...args: unknown[]) => unknown;
 export interface ReflectionOptions {}
 export type Paired<Priv, Pub> = { public: Pub; private: Priv };
-export type HidePrivate<T> =
-  T extends Paired<unknown, unknown> ? T["public"] : T;
+export type HidePrivate<T> = T extends Paired<unknown, unknown> ? T["public"] : T;
 
 export type SpawnedFrom<T extends ActorDefinition<any, any, any, any, any>> =
   T extends ActorDefinition<infer A, infer S, infer IM, infer OM, infer R>
@@ -153,7 +146,7 @@ export type ActorConfig<
       Methods,
       Handlers,
       ReflectionMethods & ActorReflection
-    >
+    >,
   ) => void | Promise<void>;
 
   onStopRequested?: (
@@ -165,7 +158,7 @@ export type ActorConfig<
       Methods,
       Handlers,
       ReflectionMethods & ActorReflection
-    >
+    >,
   ) => HookResult | Promise<HookResult>;
 
   beforeEnd?: (
@@ -204,7 +197,7 @@ export type ActorConfig<
       Handlers,
       ReflectionMethods & ActorReflection
     >,
-    error?: unknown
+    error?: unknown,
   ) => HookResult | Promise<HookResult>;
 
   onEmit?: (
@@ -245,7 +238,8 @@ export type ActorConfig<
       Handlers,
       ReflectionMethods & ActorReflection
     >,
-    msg: Message, sender: SenderInfo,
+    msg: Message,
+    sender: SenderInfo,
   ) => void | Promise<void>;
 
   onChildExit?: (
@@ -344,7 +338,7 @@ export const stopPropagation = (): typeof STOP_SENTINEL => STOP_SENTINEL;
 export type HookResult = void | typeof STOP_SENTINEL;
 
 /** Decision returned by `onOrphan` for how to handle an inherited orphan. */
-export type OrphanDecision = 'adopt' | 'force-stop' | 'unparent' | 'leave';
+export type OrphanDecision = "adopt" | "force-stop" | "unparent" | "leave";
 // ── plugin types ─────────────────────────────────────────────────────────
 
 /** A reusable unit of actor behaviour. */
@@ -371,28 +365,14 @@ export type ActorContext<
     agreeToStop: () => void;
 
     reflection: ThisType<
-      ActorContext<
-        Args,
-        InternalState,
-        InMsg,
-        OutMsg,
-        Methods,
-        Handlers,
-        ReflectionMethods
-      >
+      ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers, ReflectionMethods>
     > &
       ReflectionMethods;
     exit: (reason?: unknown) => void;
 
     $child: Record<string, AnyProcess>;
 
-    fork<
-      A,
-      S,
-      IM extends Message,
-      OM extends InMsg,
-      R extends ReflectionOptions,
-    >(
+    fork<A, S, IM extends Message, OM extends InMsg, R extends ReflectionOptions>(
       actor: ActorDefinition<A, S, IM, OM, R>,
       args?: A,
       opts?: {

@@ -13,10 +13,7 @@ import type { Message } from "../types.js";
 
 export type Matcher<M extends Message> = (msg: M, history: M[]) => boolean;
 
-export type MatchSpec<M extends Message> =
-  | Matcher<M>
-  | Partial<M>
-  | Array<Partial<M>>;
+export type MatchSpec<M extends Message> = Matcher<M> | Partial<M> | Array<Partial<M>>;
 
 function shallowMatch<M extends Message>(msg: M, spec: Partial<M>): boolean {
   for (const key of Object.keys(spec) as Array<keyof M>) {
@@ -53,11 +50,7 @@ export function toMatcher<M extends Message>(spec: MatchSpec<M>): Matcher<M> {
  * collected history, not since the previous `next()`.  Use `reset()` with a
  * fresh collector for windowed counts.
  */
-export function times<M extends Message>(
-  spec: Partial<M> | Matcher<M>,
-  n: number,
-): Matcher<M> {
-  const single: Matcher<M> =
-    typeof spec === "function" ? spec : (m) => shallowMatch(m, spec);
+export function times<M extends Message>(spec: Partial<M> | Matcher<M>, n: number): Matcher<M> {
+  const single: Matcher<M> = typeof spec === "function" ? spec : (m) => shallowMatch(m, spec);
   return (_msg, history) => history.filter((m) => single(m, history)).length >= n;
 }

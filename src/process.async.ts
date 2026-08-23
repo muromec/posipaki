@@ -15,10 +15,7 @@ import { asyncify } from "./adapters.js";
 // ---- types ------------------------------------------------------------------
 
 /** An async iterator over process state. Receives `WithSender<InMessage | StopMessage>`. */
-type AsyncProcessGenerator<
-  ProcessState,
-  InMessage extends Message,
-> = AsyncGenerator<
+type AsyncProcessGenerator<ProcessState, InMessage extends Message> = AsyncGenerator<
   ProcessState | null,
   void,
   WithSender<InMessage | StopMessage>
@@ -56,7 +53,6 @@ export async function* runDispatchAsync<M>(
  *  its sender separately (not a `WithSender` tuple). */
 type MessageCallback<M extends Message> = (msg: M, from: SenderInfo) => void;
 
-
 /** How long a parent waits for a child to stop before continuing shutdown. */
 const CHILD_STOP_TIMEOUT_MS = 1_000;
 
@@ -89,13 +85,9 @@ export class AsyncProcess<
   private buffer: Array<WithSender<InMessage | StopMessage>> = [];
   private nextTick: DeferredCall | null = null;
   /** Child processes forked from this one (any fork method). */
-  children: Array<
-    AsyncProcess<unknown, unknown, Message, Message, {}>
-  > = [];
+  children: Array<AsyncProcess<unknown, unknown, Message, Message, {}>> = [];
   /** Children inherited from a child that exited (see ctx-orphans proposal). */
-  orphans: Array<
-    AsyncProcess<unknown, unknown, Message, Message, {}>
-  > = [];
+  orphans: Array<AsyncProcess<unknown, unknown, Message, Message, {}>> = [];
   private stateSubscribers: Array<NotifyFn> = [];
   /** Unsubscribe handles for outgoing message subscriptions (monitor only). */
   private pvtOutgoingSubscriptions: Array<() => void> = [];
@@ -228,34 +220,19 @@ export class AsyncProcess<
   fork<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends Message>(
     fn: AsyncProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
     pname: string,
-  ): (
-    args: ChildArgs,
-  ) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}> {
+  ): (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}> {
     return (args: ChildArgs) => {
-      const child = new AsyncProcess<
-        ChildArgs,
-        ChildState,
-        ChildIM,
-        ChildOM,
-        {}
-      >(fn, pname);
+      const child = new AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}>(fn, pname);
       this.adopt(child);
       child.start(args, this.pname, this.id);
       return child;
     };
   }
 
-  forkSync<
-    ChildArgs,
-    ChildState,
-    ChildIM extends Message,
-    ChildOM extends InMessage,
-  >(
+  forkSync<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends InMessage>(
     fn: ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
     pname: string,
-  ): (
-    args: ChildArgs,
-  ) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}> {
+  ): (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}> {
     return this.fork(asyncify(fn), pname);
   }
 
@@ -296,10 +273,7 @@ export class AsyncProcess<
   }
 
   private pvtEatResult(
-    ret:
-      | IteratorResult<State | null, void>
-      | Promise<IteratorResult<State | null, void>>
-      | null,
+    ret: IteratorResult<State | null, void> | Promise<IteratorResult<State | null, void>> | null,
   ): void {
     if (!ret) return;
     Promise.resolve(ret).then((r) => {
@@ -325,10 +299,7 @@ export class AsyncProcess<
   ): void {
     if (this.pvtDead) return;
     if ("type" in msgOrTuple) {
-      this.buffer.push([
-        msgOrTuple as InMessage | StopMessage,
-        from as SenderInfo,
-      ]);
+      this.buffer.push([msgOrTuple as InMessage | StopMessage, from as SenderInfo]);
     } else {
       this.buffer.push(msgOrTuple as WithSender<InMessage | StopMessage>);
     }
@@ -476,10 +447,10 @@ export class AsyncProcess<
     this.send({ type: "STOP" } as StopMessage, opts?.from);
 
     try {
-      await withTimeout(this.wait(), CHILD_STOP_TIMEOUT_MS, 'stop');
+      await withTimeout(this.wait(), CHILD_STOP_TIMEOUT_MS, "stop");
       return true;
     } catch (e) {
-      if ((e as Error)?.message !== 'Timeout:stop') throw e;
+      if ((e as Error)?.message !== "Timeout:stop") throw e;
       // refused to stop within the timeout
     }
 
@@ -667,11 +638,7 @@ export function spawnAsync<
   toParent?: MessageCallback<OutMessage>,
 ): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage, {}> {
   return (args: Args) => {
-    const proc = new AsyncProcess<Args, State, InMessage, OutMessage, {}>(
-      fn,
-      pname,
-      toParent,
-    );
+    const proc = new AsyncProcess<Args, State, InMessage, OutMessage, {}>(fn, pname, toParent);
     proc.start(args);
     return proc;
   };

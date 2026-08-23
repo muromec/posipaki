@@ -47,7 +47,9 @@ if (!isRemoteRoot) {
 
   await proc.wait();
 
-  console.log("Host: received PONGs:", pongs.map(p => p.count));
+  console.log(
+    "Host: received PONGs:",
+    pongs.map((p) => p.count),
+  );
   console.log("Host: remote state:", proc.state);
-
 }

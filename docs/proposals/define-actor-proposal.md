@@ -5,7 +5,7 @@
 ## Summary
 
 `defineActor` is a declarative wrapper around the existing `runDispatch` /
-`AsyncProcess` primitives.  It keeps the low-level generator API unchanged
+`AsyncProcess` primitives. It keeps the low-level generator API unchanged
 and adds a higher layer that every real actor benefits from:
 
 - Named message handlers instead of `if/switch` chains
@@ -19,7 +19,7 @@ and adds a higher layer that every real actor benefits from:
   `mergeConfigs` with Fastify-style type augmentation
 
 The existing `spawn`, `spawnAsync`, `runDispatch`, `runDispatchAsync`, and
-`Process` / `AsyncProcess` classes remain untouched.  `defineActor` compiles
+`Process` / `AsyncProcess` classes remain untouched. `defineActor` compiles
 down to those primitives — it is purely a convenience layer.
 
 ## Lifecycle order
@@ -43,13 +43,13 @@ are all `await`ed together so the generator doesn't yield between installs.
 Plugins receive the raw config object — no `ActorContext`, no `self`, no
 monkey-patched `ProcessCtx`. They compose declaratively into config keys:
 
-| Config key | Purpose |
-|---|---|
-| `onMessage`, `onEmit`, `onChildExit`, `onError`, `onEnd`, `onStopRequested` | Hook functions, chained via `chainHook` |
-| `afterStart`, `afterStopRequested`, etc. | Post-hooks (same pattern) |
-| `$reflectionMethods` | Reflection methods (e.g. `inspect.getTree`) — auto-merged |
-| `$decorate` | Property decoration (e.g. `this.log`) — wired at spawn |
-| `methods` | Custom methods on `this` |
+| Config key                                                                  | Purpose                                                   |
+| --------------------------------------------------------------------------- | --------------------------------------------------------- |
+| `onMessage`, `onEmit`, `onChildExit`, `onError`, `onEnd`, `onStopRequested` | Hook functions, chained via `chainHook`                   |
+| `afterStart`, `afterStopRequested`, etc.                                    | Post-hooks (same pattern)                                 |
+| `$reflectionMethods`                                                        | Reflection methods (e.g. `inspect.getTree`) — auto-merged |
+| `$decorate`                                                                 | Property decoration (e.g. `this.log`) — wired at spawn    |
+| `methods`                                                                   | Custom methods on `this`                                  |
 
 Type augmentation: plugins use `declare module "../hooks"` to extend
 `ActorDecorated` (for `this.*` methods) and `ActorReflection` (for
@@ -103,14 +103,14 @@ onEnd(reason)     → cleanup, fires before process exit
 ## Built-in lifecycle signals
 
 Two message types are universal — every process sends EXIT, every process
-may receive STOP.  The low-level runtime already handles both:
+may receive STOP. The low-level runtime already handles both:
 
 - `AsyncProcess._watchExit` (the `finally` block wrapping every generator):
   sends `{ type: "STOP" }` to all children, then `{ type: "EXIT", pid, fromName, fromId }` to the parent
 - `AsyncProcess.fromChild`: filters EXITed children from `this.children[]`
 
-`defineActor` builds on this infrastructure.  STOP and EXIT are intercepted
-before they reach the `handlers` record.  The actor author never defines
+`defineActor` builds on this infrastructure. STOP and EXIT are intercepted
+before they reach the `handlers` record. The actor author never defines
 `StopMessage` or writes a STOP handler.
 
 ### STOP → `onStopRequested`
@@ -129,12 +129,12 @@ STOP arrives
 ```
 
 The separation: `onStopRequested` is the **decision point** — "they want me
-to stop, do I agree?"  `onEnd` is the **cleanup point** — "I am stopping
-now, clean up whatever is left."  An actor can agree immediately, defer
+to stop, do I agree?" `onEnd` is the **cleanup point** — "I am stopping
+now, clean up whatever is left." An actor can agree immediately, defer
 (process a queue first), or, in principle, never agree.
 
 The actor does **not** need to manually send STOP to children — the runtime's
-`_watchExit` does it automatically when the generator returns.  Cleanup of
+`_watchExit` does it automatically when the generator returns. Cleanup of
 non-process resources (file handles, timers, network connections) belongs in
 `onEnd`.
 
@@ -151,7 +151,7 @@ EXIT arrives with fromName
 ```
 
 The actor never sees EXIT from its own children in its message handlers —
-`onChildExit` is the dedicated hook.  EXIT from unknown processes (which
+`onChildExit` is the dedicated hook. EXIT from unknown processes (which
 should not normally occur) falls through to `onUnhandled`.
 
 ## API reference
@@ -186,32 +186,32 @@ const pool = defineActor<PoolArgs, PoolState, PoolInMessage, PoolOutMessage>({
 
 ### ActorConfig fields
 
-| Field | Type | Required | Description |
-|-------|------|----------|-------------|
-| `setup` | `(args) => InternalState \| Promise<InternalState>` | Yes | Async state init before first yield |
-| `name` | `string` | No | Preferred process name |
-| `afterStart` | `() => void \| Promise<void>` | No | Post-yield side effects |
-| `onStopRequested` | `() => void \| Promise<void>` | No | STOP decision point |
-| `onEnd` | `(reason?) => void \| Promise<void>` | No | Cleanup before exit |
-| `onChildExit` | `(name, reason) => void \| Promise<void>` | No | Child exited |
-| `onUnhandled` | `(msg, sender) => void \| Promise<void>` | No | Unknown message type |
-| `handlers` | `Record<MsgType, HandlerFn>` | **Yes** | Named message handlers |
-| `methods` | `Record<string, Function>` | No | Custom methods on `this` |
-| `plugins` | `ActorPlugin[] \| PluginTransform` | No | Plugin chain |
+| Field             | Type                                                | Required | Description                         |
+| ----------------- | --------------------------------------------------- | -------- | ----------------------------------- |
+| `setup`           | `(args) => InternalState \| Promise<InternalState>` | Yes      | Async state init before first yield |
+| `name`            | `string`                                            | No       | Preferred process name              |
+| `afterStart`      | `() => void \| Promise<void>`                       | No       | Post-yield side effects             |
+| `onStopRequested` | `() => void \| Promise<void>`                       | No       | STOP decision point                 |
+| `onEnd`           | `(reason?) => void \| Promise<void>`                | No       | Cleanup before exit                 |
+| `onChildExit`     | `(name, reason) => void \| Promise<void>`           | No       | Child exited                        |
+| `onUnhandled`     | `(msg, sender) => void \| Promise<void>`            | No       | Unknown message type                |
+| `handlers`        | `Record<MsgType, HandlerFn>`                        | **Yes**  | Named message handlers              |
+| `methods`         | `Record<string, Function>`                          | No       | Custom methods on `this`            |
+| `plugins`         | `ActorPlugin[] \| PluginTransform`                  | No       | Plugin chain                        |
 
 ### ActorContext (`this` in handlers and hooks)
 
-| Member | Type | Description |
-|--------|------|-------------|
-| `this.state` | `InternalState` | Mutable internal state |
-| `this.name` | `string` | Process name |
-| `this.id` | `symbol` | Process ID |
-| `this.emit(msg)` | `(OutMsg) => void` | Send message to parent |
-| `this.agreeToStop()` | `() => void` | Accept STOP request |
-| `this.exit(reason)` | `(reason?) => void` | Exit with reason |
-| `this.$child[name]` | `AsyncProcess` | Child process lookup |
-| `this.fork(fn, name?, args?)` | `(fn, name?, args?) => AsyncProcess` | Spawn a child actor |
-| `this.ctx` | `ProcessCtx` | Low-level process context |
+| Member                        | Type                                 | Description               |
+| ----------------------------- | ------------------------------------ | ------------------------- |
+| `this.state`                  | `InternalState`                      | Mutable internal state    |
+| `this.name`                   | `string`                             | Process name              |
+| `this.id`                     | `symbol`                             | Process ID                |
+| `this.emit(msg)`              | `(OutMsg) => void`                   | Send message to parent    |
+| `this.agreeToStop()`          | `() => void`                         | Accept STOP request       |
+| `this.exit(reason)`           | `(reason?) => void`                  | Exit with reason          |
+| `this.$child[name]`           | `AsyncProcess`                       | Child process lookup      |
+| `this.fork(fn, name?, args?)` | `(fn, name?, args?) => AsyncProcess` | Spawn a child actor       |
+| `this.ctx`                    | `ProcessCtx`                         | Low-level process context |
 
 ### ActorDefinition return value
 
@@ -243,8 +243,8 @@ const pool = defineActor<PoolArgs, PoolState, PoolInMessage, PoolOutMessage>({
 
 ## Spawn API (design in progress, 2026-08-11)
 
-Three entry points for spawning an actor.  Currently have overlapping but
-inconsistent signatures.  Target: unify opts shapes and fold positional params.
+Three entry points for spawning an actor. Currently have overlapping but
+inconsistent signatures. Target: unify opts shapes and fold positional params.
 
 ### Current state
 
@@ -262,17 +262,17 @@ Actor.spawnAsChild(ctx, args, opts?: { name? }, parentPlugins?: ActorPlugin[])
 Issues:
 
 1. **`spawnAsChild` takes `AnyProcessCtx`** (`ProcessCtx<unknown, unknown, Message, Message>`)
-   but callers have concrete `ProcessCtx<Args, State, IM, OM>`.  Assignment fails
-   because `ProcessCtx` is invariant in its type params.  Every external call site
+   but callers have concrete `ProcessCtx<Args, State, IM, OM>`. Assignment fails
+   because `ProcessCtx` is invariant in its type params. Every external call site
    needs `ctx as any`.
 
 2. **4th positional param `parentPlugins`** on `spawnAsChild` is only used by
-   `self.fork()` internally.  External callers never pass it.  It should be in opts.
+   `self.fork()` internally. External callers never pass it. It should be in opts.
 
-3. **`this.fork()` vs `this.ctx.fork()`** — two ways to fork.  The decorated one
+3. **`this.fork()` vs `this.ctx.fork()`** — two ways to fork. The decorated one
    (`this.fork()`) does tree-naming + plugin propagation + `$child` tracking.
    The raw one (`this.ctx.fork()`) is used only by the tool pool (which doesn't
-   need plugins).  Naming is confusing.
+   need plugins). Naming is confusing.
 
 ### Target
 

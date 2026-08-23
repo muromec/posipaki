@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "../define-actor.js";
 import type { Message } from "../types.js";
 import { inspect, type TreeNode } from "./tree-introspection.js";
-import { nextState } from '../testing/tick-utils.js';
+import { nextState } from "../testing/tick-utils.js";
 
 // ── messages ─────────────────────────────────────────────────────────────
 
@@ -57,9 +57,7 @@ describe("inspect", () => {
 
       const tree = proc.$reflection["inspect.getTree"]();
       expect(tree.children.length).toBeGreaterThanOrEqual(1);
-      const child = tree.children.find((c: TreeNode) =>
-        c.pname.includes("kid"),
-      );
+      const child = tree.children.find((c: TreeNode) => c.pname.includes("kid"));
       expect(child).toBeDefined();
       expect(child!.status).toBe("running");
       expect(child!.parentName).toBe("parent");
@@ -158,7 +156,7 @@ describe("inspect", () => {
       const Actor = defineActor({
         name: "state-test",
         inMessages: Pin,
-        setup: () => ({ public: null, private: { count: 0 }}),
+        setup: () => ({ public: null, private: { count: 0 } }),
         plugins: [inspect()],
         handlers: {
           POKE() {

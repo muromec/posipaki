@@ -18,15 +18,16 @@ results naturally:
 
 ```ts
 // BEFORE — awkward and order-dependent
-yield* runDispatch("agent", (msg) => {
-  if (msg.body === "wait") {
-    setTimeout(() => {
+yield *
+  runDispatch("agent", (msg) => {
+    if (msg.body === "wait") {
+      setTimeout(() => {
+        ctx.toParent({ type: "REPLY", body: `Echo: ${msg.body}` });
+      }, 1000);
+    } else {
       ctx.toParent({ type: "REPLY", body: `Echo: ${msg.body}` });
-    }, 1000);
-  } else {
-    ctx.toParent({ type: "REPLY", body: `Echo: ${msg.body}` });
-  }
-});
+    }
+  });
 ```
 
 Two replies to the same message type, split across a synchronous path and a
@@ -42,12 +43,7 @@ sync-only users), async support was added as a **parallel class** —
 ### New type alias (`src/types.ts`)
 
 ```ts
-export type AsyncProcessFn<
-  Args,
-  State,
-  InMessage extends Message,
-  OutMessage extends Message,
-> = (
+export type AsyncProcessFn<Args, State, InMessage extends Message, OutMessage extends Message> = (
   ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
 ) => AsyncGenerator<State | null, void, InMessage>;
@@ -79,13 +75,13 @@ export async function* runDispatchAsync<M>(
 A full `Process`-equivalent built around `AsyncGenerator`. Key differences
 from `Process`:
 
-| Aspect | `Process` (sync) | `AsyncProcess` |
-|---|---|---|
-| Generator type | `Generator<S, void, IM>` | `AsyncGenerator<S, void, IM>` |
-| Tick execution | Synchronous `_tick(): void` | `async _tick(): Promise<void>` with `#tickInProgress` guard |
-| `watchExit` | Shared utility in `util.ts` | Private `async *_watchExit` method on the class |
-| `send()` | Enqueues + schedules microtask | Same, but tick is `await`-based |
-| `wait()` | Resolves on generator completion | Returns `Promise<void>` that also rejects on unhandled reducer errors |
+| Aspect         | `Process` (sync)                 | `AsyncProcess`                                                        |
+| -------------- | -------------------------------- | --------------------------------------------------------------------- |
+| Generator type | `Generator<S, void, IM>`         | `AsyncGenerator<S, void, IM>`                                         |
+| Tick execution | Synchronous `_tick(): void`      | `async _tick(): Promise<void>` with `#tickInProgress` guard           |
+| `watchExit`    | Shared utility in `util.ts`      | Private `async *_watchExit` method on the class                       |
+| `send()`       | Enqueues + schedules microtask   | Same, but tick is `await`-based                                       |
+| `wait()`       | Resolves on generator completion | Returns `Promise<void>` that also rejects on unhandled reducer errors |
 
 ### `asyncify` bridge (`src/adapters.ts`)
 
@@ -97,8 +93,8 @@ export function asyncify<A, S, IM extends Message, OM extends Message>(
   fn: ProcessFn<A, S, IM, OM>,
 ): AsyncProcessFn<A, S, IM, OM> {
   return async function* (ctx, args) {
-    yield* fn(ctx, args) as any
-  }
+    yield* fn(ctx, args) as any;
+  };
 }
 ```
 
@@ -111,7 +107,7 @@ export function spawnAsync<Args, State, InMessage, OutMessage>(
   fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
   pname: string,
   toParent?: ProcessMessageCb<OutMessage>,
-): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage>
+): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage>;
 ```
 
 ### Public API surface (`src/index.ts`)
@@ -133,9 +129,9 @@ export type { AsyncProcessFn, ... }
 messages **serially** within a single tick (same as the sync `Process`). When
 the reducer contains `await`, each message waits for the previous one's
 promise to settle before `.next()` is called with the next buffered message.
-This is documented in the `AsyncProcess` class JSDoc: *"Messages are processed
+This is documented in the `AsyncProcess` class JSDoc: _"Messages are processed
 one at a time — if a tick is already in-flight, new messages are buffered and
-processed when the current tick completes."*
+processed when the current tick completes."_
 
 ### 2. `_scheduleTick` concurrency (`#tickInProgress` guard)
 
@@ -158,8 +154,8 @@ protected async _tick(): Promise<void> {
 }
 ```
 
-This is verified by the test *"should never allow concurrent ticks on the same
-generator"* in `process.async.test.ts`.
+This is verified by the test _"should never allow concurrent ticks on the same
+generator"_ in `process.async.test.ts`.
 
 ### 3. Should `ProcessFn` become a union type?
 

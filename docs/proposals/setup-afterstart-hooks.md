@@ -1,9 +1,11 @@
 # setup() and afterStart() hooks
 
 ## Status
+
 Implemented.
 
 ## Summary
+
 Add two new hooks to `ActorConfig`:
 
 - **`setup(args)`** — returns the initial internal state. Replaces the
@@ -29,6 +31,7 @@ so `ready()` resolves with the fully-populated state.
 ## Migration
 
 Before:
+
 ```typescript
 defineActor({
   initialState: (): State => ({ child: null as unknown as ChildProcess }),
@@ -40,6 +43,7 @@ defineActor({
 ```
 
 After:
+
 ```typescript
 defineActor({
   async setup(this: Ctx, args: Args): Promise<State> {
@@ -50,16 +54,19 @@ defineActor({
 ```
 
 ### Migration rules
+
 1. `initialState` return value moves into `setup`'s return
 2. `onStart` body moves into `setup` (before the return)
 3. Remove both `initialState` and `onStart`
 4. If no async work is needed, keep `initialState` (still supported)
 
 ## Backward compatibility
+
 `initialState` and `onStart` remain fully supported. `setup()` takes
 precedence over `initialState` when both are provided.
 
 ## Lifecycle order
+
 ```
 setup(args)       → returns InternalState
 expose(state)     → ExposedState

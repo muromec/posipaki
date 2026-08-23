@@ -6,12 +6,7 @@ export type { Message, ProcessFn, ProcessCtx } from "./types.js";
 export { runDispatch } from "./util.js";
 
 /** @deprecated Use {@link spawnAsync} instead. */
-export function spawn<
-  A,
-  S,
-  IM extends Message = Message,
-  OM extends Message = ExitMessage,
->(
+export function spawn<A, S, IM extends Message = Message, OM extends Message = ExitMessage>(
   fn: ProcessFn<A, S, IM, OM>,
   pname: string,
   tp?: (m: OM, from: SenderInfo) => void,
@@ -21,17 +16,8 @@ export function spawn<
 
 /** @deprecated Use {@link AsyncProcess} instead. Sync processes are
  *  wrapped via asyncify internally; spawnAsync handles both. */
-class Process<
-  A,
-  S,
-  IM extends Message,
-  OM extends Message,
-> extends AsyncProcess<A, S, IM, OM, {}> {
-  constructor(
-    fn: ProcessFn<A, S, IM, OM>,
-    pname: string,
-    tp?: (m: OM, from: SenderInfo) => void,
-  ) {
+class Process<A, S, IM extends Message, OM extends Message> extends AsyncProcess<A, S, IM, OM, {}> {
+  constructor(fn: ProcessFn<A, S, IM, OM>, pname: string, tp?: (m: OM, from: SenderInfo) => void) {
     super(asyncify(fn), pname, tp);
   }
 

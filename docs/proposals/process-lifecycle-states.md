@@ -10,15 +10,15 @@ where it is in its lifetime, instead of leaving observers to infer it from
 
 Proposed states:
 
-| state      | meaning                                                        |
-|------------|----------------------------------------------------------------|
+| state      | meaning                                                           |
+| ---------- | ----------------------------------------------------------------- |
 | `starting` | spawned; before `ready()` resolves (setup/`afterStart` in flight) |
-| `running`  | dispatch loop active, **idle** (awaiting the next message)       |
-| `busy`     | dispatch loop processing a message (reducer is `await`ing)       |
-| `paused`   | messages buffered; not processing                              |
+| `running`  | dispatch loop active, **idle** (awaiting the next message)        |
+| `busy`     | dispatch loop processing a message (reducer is `await`ing)        |
+| `paused`   | messages buffered; not processing                                 |
 | `exiting`  | `done` set; teardown running (`beforeEnd` → cascade → `afterEnd`) |
-| `exited`   | terminal; generator completed                                  |
-| `failed`   | terminal; an error propagated out of the generator              |
+| `exited`   | terminal; generator completed                                     |
+| `failed`   | terminal; an error propagated out of the generator                |
 
 ## Motivation
 
@@ -27,7 +27,7 @@ Today a process's lifecycle is only observable through scattered primitives:
 - `proc.ready()` — "initial state is available" (a point in time, not a state).
 - `proc.wait()` — "generator completed" (another point in time).
 - `proc.pause()` / `resume()` — buffering, with no exposed indicator.
-- `proc.state` — the actor's *domain* state, orthogonal to lifecycle.
+- `proc.state` — the actor's _domain_ state, orthogonal to lifecycle.
 - the tree inspector's `TreeNode.status` — only `"running" | "no introspection"`.
 
 There is no single field that answers "is this process idle, busy, or
@@ -109,7 +109,7 @@ TreeNode.status;  // widened to the real phase instead of "running" | "no intros
   completion? The latter is more useful to callers that fork in `setup`.
 - **`busy` overhead:** is a boolean flip per dispatched message acceptable?
   (Almost certainly yes — it's one store.)
-- **Is `paused` orthogonal?** A process is paused *while* running, not instead
+- **Is `paused` orthogonal?** A process is paused _while_ running, not instead
   of running. Worth deciding whether `paused` is a phase or a separate
   boolean flag.
 - **Presence:** should the transport derive presence from `busy`/`running`

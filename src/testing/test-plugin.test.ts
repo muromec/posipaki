@@ -146,9 +146,10 @@ describe("createCollector", () => {
   });
 
   it("sequence spec matches the tail of history in order", async () => {
-    const collector = createCollector<EmitterOut>(
-      [{ type: "PONG", n: 1 }, { type: "PONG", n: 3 }],
-    );
+    const collector = createCollector<EmitterOut>([
+      { type: "PONG", n: 1 },
+      { type: "PONG", n: 3 },
+    ]);
     const proc = await spawnEmitter(collector);
 
     poke(proc, 1);
@@ -189,10 +190,7 @@ describe("createCollector", () => {
   });
 
   it("scope filters by pname — a non-matching scope collects nothing", async () => {
-    const collector = createCollector<EmitterOut>(
-      { type: "PONG" },
-      { scope: "other:*" },
-    );
+    const collector = createCollector<EmitterOut>({ type: "PONG" }, { scope: "other:*" });
     const proc = await spawnEmitter(collector);
 
     poke(proc, 1);
@@ -216,10 +214,7 @@ describe("createCollector", () => {
 
     const result = await pending;
     expect(result.ok).toBe(true);
-    expect(collector.messages).toMatchObject([
-      { type: "PONG", n: 1 },
-      { type: "BYE" }
-    ]);
+    expect(collector.messages).toMatchObject([{ type: "PONG", n: 1 }, { type: "BYE" }]);
     await proc.wait();
   });
 
@@ -240,9 +235,12 @@ describe("createRootTracker", () => {
   it("tracks roots and stopAll() stops them", async () => {
     const tracker = createRootTracker();
     const collector = createCollector<EmitterOut>({ type: "PONG" });
-    const proc = await Emitter.spawn({}, {
-      addPlugins: [collector.plugin, tracker.plugin],
-    });
+    const proc = await Emitter.spawn(
+      {},
+      {
+        addPlugins: [collector.plugin, tracker.plugin],
+      },
+    );
     await proc.ready();
 
     await tracker.stopAll();

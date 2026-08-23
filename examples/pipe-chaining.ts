@@ -31,7 +31,10 @@ const main = defineActor({
   onStart() {
     const worker2 = worker.fn;
     const worker3 = worker.fn;
-    const _child = this.ctx.fork(pipe([worker.fn, worker2, worker3]), "w")({
+    const _child = this.ctx.fork(
+      pipe([worker.fn, worker2, worker3]),
+      "w",
+    )({
       number: 1,
     });
   },
@@ -43,6 +46,9 @@ const main = defineActor({
 });
 
 const m = main.spawn(null);
-setTimeout(() => m.send({ type: "STOP" } as any, { fromName: "external", fromId: Symbol("external") }), 300);
+setTimeout(
+  () => m.send({ type: "STOP" } as any, { fromName: "external", fromId: Symbol("external") }),
+  300,
+);
 await m.wait();
 clearTimeout(timer);

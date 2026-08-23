@@ -27,18 +27,18 @@ describe("toMatcher", () => {
 
     expect(m({ type: "PONG", n: 1 }, [{ type: "PONG", n: 1 }])).toBe(true);
     // shallow: extra fields on the message are ignored
+    expect(m({ type: "PONG", n: 42 } as PongMsg, [{ type: "PONG", n: 42 } as PongMsg])).toBe(true);
     expect(
-      m(
-        { type: "PONG", n: 42 } as PongMsg,
-        [{ type: "PONG", n: 42 } as PongMsg],
-      ),
-    ).toBe(true);
-    expect(m({ type: "PING", n: 1 } as unknown as PongMsg, [{ type: "PING" } as unknown as PongMsg])).toBe(false);
+      m({ type: "PING", n: 1 } as unknown as PongMsg, [{ type: "PING" } as unknown as PongMsg]),
+    ).toBe(false);
   });
 
   it("matches a sequence in order from the tail", async () => {
     const { toMatcher } = await import("./msg-matcher.js");
-    const m = toMatcher<PongMsg>([{ type: "PONG", n: 1 }, { type: "PONG", n: 2 }]);
+    const m = toMatcher<PongMsg>([
+      { type: "PONG", n: 1 },
+      { type: "PONG", n: 2 },
+    ]);
 
     // history ends with PONG(1), PONG(2) → match
     const hist = [

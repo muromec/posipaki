@@ -4,7 +4,7 @@
 
 ## Summary
 
-Make actor shutdown cascade to children *and wait for them*. When an actor
+Make actor shutdown cascade to children _and wait for them_. When an actor
 stops — it received STOP and `onStopRequested` confirmed via `agreeToStop()`,
 or it called `this.exit()` — the framework:
 
@@ -56,10 +56,7 @@ await must be on `proc.wait()` (which resolves when the child's generator
 completes), not on dispatching an `EXIT`:
 
 ```ts
-await Promise.race([
-  child.wait(),
-  sleep(CHILD_STOP_TIMEOUT_MS),
-]);
+await Promise.race([child.wait(), sleep(CHILD_STOP_TIMEOUT_MS)]);
 ```
 
 ### Stopping phase

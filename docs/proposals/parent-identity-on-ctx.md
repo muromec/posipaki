@@ -5,11 +5,11 @@
 ## Motivation
 
 When a process receives a message, it knows who sent it via the `sender` tuple
-(`{ fromName, fromId }`).  But it has no way to know whether that sender is
-its *parent* — the process that spawned it.
+(`{ fromName, fromId }`). But it has no way to know whether that sender is
+its _parent_ — the process that spawned it.
 
 Currently the only way to identify the parent is to capture `sender.fromId`
-from the first received message and hope it's the parent.  This is fragile:
+from the first received message and hope it's the parent. This is fragile:
 if the parent never sends a message, the child never learns its identity.
 
 ## Design
@@ -20,8 +20,8 @@ Add two fields to `ProcessCtx`:
 interface ProcessCtx<Args, State, InMsg, OutMsg> {
   pname: string;
   id: symbol;
-  parentName: string | null;   // NEW
-  parentId: symbol | null;     // NEW
+  parentName: string | null; // NEW
+  parentId: symbol | null; // NEW
   // ... rest unchanged
 }
 ```
@@ -84,6 +84,6 @@ parent identity:
 ```
 
 The remote child sets `ctx.parentName = $init.parentName` and
-`ctx.parentId = Symbol.for($init.parentIdName)`.  Messages from the host
+`ctx.parentId = Symbol.for($init.parentIdName)`. Messages from the host
 carry `fromIdName` matching `parentIdName`, so `sender.fromId ===
 ctx.parentId` works across the wire.

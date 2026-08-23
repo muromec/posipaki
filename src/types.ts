@@ -48,12 +48,7 @@ export type StopMessage = {
 
 // ---- ProcessFn (sync) -------------------------------------------------------
 
-export type ProcessFn<
-  Args,
-  State,
-  InMessage extends Message,
-  OutMessage extends Message,
-> = (
+export type ProcessFn<Args, State, InMessage extends Message, OutMessage extends Message> = (
   ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
   args: Args,
 ) => Generator<State | null, void, WithSender<InMessage | StopMessage>>;
@@ -74,8 +69,7 @@ export type AsyncProcessFn<
 
 /** Origin of a message — either a process context or the literal "root"
  *  (used by the system harness to inject messages from outside). */
-export type SenderOrigin =
-  ProcessCtx<unknown, unknown, Message, Message> | "root";
+export type SenderOrigin = ProcessCtx<unknown, unknown, Message, Message> | "root";
 
 // ---- ProcessCtx -------------------------------------------------------------
 
@@ -83,29 +77,15 @@ type ProcessMessageCb<M> = (msg: M) => void;
 
 /** Fork a child process. Takes a ProcessFn and a name, returns a
  *  curried function that accepts the child's initial args. */
-export type Fork<
-  ChildArgs,
-  ChildState,
-  ChildIM extends Message,
-  ChildOM extends Message,
-> = (
+export type Fork<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends Message> = (
   fn: AsyncProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
   pname: string,
-) => (
-  args: ChildArgs,
-) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}>;
+) => (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}>;
 
-export type ForkSync<
-  ChildArgs,
-  ChildState,
-  ChildIM extends Message,
-  ChildOM extends Message,
-> = (
+export type ForkSync<ChildArgs, ChildState, ChildIM extends Message, ChildOM extends Message> = (
   fn: ProcessFn<ChildArgs, ChildState, ChildIM, ChildOM>,
   pname: string,
-) => (
-  args: ChildArgs,
-) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}>;
+) => (args: ChildArgs) => AsyncProcess<ChildArgs, ChildState, ChildIM, ChildOM, {}>;
 
 /** Context injected into every running process. */
 export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
@@ -118,7 +98,10 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   /** Invoked by the runtime after the process emits EXIT to its parent.
    *  Best-effort teardown that must not delay the exit signal. */
   afterExit?: () => Promise<void> | void;
-} & Pick<AsyncProcess<Args, State, IM, OM, {}>, "fork" | "forkSync" | "children" | "orphans" | "adopt" | "monitor">;
+} & Pick<
+  AsyncProcess<Args, State, IM, OM, {}>,
+  "fork" | "forkSync" | "children" | "orphans" | "adopt" | "monitor"
+>;
 export type AnyProcessCtx = ProcessCtx<unknown, unknown, Message, Message>;
 
 // ---- Pipe -------------------------------------------------------------------

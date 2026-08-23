@@ -104,10 +104,9 @@ describe("tree prefixing", () => {
   });
 
   it("raw generator with ctx.fork uses exact name (no prefix)", async () => {
-    const rawFn: AsyncProcessFn<null, { x: number }, never, never> =
-      async function* () {
-        yield { x: 1 };
-      };
+    const rawFn: AsyncProcessFn<null, { x: number }, never, never> = async function* () {
+      yield { x: 1 };
+    };
 
     const root = spawnAsync(rawFn, "root")(null);
     expect(root.pname).toBe("root");
@@ -229,13 +228,7 @@ describe("tree naming — adversarial", () => {
       },
       handlers: {},
     });
-    const leaf1 = Leaf as ActorDefinition<
-      { level: number },
-      unknown,
-      Message,
-      Message,
-      {}
-    >;
+    const leaf1 = Leaf as ActorDefinition<{ level: number }, unknown, Message, Message, {}>;
 
     const proc = await Leaf.spawn({ level: 0 });
     await proc.ready();

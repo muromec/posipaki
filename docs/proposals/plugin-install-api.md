@@ -28,7 +28,7 @@ export function mergeConfigs<T extends {}>(base: T, overlay: Partial<T>): T;
 ```
 
 Merges `overlay` into `base`. Hooks whose names match `/^(on|after)[A-Z]/` are
-chained via `chainHook` — the overlay's hook fires *before* the base hook.
+chained via `chainHook` — the overlay's hook fires _before_ the base hook.
 All other keys are shallow-assigned.
 
 `$reflectionMethods` is merged specially: keys from both base and overlay are
@@ -38,13 +38,13 @@ combined, with overlay taking precedence for same-named keys.
 
 Plugins compose into these config keys:
 
-| Config key | Purpose | Merge behavior |
-|---|---|---|
-| `onMessage`, `onEmit`, `onChildExit`, `onError`, `onEnd`, `onStopRequested` | Hooks | `chainHook` — plugin fires before base |
-| `afterStart`, `afterStopRequested`, etc. | Post-hooks | `chainHook` — same pattern |
-| `$reflectionMethods` | Reflection methods (e.g. `inspect.getTree`) | Shallow merge, overlay wins on conflict |
-| `$decorate` | Property decoration (e.g. `this.log`) | Stored, wired onto context at spawn time |
-| `methods` | Custom methods on `this` | Spread into `ActorContext` |
+| Config key                                                                  | Purpose                                     | Merge behavior                           |
+| --------------------------------------------------------------------------- | ------------------------------------------- | ---------------------------------------- |
+| `onMessage`, `onEmit`, `onChildExit`, `onError`, `onEnd`, `onStopRequested` | Hooks                                       | `chainHook` — plugin fires before base   |
+| `afterStart`, `afterStopRequested`, etc.                                    | Post-hooks                                  | `chainHook` — same pattern               |
+| `$reflectionMethods`                                                        | Reflection methods (e.g. `inspect.getTree`) | Shallow merge, overlay wins on conflict  |
+| `$decorate`                                                                 | Property decoration (e.g. `this.log`)       | Stored, wired onto context at spawn time |
+| `methods`                                                                   | Custom methods on `this`                    | Spread into `ActorContext`               |
 
 ### Type augmentation (Fastify-style)
 
@@ -129,12 +129,20 @@ export function inspect(): ActorPlugin {
             } else {
               const n = child.pname;
               if (!prefix || n.startsWith(prefix))
-                children.push({ pname: n, parentName: this.name,
-                               children: [], status: "no introspection" });
+                children.push({
+                  pname: n,
+                  parentName: this.name,
+                  children: [],
+                  status: "no introspection",
+                });
             }
           }
-          return { pname: this.ctx.pname, parentName: this.ctx.parentName,
-                   children, status: "running" };
+          return {
+            pname: this.ctx.pname,
+            parentName: this.ctx.parentName,
+            children,
+            status: "running",
+          };
         },
         "inspect.getState": function () {
           return this.state;

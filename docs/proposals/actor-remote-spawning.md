@@ -42,12 +42,12 @@ the encoding or transport does.
 
 ### Separation of concerns
 
-| Layer | Owns |
-|-------|------|
-| **Wire protocol** | Six message types, handshake, sender identity, fd forwarding |
-| **Bridge adapter** | spawn + transport + protocol — the universal primitive |
+| Layer                  | Owns                                                          |
+| ---------------------- | ------------------------------------------------------------- |
+| **Wire protocol**      | Six message types, handshake, sender identity, fd forwarding  |
+| **Bridge adapter**     | spawn + transport + protocol — the universal primitive        |
 | **Isolation wrappers** | `withBwrap`, `withSudo`, `withSsh` — modify the spawn command |
-| **Actor** | unchanged — same handlers, state, doesn't know it's remote |
+| **Actor**              | unchanged — same handlers, state, doesn't know it's remote    |
 
 The bridge spawns, bridges messages, and resolves when the child exits. The
 isolation wrappers are pure functions on the spawn command.
@@ -63,17 +63,15 @@ entry point. One file per actor type:
 
 ```ts
 // src/actors/openai/reflector-remote.ts
-import { defineRemoteActor } from 'posipaki/remote';
-import { MyActor } from './my-actor.js';
+import { defineRemoteActor } from "posipaki/remote";
+import { MyActor } from "./my-actor.js";
 
-export const myRemoteActor = defineRemoteActor(
-  MyActor.fn, import.meta.url,
-);
+export const myRemoteActor = defineRemoteActor(MyActor.fn, import.meta.url);
 ```
 
 `defineRemoteActor` receives `import.meta.url` and compares it to
-`process.argv[1]` internally.  If they match, it runs the child bridge
-(`runChild()`).  Otherwise it returns the remote actor for import.
+`process.argv[1]` internally. If they match, it runs the child bridge
+(`runChild()`). Otherwise it returns the remote actor for import.
 The spawn command auto-derives as `node <this-file>`.
 
 ### Consumer API
@@ -105,14 +103,10 @@ Isolation wrappers are functions from spawnable → spawnable. The base module
 exposes metadata (command path, name), and the consumer wraps as needed:
 
 ```ts
-import { myRemoteActor } from './reflector-remote';
-import { withBwrap, withSudo } from 'posipaki/remote';
+import { myRemoteActor } from "./reflector-remote";
+import { withBwrap, withSudo } from "posipaki/remote";
 
-const isolated = withSudo('butler',
-  withBwrap({ roBind: ['data/butler', '/data'] },
-    myRemoteActor
-  )
-);
+const isolated = withSudo("butler", withBwrap({ roBind: ["data/butler", "/data"] }, myRemoteActor));
 
 const proc = isolated.spawn(null)(args);
 ```
@@ -127,8 +121,8 @@ type Spawnable<Args, State, InMsg, OutMsg> = {
   spawn(ctx: ProcessCtx | null): (args: Args) => Promise<RemoteProxy<State, InMsg, OutMsg>>;
   runChild(): Promise<void>;
   meta: {
-    command: string[];   // base command (e.g. ['node', 'this-file.ts'])
-    name: string;        // actor name
+    command: string[]; // base command (e.g. ['node', 'this-file.ts'])
+    name: string; // actor name
   };
 };
 
@@ -172,7 +166,7 @@ child → host:  {"$proto":"ndjson.v1"}
 
 The version line lets the host select a parser. `ndjson.v1` means
 "newline-delimited JSON, semantic version 1." A future `msgpack.v1` would
-trigger a different deserializer. The protocol *semantics* stay the same
+trigger a different deserializer. The protocol _semantics_ stay the same
 across encodings.
 
 The version is signaled through the pipe, not as a CLI flag — the CLI is
@@ -188,7 +182,7 @@ Six message types at the wire level:
 Protocol version negotiation. Sent once, immediately on connect.
 
 ```json
-{"$proto":"ndjson.v1"}
+{ "$proto": "ndjson.v1" }
 ```
 
 #### `$init` (host → child)
@@ -196,7 +190,7 @@ Protocol version negotiation. Sent once, immediately on connect.
 Start arguments. Sent after version handshake.
 
 ```json
-{"$init":{"tools":["..."],"history":["..."],"persona":"butler"}}
+{ "$init": { "tools": ["..."], "history": ["..."], "persona": "butler" } }
 ```
 
 The child responds by emitting its initial `$state` — that's the "ready"
@@ -221,12 +215,14 @@ A posipaki message crossing the boundary. Carries the message body plus sender
 identity:
 
 ```json
-{"$msg":{
-  "type":"IN_MESSAGE",
-  "fromName":"root",
-  "fromIdName":"root",
-  "body":{"content":{"tag":"body","body":"hello"}}
-}}
+{
+  "$msg": {
+    "type": "IN_MESSAGE",
+    "fromName": "root",
+    "fromIdName": "root",
+    "body": { "content": { "tag": "body", "body": "hello" } }
+  }
+}
 ```
 
 The receiving adapter reconstitutes `[body, { fromName, fromId:
@@ -242,7 +238,7 @@ binary encoding could carry symbols natively.
 Child announces graceful exit. Carries exit code and final state snapshot:
 
 ```json
-{"$exit":{"code":0,"state":{"tired":true,"turns":42}}}
+{ "$exit": { "code": 0, "state": { "tired": true, "turns": 42 } } }
 ```
 
 Best-effort — SIGKILL means no exit message. The host must handle both cases:
@@ -267,17 +263,17 @@ same for local, bwrap, sudo, and SSH.
 
 ### Exit handling
 
-| Scenario | What the host sees |
-|----------|-------------------|
-| `process.exit(0)` | `$exit` message, then pipe closes |
+| Scenario           | What the host sees                             |
+| ------------------ | ---------------------------------------------- |
+| `process.exit(0)`  | `$exit` message, then pipe closes              |
 | `process.exit(42)` | `$exit` message with code 42, then pipe closes |
-| Crash (SIGSEGV) | Pipe closes, no `$exit` message |
-| SIGKILL | Pipe closes, no `$exit` message |
+| Crash (SIGSEGV)    | Pipe closes, no `$exit` message                |
+| SIGKILL            | Pipe closes, no `$exit` message                |
 
 The host adapter resolves `proc.wait()` with `{ code, finalState }`:
+
 - Graceful: code and state from `$exit`
 - Crash: code is null, state is last known `$state`
-
 
 ---
 
@@ -344,7 +340,7 @@ The encoding is a pluggable layer beneath the protocol:
 
 ```ts
 interface WireCodec {
-  readonly version: string;          // "ndjson.v1"
+  readonly version: string; // "ndjson.v1"
   encode(msg: WireMessage): Buffer;
   decode(chunk: Buffer): WireMessage[];
 }
@@ -357,6 +353,7 @@ semantics don't change.
 ### Future encodings
 
 A binary encoding could carry things JSON can't:
+
 - **Transferrable buffers** — shared memory for zero-copy data transfer
 - **File handles** — `sendmsg`/`recvmsg` with `SCM_RIGHTS`
 - **Symbols** — dedicated wire type, no `Symbol.for` round-trip needed
@@ -432,11 +429,11 @@ symbol was sent), a fresh symbol is synthesized.
 2. **Startup latency.** Spawning a Node.js process per actor adds overhead.
    Keep frequently-used actors warm, isolate only the ones that benefit.
 
-5. **Cross-process tool calls.** If the tool pool is a separate process, tool
+3. **Cross-process tool calls.** If the tool pool is a separate process, tool
    calls cross a process boundary twice (connector → pool → connector). Extra
    serialization overhead. Measure before optimizing.
 
-6. **SSH relay.** How thin can the relay be? Could it be the child adapter
+4. **SSH relay.** How thin can the relay be? Could it be the child adapter
    itself with a `--relay` flag, or does it need to be a separate process?
 
 ---
@@ -470,10 +467,10 @@ via a string key.
 A remote actor link has exactly two participants — host and child. There
 are only two sender identities to track:
 
-| Direction | fromName | fromId |
-|-----------|----------|--------|
+| Direction    | fromName                           | fromId                               |
+| ------------ | ---------------------------------- | ------------------------------------ |
 | host → child | `"host"` (or parent's actual name) | proxy id (synthetic, host-side only) |
-| child → host | child's `pname` | proxy id (synthetic, host-side only) |
+| child → host | child's `pname`                    | proxy id (synthetic, host-side only) |
 
 The child doesn't need `fromId` from the host — there's only one sender.
 The host needs a stable `fromId` for the child so it can integrate with
@@ -484,17 +481,17 @@ in-process supervision (`sender.fromId === proxy.id`).
 **Host side (parent):**
 
 The `spawnRemote` adapter creates a synthetic id for the proxy:
-`const proxyId = Symbol()`.  All messages forwarded from the child to the
+`const proxyId = Symbol()`. All messages forwarded from the child to the
 parent are stamped with `{ fromName: childPname, fromId: proxyId }`.
 The parent's `sender.fromId === proxy.id` comparison works.
 
 **Child side:**
 
 The `$init` message carries `parentName` (string) and `parentIdName`
-(string).  The `runChild` adapter sets:
+(string). The `runChild` adapter sets:
 
 ```ts
-ctx.parentName = init.parentName;           // "root", "openai:butler", etc.
+ctx.parentName = init.parentName; // "root", "openai:butler", etc.
 ctx.parentId = Symbol.for(init.parentIdName); // Symbol.for("root"), etc.
 ```
 
@@ -503,8 +500,8 @@ child sees `sender.fromId === ctx.parentId` — same as in-process.
 
 ### What the wire carries
 
-`$msg` messages carry `fromName` only.  `$init` carries `parentName` and
-`parentIdName` once, at startup.  `fromId` never crosses the wire — it's
+`$msg` messages carry `fromName` only. `$init` carries `parentName` and
+`parentIdName` once, at startup. `fromId` never crosses the wire — it's
 synthesized on both sides from the init handshake.
 
 ```json
@@ -537,9 +534,9 @@ The child detects the mismatch:
 
 ```ts
 if (sender.fromName === ctx.parentName) {
-  sender.fromId = ctx.parentId;          // stable — it's the original parent
+  sender.fromId = ctx.parentId; // stable — it's the original parent
 } else {
-  sender.fromId = Symbol();              // fresh each time — "someone else"
+  sender.fromId = Symbol(); // fresh each time — "someone else"
 }
 ```
 
@@ -556,11 +553,11 @@ works exactly as in-process.
 ### Child process hangs on startup error
 
 When `runChild()` fails early (e.g. missing `--fifo` flag), the child
-process prints an error and calls `process.exit(1)`.  Under `bun run`,
+process prints an error and calls `process.exit(1)`. Under `bun run`,
 the process sometimes hangs instead of exiting, consuming 30-50% CPU.
 The parent process (command tool harness) also waits indefinitely.
 
-Workaround: ensure `--fifo` is always passed.  Root cause not yet
+Workaround: ensure `--fifo` is always passed. Root cause not yet
 identified — suspected bun event loop issue with async I/O during
 early startup.
 
@@ -569,6 +566,7 @@ early startup.
 ## Implementation Status (0.14.0)
 
 ### Done
+
 1. ✅ Wire protocol — `encode`/`decode`, type guards (`protocol.ts`)
 2. ✅ Fifo transport — `FifoUtf8NlineTransport`, two-fifo, strict handler lifecycle
 3. ✅ Child adapter — `runChild(fn)`, generic, `makeSender()` (`child.ts`)
@@ -580,12 +578,14 @@ early startup.
 9. ✅ `defineRemoteActor` accepts optional `connector` (defaults to `defaultConnector`)
 
 ### Diverged from original proposal
+
 - **API shape**: takes `ActorDefinition` (not just `fn`), returns `{ actor, runRemoteRoot, isRemoteRoot }`. `actor` is plug-compatible with local actors.
 - **Spawn signature**: `actor.spawn(args)` flat (not curried), returns `AsyncProcess`.
 - **Internal**: proxy actor uses `defineActor` + `setup` hook.
 - **Connector model**: `commandConnector` is the base, wrappers (`bunConnector`, `nodeConnector`) produce `Connector` functions. Wrappers compose at the call site.
 
 ### TBD
+
 - **$fd forwarding** — captured stdout/stderr over the wire
 - **Isolation wrappers** — `withBwrap`, `withSudo`, `withSsh` as connector transforms
 - **Terminal bridge** — first real isolated actor

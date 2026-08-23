@@ -23,7 +23,7 @@ that is stuck awaiting a dead promise or looping back on us.
    `finally` runs). Await on a best-effort basis with a timeout (we can't wait
    forever — whatever it awaits may never happen because it bugged out).
 2. **return() fire-and-forget** — if it refused and `force` is set, fire
-   `generator.return()` *without awaiting*: throw the generator away for GC to
+   `generator.return()` _without awaiting_: throw the generator away for GC to
    find. This gives the `finally` a chance to run, but we do not block on it.
 3. **Cascade** — proceed to stop its children with the same ladder
    (`child.stop({ force: true })`).
@@ -54,7 +54,7 @@ matching "ownership where state lives". Applies to children and orphans alike.
 
 ### Best-effort caveat
 
-JS offers no way to cancel a pending promise. An *idle* generator (suspended at
+JS offers no way to cancel a pending promise. An _idle_ generator (suspended at
 `yield`) is abandoned cleanly — its `finally` never runs. A generator mid-`await`
 will complete its `finally` when that `await` settles, because the pending
 promise still holds the continuation. Both `return()` and abandonment are

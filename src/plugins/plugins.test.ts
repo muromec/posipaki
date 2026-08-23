@@ -683,11 +683,7 @@ describe("onError: plugins + actor ordering", () => {
     await proc.wait();
 
     // chainHook: plug2 fires first, then plug1, then actor-hook
-    expect(errors).toEqual([
-      "plug2:KABOOM",
-      "plug1:KABOOM",
-      "actor-hook:KABOOM",
-    ]);
+    expect(errors).toEqual(["plug2:KABOOM", "plug1:KABOOM", "actor-hook:KABOOM"]);
   });
 
   it("error in first onError does not prevent second from firing", async () => {

@@ -1,12 +1,12 @@
 # posipaki: Actor Tree Naming
 
-> **Status**: Draft proposal.  No code written yet.
+> **Status**: Draft proposal. No code written yet.
 
 ## Summary
 
-Actors declare their own name at definition time.  When a parent forks a
+Actors declare their own name at definition time. When a parent forks a
 child, the child's name is automatically prefixed to form a tree path:
-`parent:child:grandchild`.  The parent can override for disambiguation, but
+`parent:child:grandchild`. The parent can override for disambiguation, but
 the default is the child's own declaration.
 
 ```ts
@@ -28,7 +28,7 @@ ctx.fork(rawGen, 'worker-3')(args);  // child name: "openai:worker-3"
 ## Motivation
 
 Today the parent dictates the child's name: `ctx.fork(fn, 'connector')`.
-The child has no say.  This is backwards — the child knows itself best.
+The child has no say. This is backwards — the child knows itself best.
 It's the child's `defineActor` definition that declares what kind of thing
 it is; the parent only knows what role it's playing in the parent's own
 context (if that).
@@ -72,7 +72,7 @@ type ActorConfig<...> = {
 Once resolved, tree prefixing is automatic: `${parentName}:${resolvedName}`.
 
 Root actors (spawned via `spawnAsync()` or `actor.spawn()`) get their name
-from the caller — no prefix, no tree semantics.  They are the root.
+from the caller — no prefix, no tree semantics. They are the root.
 
 ### `ctx.fork()` signature change
 
@@ -85,19 +85,19 @@ ctx.fork(fn, pname?): (args: Args) => AsyncProcess<...>
 ```
 
 Backward compatible: all existing `ctx.fork(fn, 'name')` calls continue
-to work unchanged.  The `name` field on the definition is only used when
+to work unchanged. The `name` field on the definition is only used when
 `pname` is omitted.
 
 ### Naming is cheap
 
 The name is resolved once at fork time and stored as `proc.pname` on the
-`AsyncProcess` instance.  No runtime lookup, no registry, no shared state.
+`AsyncProcess` instance. No runtime lookup, no registry, no shared state.
 
 Plugins and hooks see the fully-qualified name via `ctx.pname`:
 
 ```ts
 ctx.onMessage((msg) => {
-  console.log(ctx.pname);  // "openai:connector"
+  console.log(ctx.pname); // "openai:connector"
 });
 ```
 
@@ -151,7 +151,7 @@ onStart(args) {
 
 ```ts
 // Raw generators don't have a name field, so explicit pname is required:
-ctx.fork(someRawGen, 'my-worker')(args);  // "openai:my-worker"
+ctx.fork(someRawGen, "my-worker")(args); // "openai:my-worker"
 ```
 
 ## Checklist

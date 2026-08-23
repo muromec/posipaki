@@ -5,7 +5,7 @@
 ## Summary
 
 Replace the special-cased parent↔child wiring in `fork` with a generic
-**emit → subscribe** model, exposed as a `link` primitive on the *receiver*:
+**emit → subscribe** model, exposed as a `link` primitive on the _receiver_:
 
 ```ts
 parent.link(child);
@@ -16,8 +16,8 @@ child.subscribe("message", (event) => parent.send(event, child.from));
 `subscribe` is generalized into a discriminated, typed API:
 
 ```ts
-proc.subscribe("message", MsgCallback<OutMsg>);   // emitted messages
-proc.subscribe("state",   StateCallback<State>);  // reactive state
+proc.subscribe("message", MsgCallback<OutMsg>); // emitted messages
+proc.subscribe("state", StateCallback<State>); // reactive state
 ```
 
 - `fork` becomes "spawn a child, then `this.link(child)`".
@@ -48,12 +48,12 @@ This is wrong on three counts:
 
 - **`subscribe` becomes discriminated** by channel:
   ```ts
-  proc.subscribe("message", MsgCallback<OutMsg>);   // fires on emit
-  proc.subscribe("state",   StateCallback<State>);  // fires on state change
+  proc.subscribe("message", MsgCallback<OutMsg>); // fires on emit
+  proc.subscribe("state", StateCallback<State>); // fires on state change
   ```
   The existing `subscribe(f)` (a state ping) stays as a **deprecated**
   shortcut for `subscribe("state", f)`.
-- **`link(child)`** subscribes the receiver to the child's *message* channel,
+- **`link(child)`** subscribes the receiver to the child's _message_ channel,
   preserving sender provenance through the existing `send(msg, from)`:
   ```ts
   link(child) {
@@ -84,9 +84,9 @@ subscription, stamped with the orphan's identity.
   is the emit point — it stamps `[msg, selfCtx]` and fires message subscribers.
 - **`fromChild` / `toParent` migration.** The EXIT filtering (remove child from
   `children`, collect orphans) lives in `adopt`'s subscriber, `pvtChildMessage`.
-  `adopt` is the *ownership* primitive (subscribe + children + EXIT cleanup);
+  `adopt` is the _ownership_ primitive (subscribe + children + EXIT cleanup);
   `subscribe("message")` is a pure tap with no side effects.
-- **`monitor`.** A separate primitive that *only* forwards messages into the
+- **`monitor`.** A separate primitive that _only_ forwards messages into the
   incoming queue — no ownership, no EXIT filtering.
 - **Unsubscribe on exit.** An exiting parent unsubscribes from all its
   `adopt`/`monitor` subscriptions (tracked in `pvtOutgoingSubscriptions`).
@@ -96,8 +96,8 @@ subscription, stamped with the orphan's identity.
 
 ## Known limitation (next phase)
 
-A message a child emits *while its parent is processing STOP* can be lost:
+A message a child emits _while its parent is processing STOP_ can be lost:
 the parent exits (unsubscribing) before the message is drained, and the child —
-if it refuses to stop — is handed to the grandparent as an orphan *without*
+if it refuses to stop — is handed to the grandparent as an orphan _without_
 that in-flight message. This adoption race is tracked for the orphan-policy
 phase.

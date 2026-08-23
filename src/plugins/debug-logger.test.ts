@@ -6,7 +6,7 @@ import type { Message } from "../types.js";
 import { debugLogger, defaultMsgFilter } from "./debug-logger.js";
 import type { Logger } from "./debug-logger.js";
 import assert from "assert";
-import { nextState } from '../testing/tick-utils.js';
+import { nextState } from "../testing/tick-utils.js";
 
 // ── messages ─────────────────────────────────────────────────────────────
 
@@ -118,15 +118,13 @@ describe("debugLogger", () => {
       await nextState(proc);
       await proc.stop();
 
-      const childExits = calls.filter(
-        (c) => c.kind === "lifecycle" && c.event === "child-exited",
-      );
+      const childExits = calls.filter((c) => c.kind === "lifecycle" && c.event === "child-exited");
       expect(childExits.length).toBeGreaterThan(0);
       expect(childExits[0].payload).toBe("parent:child");
     });
 
     it("registers hooks regardless of the DEBUG env var", async () => {
-      process.env.DEBUG = '';
+      process.env.DEBUG = "";
       const Actor = makeActor("no-debug-gate", { factory: recordFactory(calls) });
       await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 1 });
       expect(calls.filter((c) => c.kind === "lifecycle").length).toBeGreaterThan(0);
@@ -146,8 +144,7 @@ describe("debugLogger", () => {
     it("logs the shrunk payload when the filter shrinks", async () => {
       const Actor = makeActor("filter-shrink", {
         factory: recordFactory(calls),
-        msgFilter: (msg) =>
-          msg.type === "POKE" ? ({ ...msg, value: 0 } as PokeMsg) : msg,
+        msgFilter: (msg) => (msg.type === "POKE" ? ({ ...msg, value: 0 } as PokeMsg) : msg),
       });
       await sendAndStop(await Actor.spawn({}), { type: "POKE", value: 99 });
       const logged = calls.find((c) => c.kind === "msg" && c.msgType === "POKE");
@@ -193,7 +190,10 @@ describe("debugLogger", () => {
       const Actor = makeActor("default-shrink", { factory: recordFactory(calls) });
       const proc = await Actor.spawn({});
       await proc.ready();
-      proc.send({ type: "NOP", history: Array.from({ length: 50 }, () => "x") } as unknown as NopMsg);
+      proc.send({
+        type: "NOP",
+        history: Array.from({ length: 50 }, () => "x"),
+      } as unknown as NopMsg);
       await proc.stop();
       const logged = calls.find((c) => c.kind === "msg" && c.msgType === "NOP");
       expect(logged).toBeDefined();

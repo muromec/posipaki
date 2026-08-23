@@ -7,11 +7,11 @@ import type { ProcessCtx, Message, WithSender, AsyncProcessFn } from "./index";
 import { type ExitMessage, withTimeout } from "./util";
 
 import type { PokeM, CountStore } from "./test-helpers.js";
-import { nextMessage, nextState } from './testing';
+import { nextMessage, nextState } from "./testing";
 
 vi.mocked = vi.mocked || ((v) => v);
-vi.mock('./util.js', async (importOriginal) => {
-  let actual = {}
+vi.mock("./util.js", async (importOriginal) => {
+  let actual = {};
   if (importOriginal) {
     actual = await importOriginal();
   }
@@ -20,7 +20,7 @@ vi.mock('./util.js', async (importOriginal) => {
 });
 
 function withTimeoutMiss() {
-  return vi.mocked(withTimeout).mockRejectedValueOnce(new Error('Timeout:stop'));
+  return vi.mocked(withTimeout).mockRejectedValueOnce(new Error("Timeout:stop"));
 }
 function withTimeoutHit() {
   return vi.mocked(withTimeout).mockImplementation((p) => p);
@@ -41,9 +41,7 @@ describe("AsyncProcess", () => {
   });
 
   it("should process messages via runDispatchAsync and update state", async () => {
-    const fn = async function* (
-      { pname }: ProcessCtx<null, CountStore, PokeM, Message>,
-    ) {
+    const fn = async function* ({ pname }: ProcessCtx<null, CountStore, PokeM, Message>) {
       const state: CountStore = { count: 0 };
       yield state;
 
@@ -65,9 +63,7 @@ describe("AsyncProcess", () => {
   });
 
   it("should wait for an async timer inside a reducer", async () => {
-    const fn = async function* (
-      { pname }: ProcessCtx<null, { fired: boolean }, PokeM, Message>,
-    ) {
+    const fn = async function* ({ pname }: ProcessCtx<null, { fired: boolean }, PokeM, Message>) {
       const state = { fired: false };
       yield state;
 
@@ -91,9 +87,7 @@ describe("AsyncProcess", () => {
   it("should notify subscribers after an async tick", async () => {
     const callback = vi.fn();
 
-    const fn = async function* (
-      { pname }: ProcessCtx<null, CountStore, PokeM, Message>,
-    ) {
+    const fn = async function* ({ pname }: ProcessCtx<null, CountStore, PokeM, Message>) {
       const state: CountStore = { count: 0 };
       yield state;
 
@@ -119,26 +113,20 @@ describe("AsyncProcess", () => {
   it("should send EXIT to parent on completion", async () => {
     const bus = vi.fn();
 
-    const fn = async function* (
-      _ctx: ProcessCtx<null, null, Message, ExitMessage | Message>,
-    ) {
+    const fn = async function* (_ctx: ProcessCtx<null, null, Message, ExitMessage | Message>) {
       yield null;
     };
 
     const proc = spawnAsync(fn, "exiter", bus)(null);
     await proc.wait();
 
-    expect(bus).toHaveBeenCalledWith(
-      expect.objectContaining({ type: "EXIT" }), expect.any(Object),
-    );
+    expect(bus).toHaveBeenCalledWith(expect.objectContaining({ type: "EXIT" }), expect.any(Object));
   });
 
   // ---- asyncify: wrap a sync generator for async spawn ----------------------
 
   it("should run a sync generator via asyncify", async () => {
-    function* syncFn(
-      { pname }: ProcessCtx<unknown, { count: number }, PokeM, Message>,
-    ) {
+    function* syncFn({ pname }: ProcessCtx<unknown, { count: number }, PokeM, Message>) {
       const state = { count: 0 };
       yield state;
       yield* runDispatch(
@@ -160,9 +148,7 @@ describe("AsyncProcess", () => {
   });
 
   it("should run a sync generator via asyncify with a single message", async () => {
-    function* syncFn(
-      { pname }: ProcessCtx<unknown, { count: number }, PokeM, Message>,
-    ) {
+    function* syncFn({ pname }: ProcessCtx<unknown, { count: number }, PokeM, Message>) {
       const state = { count: 0 };
       yield state;
       yield* runDispatch(
@@ -185,9 +171,7 @@ describe("AsyncProcess", () => {
   // ---- pause / resume -------------------------------------------------------
 
   it("should buffer messages while paused and process them on resume", async () => {
-    const fn = async function* (
-      { pname }: ProcessCtx<null, { hits: number }, PokeM, Message>,
-    ) {
+    const fn = async function* ({ pname }: ProcessCtx<null, { hits: number }, PokeM, Message>) {
       const state = { hits: 0 };
       yield state;
 
@@ -222,7 +206,6 @@ describe("AsyncProcess", () => {
     expect(await nextState(proc1)).toEqual({ hits: 2 });
     await proc1.wait();
     await proc2.wait();
-
   });
 
   // ---- concurrency guard ----------------------------------------------------
@@ -231,9 +214,7 @@ describe("AsyncProcess", () => {
     let concurrent = 0;
     let maxConcurrent = 0;
 
-    const fn = async function* (
-      { pname }: ProcessCtx<null, { count: number }, PokeM, Message>,
-    ) {
+    const fn = async function* ({ pname }: ProcessCtx<null, { count: number }, PokeM, Message>) {
       const state = { count: 0 };
       yield state;
 
@@ -263,9 +244,7 @@ describe("AsyncProcess", () => {
   // ---- error propagation ----------------------------------------------------
 
   it("should propagate errors from an async reducer to wait()", async () => {
-    const fn = async function* (
-      { pname }: ProcessCtx<null, null, PokeM, Message>,
-    ) {
+    const fn = async function* ({ pname }: ProcessCtx<null, null, PokeM, Message>) {
       yield null;
       yield* runDispatchAsync<WithSender<Message>>(pname, async () => {
         throw new Error("boom");
@@ -281,14 +260,9 @@ describe("AsyncProcess", () => {
   // ---- message ordering with mixed delays ----------------------------------
 
   it("should process messages in order even when some have delays", async () => {
-    type OrderMsg =
-      | { type: "START" }
-      | { type: "LONG" }
-      | { type: "SHORT" };
+    type OrderMsg = { type: "START" } | { type: "LONG" } | { type: "SHORT" };
 
-    const fn = async function* (
-      { pname }: ProcessCtx<null, { trace: string }, OrderMsg, Message>,
-    ) {
+    const fn = async function* ({ pname }: ProcessCtx<null, { trace: string }, OrderMsg, Message>) {
       const state = { trace: "" };
       yield state;
 
@@ -376,7 +350,9 @@ describe("message channel & linking", () => {
     const child = spawnAsync(childFn, "child")(null);
     await child.ready();
 
-    const parentFn: AsyncProcessFn<null, CountStore, PongM | Message, Message> = async function* (ctx) {
+    const parentFn: AsyncProcessFn<null, CountStore, PongM | Message, Message> = async function* (
+      ctx,
+    ) {
       const state = { count: 0 };
       yield state;
       yield* runDispatchAsync<WithSender<Message | PongM>>(
@@ -403,7 +379,9 @@ describe("message channel & linking", () => {
     const child = spawnAsync(childFn, "child")(null);
     await child.ready();
 
-    const parentFn: AsyncProcessFn<null, CountStore, PongM | Message, Message> = async function* (ctx) {
+    const parentFn: AsyncProcessFn<null, CountStore, PongM | Message, Message> = async function* (
+      ctx,
+    ) {
       const state = { count: 0 };
       yield state;
       ctx.adopt(child);
@@ -432,10 +410,7 @@ describe("message channel & linking", () => {
 
     const unsubSpy = vi.fn();
     const realSubscribe = child.subscribe.bind(child);
-    vi.spyOn(child, "subscribe").mockImplementation(((
-      channel: string,
-      cb: unknown,
-    ) => {
+    vi.spyOn(child, "subscribe").mockImplementation(((channel: string, cb: unknown) => {
       if (channel === "message") return unsubSpy;
       return realSubscribe(channel as "state", cb as () => void);
     }) as never);
@@ -483,9 +458,7 @@ describe("forceStop", () => {
     await proc.ready();
 
     proc.forceStop();
-    expect(() =>
-      proc.send({ type: "POKE" }),
-    ).not.toThrow();
+    expect(() => proc.send({ type: "POKE" })).not.toThrow();
     await proc.wait();
   });
 
@@ -505,10 +478,7 @@ describe("forceStop", () => {
     // monitor() captures our unsubSpy as its subscription handle.
     const unsubSpy = vi.fn();
     const realSubscribe = child.subscribe.bind(child);
-    vi.spyOn(child, "subscribe").mockImplementation(((
-      channel: string,
-      cb: unknown,
-    ) => {
+    vi.spyOn(child, "subscribe").mockImplementation(((channel: string, cb: unknown) => {
       if (channel === "message") return unsubSpy;
       return realSubscribe(channel as "state", cb as () => void);
     }) as never);

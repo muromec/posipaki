@@ -1,6 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "../src/index.js";
-import { nextMessage, nextState } from './testing/';
+import { nextMessage, nextState } from "./testing/";
 
 type CounterIn = { type: "POKE" };
 type CounterOut = { type: "DONE"; count: number };
@@ -14,7 +14,7 @@ describe("setup()", () => {
       setup() {
         return { count: 42 };
       },
-      handlers: { },
+      handlers: {},
     });
     const proc = await Actor.spawn({});
     await proc.ready();
@@ -29,7 +29,7 @@ describe("setup()", () => {
         await new Promise((r) => setTimeout(r, 10));
         return { count: 99 };
       },
-      handlers: { },
+      handlers: {},
     });
     const proc = await Actor.spawn({});
     await proc.ready();
@@ -43,7 +43,7 @@ describe("setup()", () => {
       setup(args: { start: number }) {
         return { count: args.start };
       },
-      handlers: { },
+      handlers: {},
     });
     const proc = await Actor.spawn({ start: 7 });
     await proc.ready();
@@ -55,7 +55,7 @@ describe("setup()", () => {
     const Child = defineActor({
       name: "child",
       setup: () => ({ count: 0 }),
-      handlers: { },
+      handlers: {},
     });
     const Parent = defineActor({
       name: "parent",
@@ -63,7 +63,7 @@ describe("setup()", () => {
         const child = await this.fork(Child, "kid", {});
         return { childPname: child.pname };
       },
-      handlers: { },
+      handlers: {},
     });
     const proc = await Parent.spawn({});
     await proc.ready();
@@ -85,7 +85,7 @@ describe("setup()", () => {
       handlers: { POKE() {} },
     });
     const proc = await Actor.spawn({});
-    expect(await nextMessage(proc)).toMatchObject({ type: 'READY'});
+    expect(await nextMessage(proc)).toMatchObject({ type: "READY" });
     // Emits during setup go to toParent before ready()
     await proc.ready();
     expect(proc.state).toEqual({ isOk: true });
@@ -125,7 +125,7 @@ describe("afterStart()", () => {
       afterStart() {
         this.state.events.push("after");
       },
-      handlers: { },
+      handlers: {},
     });
     const proc = await Actor.spawn({});
     await proc.ready();
@@ -143,7 +143,7 @@ describe("afterStart()", () => {
       afterStart() {
         this.state.events.push("after");
       },
-      handlers: { },
+      handlers: {},
     });
     const proc = await Actor.spawn({});
     await proc.ready();
@@ -160,7 +160,7 @@ describe("afterStart()", () => {
         await new Promise((r) => setTimeout(r, 10));
         this.state.events.push("async-after");
       },
-      handlers: { },
+      handlers: {},
     });
     const proc = await Actor.spawn({});
     await proc.ready();

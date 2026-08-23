@@ -1,12 +1,12 @@
 # posipaki: Actor Plugin System
 
-> **Status**: In design.  Decisions being made; not yet implemented.
+> **Status**: In design. Decisions being made; not yet implemented.
 
 ## Summary
 
 Plugins are **config transforms** — functions `(config) => config` that modify an
-actor's `ActorConfig` before `setup` runs.  They use `mergeConfigs` / `chainHook`
-to add hooks without stepping on each other.  Plugins **inherit along the actor
+actor's `ActorConfig` before `setup` runs. They use `mergeConfigs` / `chainHook`
+to add hooks without stepping on each other. Plugins **inherit along the actor
 tree** by default.
 
 ```ts
@@ -25,28 +25,28 @@ const debugLogger: ActorPlugin = (cfg) =>
 
 ### 1. Plugin identity is the function name
 
-Deduplication uses `Function.name`.  Anonymous plugins (arrow functions, inline
+Deduplication uses `Function.name`. Anonymous plugins (arrow functions, inline
 lambdas) get `console.warn("plugin has no name, dedup won't work")`.
 
 ### 2. Default inheritance: append (was: replace)
 
-| Config | Behaviour |
-|---|---|
-| `plugins: undefined` | Inherit all parent plugins |
-| `plugins: addPlugins(p)` | `[...parentPlugins, ...mine]` — the default |
-| `plugins: replacePlugins(p)` | `[...mine]` — opt-in to replace |
-| `plugins: (parents) => [...]` | Custom transform |
+| Config                        | Behaviour                                   |
+| ----------------------------- | ------------------------------------------- |
+| `plugins: undefined`          | Inherit all parent plugins                  |
+| `plugins: addPlugins(p)`      | `[...parentPlugins, ...mine]` — the default |
+| `plugins: replacePlugins(p)`  | `[...mine]` — opt-in to replace             |
+| `plugins: (parents) => [...]` | Custom transform                            |
 
 Two explicit helpers make intent clear:
 
 ```ts
-import { addPlugins, replacePlugins } from 'posipaki';
+import { addPlugins, replacePlugins } from "posipaki";
 
 // Append to parent plugins (default)
-plugins: addPlugins(myPlugin)
+plugins: addPlugins(myPlugin);
 
-// Replace parent plugins entirely  
-plugins: replacePlugins(myPlugin)
+// Replace parent plugins entirely
+plugins: replacePlugins(myPlugin);
 ```
 
 ### 3. `addPlugins` in spawn opt
@@ -54,7 +54,7 @@ plugins: replacePlugins(myPlugin)
 All three spawn entry points gain `addPlugins` in their opts, always appended
 after config resolution and deduplicated:
 
-```ts
+````ts
 // Standalone spawn
 Actor.spawn(args, { name?, toParent?, addPlugins? })
 
@@ -80,7 +80,7 @@ Actor.spawn(args, { addPlugins: [auditLog, rateLimiter] })
 const Child = defineActor({
   plugins: replacePlugins(myPlugin),  // strips parent plugins, keeps addPlugins
 })
-```
+````
 
 Resolution order: `resolvePlugins(config.plugins, parentPlugins)` → `+ opts.addPlugins` → dedup.
 Children receive `parentPlugins = resolved(config.plugins, parentPlugins)` and
@@ -99,7 +99,7 @@ spawnAsChild(ctx, args, opts?, parentPlugins?)
 spawnAsChild(ctx, args, opts?: { name?, addPlugins? })
 ```
 
-`self.fork()` currently passes parent plugins as the 4th param.  After this
+`self.fork()` currently passes parent plugins as the 4th param. After this
 change, `self.fork()` passes them via `addPlugins` in opts, making the
 mechanism the same for all callers.
 
@@ -116,10 +116,10 @@ When `this.fork(ChildActor, args, opts)` runs:
 ## Motivation (unchanged)
 
 Lifecycle hooks give actors fire-and-forget observability — but every actor that
-wants logging still writes an `onMessage` block.  That's better than per-handler
+wants logging still writes an `onMessage` block. That's better than per-handler
 logging but still repetitive across actors.
 
-Worse: when an actor forks a child, the parent's hooks don't follow.  A
+Worse: when an actor forks a child, the parent's hooks don't follow. A
 `debugLogger` on the root `reflector` actor has no visibility into the
 `connector` child.
 
@@ -127,7 +127,7 @@ Plugins solve both:
 
 - **Packaging**: a plugin bundles hooks into a single importable transform.
 - **Inheritance**: when a parent forks a child, the child automatically
-  inherits the parent's plugin chain.  Observability follows the tree.
+  inherits the parent's plugin chain. Observability follows the tree.
 - **Composition**: `plugins: addPlugins(debugLogger, rbac({ tools: [...] }))`
   without either plugin knowing about the other.
 

@@ -76,12 +76,7 @@ function* xfetch<Type>(
     pname,
     toParent,
     sendSelf,
-  }: ProcessCtx<
-    FetchArgs<Type>,
-    FetchState<Type>,
-    FetchMessage<Type>,
-    FetchMessage<Type>
-  >,
+  }: ProcessCtx<FetchArgs<Type>, FetchState<Type>, FetchMessage<Type>, FetchMessage<Type>>,
   { method = "GET", url, body, headers: callerHeaders }: FetchArgs<Type>,
 ): Generator<FetchState<Type> | null, void, WithSender<FetchMessage<Type>>> {
   const state: FetchState<Type> = {
@@ -100,10 +95,9 @@ function* xfetch<Type>(
   (async function doRequest() {
     try {
       toSelf({ type: "LOADING" });
-      const serializedBody =
-        method === "GET" ? undefined : JSON.stringify(body);
+      const serializedBody = method === "GET" ? undefined : JSON.stringify(body);
       const headers = new Headers(callerHeaders ?? {});
-      if (serializedBody && !headers.get('content-type')) {
+      if (serializedBody && !headers.get("content-type")) {
         headers.set("content-type", "application/json");
       }
       const res: Response = await fetch(url.href, {
@@ -115,7 +109,7 @@ function* xfetch<Type>(
       const status = res.status;
       const responseHeaders = headersToRecord(res.headers);
       if (isJsonHelper(res)) {
-        const data = await res.json() as Type;
+        const data = (await res.json()) as Type;
         toSelf({ type: "OK", data, status, responseHeaders });
       } else {
         const text = await res.text();
@@ -131,8 +125,7 @@ function* xfetch<Type>(
     }
   })();
 
-  const isDone = (): boolean =>
-    !(state.code === "pending" || state.code === "loading");
+  const isDone = (): boolean => !(state.code === "pending" || state.code === "loading");
 
   yield* runDispatch<WithSender<FetchMessage<Type>>>(
     pname,

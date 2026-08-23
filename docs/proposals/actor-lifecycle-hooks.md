@@ -31,24 +31,24 @@ const MyActor = defineActor({
 });
 ```
 
-Every hook is optional.  Every hook has access to `this` (the actor
+Every hook is optional. Every hook has access to `this` (the actor
 context: `this.state`, `this.log`, `this.emit`, `this.fork`, …).
 
 ## Motivation
 
 The current `defineActor` already has lifecycle methods: `onStart(args)`,
-`onStopRequested()`, `onEnd(reason)`, `onChildExit(name, msg)`.  But these
-are **actor methods** — they run one implementation per actor.  There's no
+`onStopRequested()`, `onEnd(reason)`, `onChildExit(name, msg)`. But these
+are **actor methods** — they run one implementation per actor. There's no
 way to register **multiple** callbacks for the same lifecycle event, and no
 way to hook into the **message dispatch path** (`onMessage` / `onEmit`).
 
 This makes cross-cutting concerns awkward:
 
 - **Logging**: every actor manually creates a logger in `initialState` and
-  calls `this.state.log.debug(...)` in every handler.  There's no "log every
+  calls `this.state.log.debug(...)` in every handler. There's no "log every
   message" fire-and-forget.
 - **RBAC**: gating tool access requires checking permissions inside each
-  handler.  There's no "check before dispatch" hook.
+  handler. There's no "check before dispatch" hook.
 - **Rate limiting**: counting calls requires wrapping every handler.
 - **Child visibility**: when a child forks a grandchild, the root actor has
   no way to observe the grandchild's lifecycle.
@@ -59,16 +59,16 @@ requiring a plugin system.
 
 ## Design principles
 
-1. **Hooks are additive.**  Multiple callbacks can register for the same
-   hook (e.g. two `onMessage` callbacks).  They fire in registration order.
-2. **Hooks are opt-in.**  An actor with no hooks runs exactly as before.
+1. **Hooks are additive.** Multiple callbacks can register for the same
+   hook (e.g. two `onMessage` callbacks). They fire in registration order.
+2. **Hooks are opt-in.** An actor with no hooks runs exactly as before.
    Zero overhead, zero API changes for existing code.
 3. **Hooks live on `ProcessCtx` (low-level) and on `defineActor` config
-   (high-level).**  The same mechanism serves both APIs.
-4. **`onMessage` can short-circuit.**  A hook can return `stopPropagation()`
+   (high-level).** The same mechanism serves both APIs.
+4. **`onMessage` can short-circuit.** A hook can return `stopPropagation()`
    to prevent subsequent hooks AND the named handler from running.
 5. **What a hook can do must also be possible in `onStart`/`initialState`.**
-   Hooks are sugar, not a separate capability set.  An actor that doesn't
+   Hooks are sugar, not a separate capability set. An actor that doesn't
    use hooks can achieve the same effect by wrapping its handlers.
 
 ## API
@@ -109,13 +109,17 @@ async function* myActor(ctx: ProcessCtx<Args, State, MyIn, MyOut>, args: Args) {
   });
 
   ctx.onError((err) => {
-    console.error('actor error:', err);
+    console.error("actor error:", err);
   });
 
-  yield* runDispatchAsync(ctx.pname, async (stamped) => {
-    const [msg, sender] = stamped;
-    // ... dispatch ...
-  }, () => done);
+  yield* runDispatchAsync(
+    ctx.pname,
+    async (stamped) => {
+      const [msg, sender] = stamped;
+      // ... dispatch ...
+    },
+    () => done,
+  );
 }
 ```
 
@@ -142,8 +146,8 @@ Key: each hook receives `this` bound to the actor context — `this.state`,
 `this.log`, `this.emit`, `this.fork`, etc. are all available.
 
 Note: the existing `onStart(args)` method signature stays unchanged (it
-receives `args`, not `state`).  The `hooks.onStart(state)` is a separate
-thing — it fires *after* the actor's `onStart(args)` method and the initial
+receives `args`, not `state`). The `hooks.onStart(state)` is a separate
+thing — it fires _after_ the actor's `onStart(args)` method and the initial
 state yield, giving hooks access to the fully initialized state.
 
 ### stopPropagation
@@ -151,7 +155,7 @@ state yield, giving hooks access to the fully initialized state.
 ```ts
 /** Sentinel returned by onMessage hooks to stop further dispatch.
  *  Prevents subsequent hooks AND the named handler from running. */
-export const STOP_SENTINEL = Symbol('posipaki.stopPropagation');
+export const STOP_SENTINEL = Symbol("posipaki.stopPropagation");
 
 /** Return this from an onMessage hook to short-circuit dispatch. */
 export const stopPropagation = (): typeof STOP_SENTINEL => STOP_SENTINEL;
@@ -172,12 +176,12 @@ hooks: {
 
 Why a return-value sentinel and not a ctx flag:
 
-- **Explicit**: you MUST `return stopPropagation()`.  No silent failures
+- **Explicit**: you MUST `return stopPropagation()`. No silent failures
   from forgetting to call `ctx.stopPropagation()`.
 - **No ctx mutation**: the sentinel is a value, not a state change.
   No risk of one hook's stop leaking into another.
 - **Async-safe**: dispatch loop `await`s the hook, checks the resolved
-  value.  Works identically for sync and async hooks.
+  value. Works identically for sync and async hooks.
 - **Zero cost**: one object-identity check (`=== STOP_SENTINEL`) after
   each hook.
 
@@ -209,17 +213,17 @@ When an actor forks a child, the child's name is automatically prefixed:
 
 ```ts
 // In actor "openai":
-ctx.fork(connector, 'pool');     // child name: "openai:pool"
+ctx.fork(connector, "pool"); // child name: "openai:pool"
 // In pool:
-ctx.fork(toolCaller, 'tools');   // grandchild name: "openai:pool:tools"
+ctx.fork(toolCaller, "tools"); // grandchild name: "openai:pool:tools"
 ```
 
-The prefix is joined with `:`.  This is automatic — no manual naming.
+The prefix is joined with `:`. This is automatic — no manual naming.
 The root actor (spawned, not forked) has its name set explicitly at
 spawn time.
 
 Implementation: `AsyncProcess.fork()` detects the parent's `pname` and
-builds `${parentName}:${childName}`.  The low-level `spawnAsync()` still
+builds `${parentName}:${childName}`. The low-level `spawnAsync()` still
 accepts an absolute name, preserving backward compatibility.
 
 ## Error contract
@@ -244,7 +248,7 @@ All existing `defineActor` uses continue unchanged:
 - `onEnd(reason)` method → unchanged (fires before `hooks.onEnd`)
 - `onChildExit(name)` method → unchanged (fires before `hooks.onChildExit`)
 
-New hooks are **additive**.  An actor that adds `hooks.onMessage` for
+New hooks are **additive**. An actor that adds `hooks.onMessage` for
 logging doesn't need to change anything else.
 
 ## Checklist

@@ -57,12 +57,15 @@ if (serializedBody) {
 ### Caller example
 
 ```ts
-ctx.forkSync(xfetch, "api-call")({
+ctx.forkSync(
+  xfetch,
+  "api-call",
+)({
   method: "POST",
   url: new URL("https://api.example.com/v1/thing"),
   body: { key: "value" },
   headers: {
-    "Authorization": "Bearer <token>",
+    Authorization: "Bearer <token>",
     "User-Agent": "my-app/1.0",
   },
 });
@@ -72,7 +75,7 @@ ctx.forkSync(xfetch, "api-call")({
 
 Fully backward-compatible. `headers` is optional — omitting it produces
 identical behaviour to the previous implementation. Verified by test:
-*"omitting headers behaves identically to current behaviour"*.
+_"omitting headers behaves identically to current behaviour"_.
 
 ## Resolution of open questions
 
