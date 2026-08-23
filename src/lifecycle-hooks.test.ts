@@ -4,7 +4,7 @@
 // onStart, beforeEnd, onStopRequested, and stopPropagation().
 
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import type { ActorPlugin } from './actor-type.js';
+import type { ActorPlugin } from './actor-types.js';
 import { defineActor, defineMessages } from "./define-actor.js";
 import { stopPropagation, mergeConfigs, type HookResult } from "./hooks.js";
 import { withTimeout } from './util.js';
@@ -825,7 +825,7 @@ describe("orphan handoff (lossless adopt)", () => {
       },
       handlers: {
         HANDOFF(msg) {
-          received.push('never');
+          received.push(-111 as never);
         },
       },
     });
@@ -1137,7 +1137,7 @@ describe("orphan policy: buffer drop (unparent vs leave)", () => {
     withTimeoutMiss();
 
     const gg = await runTree("unparent");
-    expect(gg.state.pong).toBe(false);
+    expect(gg.state!.pong).toBe(false);
     await gg.stop();
   });
 
@@ -1148,7 +1148,7 @@ describe("orphan policy: buffer drop (unparent vs leave)", () => {
     withTimeoutMiss();
 
     const gg = await runTree("leave");
-    expect(gg.state.pong).toBe(true);
+    expect(gg.state!.pong).toBe(true);
     await gg.stop();
   });
 });

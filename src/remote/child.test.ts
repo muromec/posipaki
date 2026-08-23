@@ -9,6 +9,7 @@ import { unlink, writeFile } from "node:fs/promises";
 import { FifoUtf8NlineTransport } from "./fifo.js";
 import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
 import { makeWaiter } from "../util.js";
+import type { Message } from "../types.js";
 
 const cleanupPaths: string[] = [];
 
@@ -73,9 +74,9 @@ describe("runChild integration", () => {
     expect((stateMsg.$state as Record<string, unknown>).pings).toBe(0);
     host.removeHandler();
 
-    const messages: Message[] = [];
+    const messages: Record<string, unknown>[] = [];
     const exitWaiter = makeWaiter<{ code: number; state: unknown }>();
-    let messageWaiter = makeWaiter<null>();
+    let messageWaiter = makeWaiter<Record<string, unknown>[]>();
     let expectedMessageCount = 2;
 
     host.onMessage((line) => {
@@ -89,7 +90,7 @@ describe("runChild integration", () => {
         messageWaiter.resolve(messages);
 
         // wait for next 2
-        messageWaiter = makeWaiter<null>();
+        messageWaiter = makeWaiter<Record<string, unknown>[]>();
         expectedMessageCount += 2;
       }
     });

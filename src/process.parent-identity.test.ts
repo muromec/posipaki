@@ -4,8 +4,8 @@
 // RED phase — tests expected to fail until parent identity is implemented.
 
 import { describe, it, expect } from "vitest";
-import { spawnAsync, runDispatchAsync } from "./process.async.js";
-import type { ProcessCtx, Message, WithSender } from "./types.js";
+import{ spawnAsync, runDispatchAsync, type AsyncProcess } from "./process.async.js";
+import type { AsyncProcessFn, ProcessCtx, Message, WithSender, SenderInfo } from "./types.js";
 
 type PokeM = { type: "POKE" };
 type PongM = { type: "PONG" };
@@ -16,11 +16,29 @@ type SimpleState = {
   messages: string[],
 }
 
-
-async function* simple(
-  ctx: ProcessCtx<null, SimpleState, Message, Message>,
+async function* baseLoop(
+  ctx: ProcessCtx<null, unknown, Message, Message>,
 ) {
-  const messages = [];
+
+  let run = true;
+
+
+  yield* runDispatchAsync<[Message, SenderInfo]>(
+    ctx.pname,
+    async function exitOnly([msg, from]) {
+      if (msg.type === 'STOP') {
+        run = false;
+      }
+    },
+    () => !run
+  );
+  ctx.toParent({ type: 'EXIT'});
+}
+
+const simple : AsyncProcessFn<
+      null, SimpleState, Message, Message
+> = async function* simple(ctx, args) {
+  const messages : string[] = [];
   yield {
     parentId: ctx.parentId,
     parentName: ctx.parentName,
@@ -29,29 +47,30 @@ async function* simple(
 
   let run = true;
 
-
-  async function exitOnly([msg, from]) {
-    if (msg.type === 'STOP') {
-      run = false;
-    }
-    if (msg.type === 'POKE') {
-      messages.push(
-        (from.fromId === ctx.parentId)
-        ? 'from-parent'
-        : 'from-other'
-      );
-    }
-  }
-
-  yield* runDispatchAsync(ctx.pname, exitOnly, () => !run);
+  yield* runDispatchAsync(
+    ctx.pname, 
+    async function exitOnly([msg, from]) {
+      if (msg.type === 'STOP') {
+        run = false;
+      }
+      if (msg.type === 'POKE') {
+        messages.push(
+          (from.fromId === ctx.parentId)
+          ? 'from-parent'
+          : 'from-other'
+        );
+      }
+    },
+    () => !run
+  );
   ctx.toParent({ type: 'EXIT'});
 }
 
-async function* forking(
-  ctx: ProcessCtx<null, ParentInfo, PokeM, PongM>,
-) {
+const forking : AsyncProcessFn<
+      null, SimpleState, Message, Message
+> = async function* forking(ctx, args) {
   ctx.fork(simple, "child")(null);
-  yield* simple(ctx);
+  yield* simple(ctx, args);
 }
 
 
@@ -61,8 +80,8 @@ describe("parent identity on ProcessCtx", () => {
     await proc.ready();
 
     expect(proc.state).not.toBeNull();
-    expect(proc.state.parentId).toBeNull();
-    expect(proc.state.parentName).toBeNull();
+    expect(proc.state!.parentId).toBeNull();
+    expect(proc.state!.parentName).toBeNull();
 
     await proc.stop();
   });
@@ -72,25 +91,27 @@ describe("parent identity on ProcessCtx", () => {
     const proc = spawnAsync(forking, "parent")(null);
     await proc.ready();
 
-    const child = proc.children[0];
-    expect(child.state).not.toBeNull();
-    expect(child.state.parentId).toBe(proc.id);
-    expect(child.state.parentName).toBe("parent");
+    const childProc = proc.children[0] as unknown as AsyncProcess<null, SimpleState, Message, Message, {}>
+
+    expect(childProc.state).not.toBeNull();
+    expect(childProc.state!.parentId).toBe(proc.id);
+    expect(childProc.state!.parentName).toBe("parent");
   });
 
   it("child can identify parent messages via ctx.parentId", async () => {
-    async function* poking(
-      ctx: ProcessCtx<null, null, Message, Message>,
-    ) {
+    const poking : AsyncProcessFn<
+      null, SimpleState, Message, Message
+    > = async function* poking(ctx, args) {
       const c = ctx.fork(simple, "child")(null);
       c.send({ type: "POKE" } as PokeM, { fromName: ctx.pname, fromId: ctx.id });
-      yield* simple(ctx);
+      yield* simple(ctx, args);
     }
 
     const proc = spawnAsync(poking, "parent")(null);
     await proc.ready();
 
-    const { messages } = proc.children[0].state
+    const childProc = proc.children[0] as unknown as AsyncProcess<null, SimpleState, Message, Message, {}>
+    const { messages } = childProc.state!;
 
     await proc.stop();
 
@@ -105,19 +126,19 @@ describe("parent identity on ProcessCtx", () => {
       childName: string,
     }
 
-    async function* forkingId(
-      ctx: ProcessCtx<null, null, PokeM, PongM>,
-    ) {
+    const forkingId : AsyncProcessFn<
+      null, ChildInfo, Message, Message
+    > = async function* forkingId(ctx) {
       const c = ctx.fork(simple, "child")(null);
       yield { childId: c.id, childName: c.pname };
-      yield* simple(ctx);
+      yield* baseLoop(ctx);
     }
 
     const proc = spawnAsync(forkingId, "parent")(null);
     await proc.ready();
-    expect(proc.state.childId).toBeTruthy();
-    expect(proc.state.childId).toBe(proc.children[0].id);
-    expect(proc.state.childName).toBe('child');
+    expect(proc.state!.childId).toBeTruthy();
+    expect(proc.state!.childId).toBe(proc.children[0].id);
+    expect(proc.state!.childName).toBe('child');
 
   });
 });

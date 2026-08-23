@@ -34,11 +34,11 @@ describe("protocol encoding", () => {
   });
 
   it("encodes and decodes $msg", () => {
-    const line = encode("$msg", { type: "PING", fromName: "host", body: { count: 1 } });
+    const line = encode("$msg", { fromName: "host", body: { type: "PING", count: 1 } });
     const msg = decode(line);
     expect(isMsg(msg)).toBe(true);
     if (isMsg(msg)) {
-      expect(msg.$msg.type).toBe("PING");
+      expect(msg.$msg.body).toEqual({ type: "PING", count: 1});
       expect(msg.$msg.fromName).toBe("host");
     }
   });

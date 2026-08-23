@@ -102,17 +102,7 @@ export type ActorConfig<
   Methods extends MethodOptions,
   Handlers extends HandlerOptions<InMsg>,
   ReflectionMethods extends ReflectionOptions,
-> = ThisType<
-  ActorContext<
-    Args,
-    InternalState,
-    InMsg,
-    OutMsg,
-    Methods,
-    Handlers,
-    ReflectionMethods & ActorReflection
-  >
-> & {
+> = {
   /** Preferred process name.  Used by ctx.fork() when no explicit name is given. */
   name?: string;
   plugins?: ActorPlugin[] | PluginTransform;
@@ -140,6 +130,7 @@ export type ActorConfig<
       ReflectionMethods & ActorReflection
     >,
   ) => void | Promise<void>;
+
   setup?: (
     this: ActorContext<
       Args,
@@ -152,24 +143,121 @@ export type ActorConfig<
     >,
     args: Args,
   ) => Promise<InternalState> | InternalState;
-  afterStart?: () => void | Promise<void>;
-  onStopRequested?: () => HookResult | Promise<HookResult>;
-  beforeEnd?: (reason?: unknown) => HookResult | Promise<HookResult>;
-  afterEnd?: (reason?: unknown) => HookResult | Promise<HookResult>;
-  onError?: (error?: unknown) => HookResult | Promise<HookResult>;
+
+  afterStart?: (
+    this: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >
+  ) => void | Promise<void>;
+
+  onStopRequested?: (
+    this: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >
+  ) => HookResult | Promise<HookResult>;
+
+  beforeEnd?: (
+    this: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >,
+    reason?: unknown,
+  ) => HookResult | Promise<HookResult>;
+
+  afterEnd?: (
+    this: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >,
+    reason?: unknown,
+  ) => HookResult | Promise<HookResult>;
+
+  onError?: (
+    this: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >,
+    error?: unknown
+  ) => HookResult | Promise<HookResult>;
+
   onEmit?: (
+    this: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >,
     msg: OutMsg,
     sender: SenderInfo,
   ) => HookResult | Promise<HookResult>;
 
   onMessage?: (
+    this: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >,
     msg: InMsg,
     sender: SenderInfo,
   ) => HookResult | Promise<HookResult>;
 
-  onUnhandled?: (msg: Message, sender: SenderInfo) => void | Promise<void>;
+  onUnhandled?: (
+    this: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >,
+    msg: Message, sender: SenderInfo,
+  ) => void | Promise<void>;
 
   onChildExit?: (
+    this: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >,
     name: string,
     reason: ExitMessage,
   ) => HookResult | Promise<HookResult>;
@@ -180,6 +268,15 @@ export type ActorConfig<
    *  or `'leave'` (keep buffering, propagate up on my exit).  When no `onOrphan`
    *  is defined, the default is `'force-stop'`. */
   onOrphan?: (
+    this: ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers,
+      ReflectionMethods & ActorReflection
+    >,
     orphan: AnyProcess,
   ) => OrphanDecision | void | Promise<OrphanDecision | void>;
 

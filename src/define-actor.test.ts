@@ -31,7 +31,8 @@ import { nextState, nextMessage } from "./testing";
 type CounterIn = PokeM | { type: "STOP" } | { type: "PING"; count: number };
 type CountState = { count: number; max: number; name: string };
 type CounterArgs = { max: number };
-type CounterOut = { type: "DONE"; count: number } | Message;
+type DoneMessage = { type: "DONE"; count: number };
+type CounterOut =  DoneMessage | Message;
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Variant A (GREEN): normal async generator — ctx param carries the types
@@ -200,15 +201,16 @@ describe.each([
 describe('spawn with opts', () => {
   it('delivers emitted messages to toParent callback', async () => {
     const actor = defineActor({
+      outMessages: defineMessages<DoneMessage>(),
       setup: () => ({ sent: false }),
       handlers: {
         POKE() {
-          this.emit({ type: 'DONE', value: 1 });
+          this.emit({ type: 'DONE', count: 1 });
         },
       },
     });
 
-    const received: Message[] = [];
+    const received: DoneMessage[] = [];
     const proc = await actor.spawn({}, {
       toParent: (msg) => { received.push(msg); },
     });
@@ -219,7 +221,7 @@ describe('spawn with opts', () => {
 
     expect(received.length).toBeGreaterThanOrEqual(1);
     expect(received[0].type).toBe('DONE');
-    expect(received[0].value).toBe(1);
+    expect(received[0].count).toBe(1);
   });
 
   it('works without opts (backward compatible)', async () => {
@@ -235,6 +237,6 @@ describe('spawn with opts', () => {
     proc.send({ type: 'POKE' });
     await proc.stop();
 
-    expect((proc.state).x).toBe(1);
+    expect(proc.state!.x).toBe(1);
   });
 });

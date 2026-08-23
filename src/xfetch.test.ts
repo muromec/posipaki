@@ -8,9 +8,10 @@ import { nextState, nextMessage } from './testing/tick-utils.js';
 // bun shim
 vi.stubGlobal = vi.stubGlobal || (
   (name, value) => {
-    (globalThis as Record<string, unknown>)[name] = value;
+    (globalThis as Record<string | symbol, unknown>)[name] = value;
   }
 );
+vi.mocked = vi.mocked || ((v) => v);
 
 
 // ---- helpers ----------------------------------------------------------------
@@ -29,13 +30,13 @@ function mockResponse(
   } as Response;
 }
 
-let mockedFetch;
+let mockedFetch = vi.mocked(fetch);
 
-function withHangResponse(response) {
-  const waiter = makeWaiter();
+function withHangResponse(response: Response) {
+  const waiter = makeWaiter<Response>();
   mockedFetch = vi.spyOn(globalThis, 'fetch').mockImplementation(
     (url, options) => {
-      options.signal.addEventListener("abort", () => {
+      options?.signal?.addEventListener("abort", () => {
         waiter.reject(new DOMException("Aborted", "AbortError"))
       });
       return waiter.promise;
@@ -47,18 +48,14 @@ function withHangResponse(response) {
   };
 }
 
-function withResponse(response) {
+function withResponse(response: Response) {
   mockedFetch = vi.spyOn(globalThis, 'fetch').mockResolvedValueOnce(response);
   return mockedFetch;
 }
 
-function withError(err) {
+function withError(err : Error) {
   mockedFetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(err);
   return mockedFetch;
-}
-
-function flush() {
-  return new Promise((resolve) => resolve());
 }
 
 // ---- tests ------------------------------------------------------------------

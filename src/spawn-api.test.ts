@@ -83,7 +83,6 @@ describe("spawnAsChild opts", () => {
     });
 
     const parent = defineActor({
-      setup() { return {}; },
       handlers: { },
       async setup() {
         await child.spawnAsChild(this.ctx, {});
@@ -140,7 +139,6 @@ describe("addPlugins non-overridable", () => {
 
     const child = defineActor({
       name: "kid",
-      setup() { return {}; },
       handlers: { },
       plugins: [], // explicitly replace — strips parent plugins
       async setup() {
@@ -150,7 +148,6 @@ describe("addPlugins non-overridable", () => {
 
     const parent = defineActor({
       name: "dad",
-      setup() { return {}; },
       handlers: { },
       async setup() {
         await this.fork(child, {});
@@ -196,6 +193,7 @@ describe("spawnAsChild ctx type", () => {
   it("accepts concrete ProcessCtx from this.ctx without any cast", async () => {
     const child = defineActor({
       name: "kid",
+      outMessages: Pin,
       setup: () => ({}),
       handlers: { },
     });
@@ -205,7 +203,7 @@ describe("spawnAsChild ctx type", () => {
       inMessages: Pin,
       setup: () => ({ x: 1 }),
       handlers: {
-        POKE() { this.state.x += msg.n; },
+        POKE(msg) { this.state.x += msg.n; },
       },
       async afterStart() {
         // KEY: this.ctx is a concrete ProcessCtx<{x:number}, ...>.

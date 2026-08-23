@@ -218,7 +218,7 @@ describe("inspect", () => {
       const found = proc.$reflection["inspect.find"]("parent:kid");
       expect(found).not.toBeNull();
       expect(found!.pname).toBe("parent:kid");
-      expect(found.id).toBe(proc.children[0].id);
+      expect(found!.id).toBe(proc.children[0].id);
 
       await proc.stop();
     });

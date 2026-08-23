@@ -1,6 +1,8 @@
+import type { AsyncProcess } from "../process.async.js";
+import type { Message } from "../types.js";
 
 
-export function nextState(proc) {
+export function nextState<A, S, IM extends Message, OM extends Message, R extends object>(proc: AsyncProcess<A, S, IM, OM, R>) {
   return new Promise((resolve) => {
     const unsub = proc.subscribe('state', () => {
       unsub();
@@ -9,7 +11,7 @@ export function nextState(proc) {
   });
 }
 
-export function nextMessage(proc) {
+export function nextMessage<A, S, IM extends Message, OM extends Message, R extends object>(proc: AsyncProcess<A, S, IM, OM, R>) {
   return new Promise((resolve) => {
     const unsub = proc.subscribe('message', (msg) => {
       unsub();

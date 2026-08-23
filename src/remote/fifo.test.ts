@@ -50,7 +50,7 @@ describe("FifoUtf8NlineTransport basic lifecycle", () => {
 
   it("multiple messages arrive in order", async () => {
     const [a, b] = await makePair();
-    const bReceived = makeWaiter<string>();
+    const bReceived = makeWaiter<string[]>();
 
     const buffer: string[] = [];
     b.onMessage((line) => {
@@ -195,7 +195,7 @@ describe("FifoUtf8NlineTransport close behavior", () => {
 describe("FifoUtf8NlineTransport bad input", () => {
   it("empty lines are handled without crash", async () => {
     const [a, b] = await makePair();
-    const bReceived = makeWaiter<string>();
+    const bReceived = makeWaiter<string[]>();
     const buffer: string[] = [];
     b.onMessage((line) => {
       buffer.push(line);
@@ -246,7 +246,7 @@ describe("FifoUtf8NlineTransport bad input", () => {
 
   it("non-JSON lines are delivered as raw strings", async () => {
     const [a, b] = await makePair();
-    const bReceived = makeWaiter<string>();
+    const bReceived = makeWaiter<string[]>();
     const buffer: string[] = [];
     b.onMessage((line) => {
       buffer.push(line);
@@ -353,8 +353,8 @@ describe("FifoUtf8NlineTransport bidirectional connect", () => {
     const waiter = makeWaiter<string>();
 
     const [readFd, writeFd] = await makePipe();
-    const writer = FifoUtf8NlineTransport.fromFds(null, writeFd);
-    const reader = FifoUtf8NlineTransport.fromFds(readFd, null);
+    const writer = FifoUtf8NlineTransport.openWriterFd(writeFd);
+    const reader = FifoUtf8NlineTransport.openReaderFd(readFd);
     reader.onMessage(waiter.resolve);
     expect(writer.canSend).toBe(true);
     await writer.send("test\n");

@@ -12,10 +12,10 @@ export class FifoUtf8NlineTransport {
   private writeFd: FileHandle | null;
   private rl: readline.Interface | null;
   private rs: ReadStream | null;
-  private ws: WriteSteeam | null;
+  private ws: WriteStream | null;
   private pvtOnMessage: ((line: string) => void) | null = null;
   private closed = false;
-  private closingPromise: Promise<void> | null;
+  private closingPromise: Promise<void> | null = null;
   private pvtError: Error | null = null;
   private pvtWriter: FifoUtf8NlineTransport | null = null;
 
@@ -52,7 +52,7 @@ export class FifoUtf8NlineTransport {
       this.ws = createWriteStream("", {
         fd: this.writeFd.fd,
         encoding: "utf-8",
-        autoclose: false,
+        autoClose: false,
       });
       this.ws.on("error", (err: Error) => {
         this.pvtError = err;
@@ -72,6 +72,14 @@ export class FifoUtf8NlineTransport {
 
   private static async openWriter(path: string): Promise<FifoUtf8NlineTransport> {
     const writeFd = await open(path, "w");
+    return new FifoUtf8NlineTransport({ writeFd });
+  }
+
+  static openReaderFd(readFd: FileHandle): FifoUtf8NlineTransport {
+    return new FifoUtf8NlineTransport({ readFd });
+  }
+
+  static openWriterFd(writeFd: FileHandle): FifoUtf8NlineTransport {
     return new FifoUtf8NlineTransport({ writeFd });
   }
 
@@ -160,7 +168,7 @@ export class FifoUtf8NlineTransport {
     if (this.closed) throw new Error("FifoUtf8NlineTransport: closed");
     if (this.writeFd === null) throw new Error("FifoUtf8NlineTransport: not a writer");
     if (!line.endsWith("\n")) line += "\n";
-    await this.ws.write(line);
+    await this.ws?.write(line);
   }
 
   async close(): Promise<void> {
@@ -184,9 +192,9 @@ export class FifoUtf8NlineTransport {
       this.rs = null;
     }
     if (this.ws) {
-      await new Promise(async (resolve) => {
+      await new Promise<void>(async (resolve) => {
         try {
-          await this.ws.end("", resolve);
+          await this.ws?.end("", resolve);
         } catch {
           resolve();
         }

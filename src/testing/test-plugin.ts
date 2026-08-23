@@ -9,7 +9,9 @@
 // event-driven — `resolved()` settles when a matching message arrives, the
 // actor exits, or an explicit timeout fires.  No polling.
 
-import { mergeConfigs, type ActorPlugin } from "../hooks.js";
+import { mergeConfigs, type ActorPlugin, type ActorReflection } from "../hooks.js";
+import type { ActorContext, ReflectionOptions } from "../actor-types.js";
+
 import type { Message, StopMessage, SenderInfo, ProcessCtx } from "../types.js";
 import { toMatcher, type MatchSpec } from "./msg-matcher.js";
 import { pnameMatch } from "./pname-match.js";
@@ -76,7 +78,7 @@ export function createCollector<M extends Message>(
   // The plugin is installed on the root first (spawn assembles before any
   // child is forked), so the first install's beforeStart is the root.
   let installed = false;
-  let waiters: Waiter<MatchResult> = [];
+  let waiters: Waiter<MatchResult>[] = [];
 
   function setSpec(spec: MatchSpec<M>) {
     currentSpec = spec;
@@ -159,15 +161,15 @@ export function createCollector<M extends Message>(
 // ── createRootTracker ────────────────────────────────────────────────────
 
 export function createRootTracker(): RootTracker {
-  const roots = new Set<{ sendSelf: (msg: StopMessage) => void }>();
+  const roots = new Set<ActorContext<unknown, unknown, Message, Message, {}, {}, ReflectionOptions & ActorReflection>>();
 
   const rootTrackerPlugin: ActorPlugin = (config) =>
     mergeConfigs(config, {
-      beforeStart(this: { ctx: ProcessCtx<unknown, unknown, Message, Message> }) {
+      beforeStart() {
         roots.add(this);
       },
-      afterEnd(this: { ctx: ProcessCtx<unknown, unknown, Message, Message> }) {
-        roots.delete(this.ctx);
+      afterEnd() {
+        roots.delete(this);
       },
     });
 

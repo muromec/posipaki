@@ -78,14 +78,14 @@ export type Waiter<T = void> = {
   reject: ErrorFn;
 };
 /** Create a new {@link Waiter}. */
-function makeWaiter(): Waiter {
-  let resolve: NotifyFn;
+function makeWaiter<T = void>(): Waiter<T> {
+  let resolve: NotifyFn<T>;
   let reject: ErrorFn;
-  let promise = new Promise<void>((_resolve, _reject) => {
+  let promise = new Promise<T>((_resolve, _reject) => {
     resolve = _resolve;
     reject = _reject;
   });
-  return { promise, resolve, reject };
+  return { promise, resolve: resolve!, reject: reject! };
 }
 
 /** Resolve after `ms` milliseconds. */

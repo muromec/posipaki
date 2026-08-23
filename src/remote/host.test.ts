@@ -8,6 +8,7 @@ import { randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { FifoUtf8NlineTransport } from "./fifo.js";
 import { encode, decode, isProto, isMsg, isState, isExit } from "./protocol.js";
+import type { Message } from "../types.js";
 import { makeWaiter } from "../util.js";
 
 const cleanupPaths: string[] = [];
@@ -65,7 +66,7 @@ describe("spawnRemote handshake", () => {
     host.removeHandler();
 
     const messages: Message[] = [];
-    let messageWaiter = makeWaiter<null>();
+    let messageWaiter = makeWaiter<Message[]>();
     let exitWaiter = makeWaiter<number>();
 
     host.onMessage((line) => {
