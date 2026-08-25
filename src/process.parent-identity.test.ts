@@ -11,7 +11,7 @@ type PokeM = { type: "POKE" };
 type PongM = { type: "PONG" };
 
 type SimpleState = {
-  parentId: Symbol | null;
+  parentId: symbol | null;
   parentName: string | null;
   messages: string[];
 };
@@ -127,7 +127,7 @@ describe("parent identity on ProcessCtx", () => {
   it("parent gets childProc.id and pname from fork return value", async () => {
     // Spawn a root, fork a child, verify the parent can get the child's id
     type ChildInfo = {
-      childId: Symbol;
+      childId: symbol;
       childName: string;
     };
 

@@ -65,7 +65,7 @@ export async function runChild<Args, State, InMsg extends Message, OutMsg extend
         body: msg,
       });
       await transport.send(encodedMsg);
-    } catch (e) {
+    } catch {
       console.error("Error sending out the message");
     }
   });

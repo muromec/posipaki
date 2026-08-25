@@ -45,5 +45,5 @@ rl.on("line", async (line) => {
         process.exit(0);
       }
     }
-  } catch (e) {}
+  } catch {}
 });

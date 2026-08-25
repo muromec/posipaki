@@ -12,7 +12,7 @@
 import { mergeConfigs, type ActorPlugin, type ActorReflection } from "../hooks.js";
 import type { ActorContext, ReflectionOptions } from "../actor-types.js";
 
-import type { Message, StopMessage, SenderInfo, ProcessCtx } from "../types.js";
+import type { Message, SenderInfo } from "../types.js";
 import { toMatcher, type MatchSpec } from "./msg-matcher.js";
 import { pnameMatch } from "./pname-match.js";
 import { withTimeout, makeWaiter, type Waiter } from "../util.js";

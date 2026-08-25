@@ -192,9 +192,9 @@ export class FifoUtf8NlineTransport {
       this.rs = null;
     }
     if (this.ws) {
-      await new Promise<void>(async (resolve) => {
+      await new Promise<void>((resolve) => {
         try {
-          await this.ws?.end("", resolve);
+          this.ws?.end("", resolve);
         } catch {
           resolve();
         }
