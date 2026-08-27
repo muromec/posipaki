@@ -104,19 +104,3 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
 >;
 export type AnyProcessCtx = ProcessCtx<unknown, unknown, Message, Message>;
 
-// ---- Pipe -------------------------------------------------------------------
-
-/** State yielded by the pipe process. */
-export interface PipeState<Params, Result> {
-  params: Params | null;
-  result: Result | null;
-  running: boolean;
-}
-
-// ---- Supervisor -------------------------------------------------------------
-
-/** State yielded by the supervisor process. */
-export interface SupervisorState {
-  processes: any[]; // Process<any,any,any,any>[]
-  phase: "wait" | "running" | "stopping";
-}

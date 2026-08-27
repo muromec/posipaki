@@ -24,8 +24,6 @@ export type {
   ProcessFn,
   ProcessCtx,
   AsyncProcessFn,
-  PipeState,
-  SupervisorState,
   SenderOrigin,
   SenderInfo,
 } from "./types.js";

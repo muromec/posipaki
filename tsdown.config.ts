@@ -3,8 +3,6 @@ import { defineConfig } from "tsdown";
 export default defineConfig({
   entry: [
     "src/index.ts",
-    "src/pipe.ts",
-    "src/supervisor.ts",
     "src/xfetch.ts",
     "src/hooks.ts",
     "src/plugins/debug-logger.ts",
