@@ -13,7 +13,7 @@ const echoActor = defineActor({
   name: "echo",
   inMessages: defineMessages<{ type: "PING"; count: number }>(),
   outMessages: defineMessages<{ type: "PONG"; count: number }>(),
-  initialState: () => ({ pings: 0 }),
+  setup: () => ({ pings: 0 }),
   handlers: {
     PING(msg) {
       this.state.pings++;
@@ -33,8 +33,7 @@ if (!isRemoteRoot) {
     remoteEcho.fn,
     "echo",
     (msg) => {
-      const [body] = msg;
-      if (body.type === "PONG") pongs.push(body);
+      if (msg.type === "PONG") pongs.push(msg);
     },
   )({});
 

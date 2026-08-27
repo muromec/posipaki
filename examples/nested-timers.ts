@@ -1,9 +1,13 @@
 import { defineActor } from "../src/index";
 
+// Keep the script from exiting immediately while the demo runs.
 const timer = setTimeout(() => null, 1000 * 30);
 
 const fast = defineActor({
-  initialState: true,
+  name: "fast",
+  setup() {
+    return true;
+  },
   handlers: {},
   onStopRequested() {
     this.agreeToStop();
@@ -11,9 +15,12 @@ const fast = defineActor({
 });
 
 const slow = defineActor({
-  initialState: { done: false },
-  async onStart() {
-    setTimeout(() => this.emit({ type: "FIRED" } as any), 10 * 1000);
+  name: "slow",
+  setup() {
+    return { done: false };
+  },
+  afterStart() {
+    setTimeout(() => this.ctx.sendSelf({ type: "FIRED" }), 10 * 1000);
   },
   handlers: {
     FIRED() {
@@ -24,22 +31,26 @@ const slow = defineActor({
 });
 
 const main = defineActor({
-  initialState: { done: false },
-  onStart() {
-    this.ctx.fork(fast.fn, "f1")(null);
-    const _timerProc = this.ctx.fork(slow.fn, "timer2")(null);
+  name: "main",
+  setup() {
+    return { done: false };
+  },
+  async afterStart() {
+    await this.fork(fast, null);
+    await this.fork(slow, null);
   },
   handlers: {},
   onChildExit(name) {
-    if (name === "timer2") {
+    if (name === "main:slow") {
       this.state.done = true;
+      this.agreeToStop();
     }
   },
-  onEnd() {
-    // done
+  onStopRequested() {
+    this.agreeToStop();
   },
 });
 
-const m = main.spawn(null);
+const m = await main.spawn(null);
 await m.wait();
 clearTimeout(timer);
