@@ -22,7 +22,7 @@ A **process**.
 
 ```ts
 const counter = defineActor({
-  initialState: { count: 0 },
+  setup: () => ({ count: 0 }),
   handlers: {
     POKE(msg, sender) {
       this.state.count++;
@@ -37,24 +37,24 @@ const counter = defineActor({
   },
 });
 
-const proc = counter.spawn(null);
+const proc = await counter.spawn(null);
 await proc.ready();
 proc.send({ type: "POKE" });
 ```
 
 A process can do everything a promise, a stream, or a store can do —
 but it can also fork children, pause/resume, and exit on its own terms.
-And every handler receives the sender's identity in the `[msg, sender]` tuple,
+And every handler receives the sender identity alongside the message,
 so you always know _who_ sent what.
 Of course processes are composable into trees.
 
 ## Quick start
 
 ```ts
-import { spawnAsync, defineActor } from "posipaki";
+import { defineActor } from "posipaki";
 
 const counter = defineActor({
-  initialState: { count: 0 },
+  setup: () => ({ count: 0 }),
   handlers: {
     POKE(msg, sender) {
       this.state.count++;
@@ -62,7 +62,7 @@ const counter = defineActor({
   },
 });
 
-const proc = counter.spawn(null);
+const proc = await counter.spawn(null);
 await proc.ready(); // state is available
 proc.send({ type: "POKE" }); // delivers [msg, sender] to the generator
 // proc.state.count === 1
@@ -113,11 +113,9 @@ and it will not produce any messages once it does. This also cascades to their c
 ## Features
 
 - **Processes** — sync or async, same API
-- **Child processes** — `ctx.fork(fn, name)(args)` spawns supervised children
-- **Supervisor** — run and monitor named workers
-- **Reactive state** — `proc.subscribe(cb)` notifies on every state change
+- **Child processes** — `this.fork(childActor, args)` spawns a child that stops when you do
+- **Reactive state** — `proc.subscribe("state", cb)` notifies on every state change
 - **Pause/resume** — buffer messages while idle
-- **Pipe** — chain processes so each runs after the previous exits
 - **xfetch** — HTTP requests as processes, with abort support
 - **defineActor** — declarative config for structured actors
 
@@ -147,7 +145,7 @@ npm install posipaki
 - `proc.ready()` — wait for initial state
 - `proc.state` — current reactive state
 - `proc.send(msg, sender)` — inject a message from a named sender
-- `proc.subscribe(cb)` — react to state changes
+- `proc.subscribe("state", cb)` — react to state changes
 - `proc.pause()` / `proc.resume()` — buffer or process messages
 - `proc.wait()` — resolve when the generator completes
 
