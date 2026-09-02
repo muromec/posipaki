@@ -6,7 +6,7 @@
 > Mobility" draft, which was written around FIFO child processes and used
 > "host"/"child" naming. The primitive is unchanged — context mobility — but the
 > topology is now stated as a **server/client** split, the layering is corrected
-> (framing and serialization are transport concerns, not protocol concerns), and
+> (framing is a transport concern, not a protocol concern), and
 > the layers below the glue are a stable interface rather than internals.
 
 ## Motivation
@@ -65,7 +65,7 @@ the top.
 | Layer | Owns |
 | --- | --- |
 | **Protocol** | The frame vocabulary (`$proto`/`$init`/`$state`/`$msg`/`$exit`), the type guards, and a version. **Object-shaped, not string-shaped.** |
-| **Transport** | Framing + serialization + movement. How a frame object becomes bytes/streams and back. |
+| **Transport** | Framing + movement. How a byte stream is split back into frames and moved. |
 | **Seam** | Two endpoints — `serveRemoteActor` (server) and `connectRemote` (client) — each pumps the protocol over a transport. |
 | **Glue** | `defineRemoteActor` — the demoable sugar that wraps the client side into a normal actor. |
 
@@ -74,18 +74,17 @@ The protocol semantics do not change when the transport does.
 ## Protocol
 
 The protocol is a set of **frame objects** — plain JS objects carrying a single
-`$`-key each — plus type guards and a version string. It knows nothing about
-framing or serialization; both are the transport's business.
+`$`-key each — plus the JSON encoding (`encode`/`decode`), type guards, and a
+version string. It knows nothing about framing; that is the transport's business.
 
 ### Version
 
-`PROTO_VERSION = "frames.v1"` — identifies the *frame vocabulary* (which `$`-keys
-exist and what they mean), not the encoding or framing. The old `"ndjson.v1"`
-named the framing; framing is not the protocol's concern. Serialization is also
-not named here: the transport is established out-of-band (you open a FIFO, you
-connect a socket, you spawn a worker), so each side already knows how frames are
-serialized. The version handshake only checks vocabulary compatibility and acts
-as the server's "I'm ready" signal.
+`PROTO_VERSION = "json.v1"` — names the *encoding* (JSON). The frame vocabulary
+(the `$`-keys and their meaning) is fixed; the same frames could equally be
+carried as `asn1.v1` or `protobuf.v1`. The version deliberately does **not** name
+the *framing* — newlines, message boundaries — that is the transport's concern
+(the old `"ndjson.v1"` conflated the two). The handshake checks encoding
+compatibility and acts as the server's "I'm ready" signal.
 
 ### Frame vocabulary
 
@@ -102,7 +101,7 @@ Five frames, matching the implementation:
 Each frame is one object:
 
 ```json
-{ "$proto": "frames.v1" }
+{ "$proto": "json.v1" }
 { "$init": { "start": 0, "parentName": "host", "parentIdName": "host" } }
 { "$state": { "count": 1 } }
 { "$msg": { "fromName": "root", "body": { "type": "INCREMENT", "by": 1 } } }
@@ -123,43 +122,43 @@ therefore not preserved (a known shortcoming).
 parent's identity *does* round-trip — both sides resolve the same global symbol
 by name.
 
-### Framing and serialization are **not** here
+### Framing is **not** here
 
-The earlier draft's `encode`/`decode` did `JSON.stringify(...) + "\n"` in one
-step, conflating message encoding with framing. That was a bug:
+The earlier draft's `encode` did `JSON.stringify(...) + "\n"` in one step,
+conflating encoding with framing. That was a bug:
 
+- **Encoding** (JSON) is the protocol's job — `encode`/`decode` turn a frame
+  object into a string and back, and the version names it (`json.v1`).
 - **Framing** is how a byte stream is split back into discrete messages. It
   belongs to the transport — the transport is the thing that must split the
   stream.
-- **Serialization** is how a frame object becomes bytes/streams. It also belongs
-  to the transport (see the worker case below, which needs no JSON at all).
 
-So the protocol's only contract is the object shapes. `encode`/`decode`-to-string
-drops out of the protocol and becomes each byte-transport's serializer.
+So `encode`/`decode` stay in the protocol (JSON only, no `\n`); the transport
+adds and strips the delimiter.
 
 ## Transport
 
 ```ts
 interface Transport {
-  send(frame: unknown): void | Promise<void>;
-  onMessage(handler: (frame: unknown) => void): void;
+  send(frame: string): void | Promise<void>;
+  onMessage(handler: (frame: string) => void): void;
   removeHandler(): void;
   close(): Promise<void>;
 }
 ```
 
-The transport speaks in **frame objects**, not strings and not bytes. Each
-transport owns serialization, framing, and movement.
+The transport moves **encoded frames** (JSON strings) and owns framing and
+movement; the protocol's `encode`/`decode` sits above it.
 
-| Transport | Serialization | Framing | Client reaches the server by |
-| --- | --- | --- | --- |
-| **FIFO** | JSON | newline (`\n`) | spawning the child and opening the fifo |
-| **WebSocket** | JSON | native message boundary | connecting to `ws://` / upgrading a request |
-| **Worker** | structured clone | native message boundary | `new Worker(url)` |
+| Transport | Framing | Client reaches the server by |
+| --- | --- | --- |
+| **FIFO** | newline (`\n`) | spawning the child and opening the fifo |
+| **WebSocket** | native message boundary | connecting to `ws://` / upgrading a request |
+| **Worker** | native message boundary | `new Worker(url)` |
 
-The worker case is the cleanest proof of the model: it needs **no JSON and no
-framing** — `postMessage` structured-clones the frame object directly (and
-carries `Date`/`Map`/`Set`/`ArrayBuffer` that JSON would destroy). The seam is
+FIFO and WebSocket both carry `json.v1` (JSON-encoded frames). The worker case is
+different: `postMessage` structured-clones the frame object directly (no JSON),
+so it is a distinct encoding and version — a future concern. The seam is
 unchanged; only the transport and the spawner differ.
 
 ## The seam

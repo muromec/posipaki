@@ -12,7 +12,7 @@ if (!fifoIn || !fifoOut) process.exit(1);
 const writeFd = await open(fifoIn, "w");
 const readFd = await open(fifoOut, "r");
 
-await writeFd.write('{"$proto":"frames.v1"}\n');
+await writeFd.write('{"$proto":"json.v1"}\n');
 
 const rs = createReadStream("", { fd: readFd.fd, encoding: "utf-8", autoClose: false });
 const rl = createInterface({ input: rs });

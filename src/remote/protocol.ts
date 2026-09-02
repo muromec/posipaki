@@ -6,7 +6,7 @@
 //   host → child:  $init, $msg
 import type { Message } from "../types.js";
 
-export const PROTO_VERSION = "frames.v1";
+export const PROTO_VERSION = "json.v1";
 
 export function encode(key: string, value: unknown): string {
   return JSON.stringify({ [key]: value });
