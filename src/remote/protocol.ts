@@ -1,14 +1,15 @@
 // ── Wire protocol ──────────────────────────────────────────────────────────
 //
-// NDJSON wire protocol: one JSON object per line.
+// Frame vocabulary: one JSON object per frame. Framing (newlines, message
+// boundaries) and serialization are the transport's concern, not here.
 //   child → host:  $proto, $state, $msg, $exit
 //   host → child:  $init, $msg
 import type { Message } from "../types.js";
 
-export const PROTO_VERSION = "ndjson.v1";
+export const PROTO_VERSION = "frames.v1";
 
 export function encode(key: string, value: unknown): string {
-  return JSON.stringify({ [key]: value }) + "\n";
+  return JSON.stringify({ [key]: value });
 }
 
 export function decode(line: string): Record<string, unknown> {
