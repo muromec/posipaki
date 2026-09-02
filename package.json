@@ -34,7 +34,7 @@
     }
   },
   "scripts": {
-    "build": "tsdown",
+    "build": "bash scripts/build.sh",
     "test": "vitest run",
     "test:watch": "vitest",
     "lint": "oxlint"
