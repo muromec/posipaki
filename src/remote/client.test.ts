@@ -1,138 +1,114 @@
-// ── connectRemote integration tests ──────────────────────────────────────────
+// ── connectRemote unit tests (in-memory fake transport) ────────────────────
+//
+// These exercise the transport-agnostic client handshake and pump without
+// spawning a process or touching a fifo. The FIFO spawn + handshake path is
+// covered separately in client.integration.test.ts.
 
-import { describe, it, expect, afterEach } from "vitest";
-import { spawn, execSync } from "node:child_process";
-import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { randomUUID } from "node:crypto";
-import { unlink, writeFile } from "node:fs/promises";
-import { FifoUtf8NlineTransport } from "./fifo.js";
-import { encode, decode, isProto, isMsg, isState, isExit } from "./protocol.js";
-import type { Message } from "../types.js";
-import { makeWaiter } from "../util.js";
+import { describe, it, expect } from "vitest";
+import { connectRemote } from "./client.js";
+import { encode, decode, isInit, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
+import { sleep } from "../util.js";
+import type { Transport } from "./transport.js";
 
-const cleanupPaths: string[] = [];
+class FakeTransport implements Transport {
+  sent: string[] = [];
+  handler: ((frame: string) => void) | null = null;
+  closed = false;
 
-afterEach(async () => {
-  for (const p of cleanupPaths.splice(0)) {
-    await unlink(p).catch(() => {});
+  async send(frame: string) {
+    this.sent.push(frame);
   }
-});
-
-function getRuntime() {
-  return process.argv[0];
+  onMessage(handler: (frame: string) => void) {
+    if (this.handler) throw new Error("handler already set");
+    this.handler = handler;
+  }
+  removeHandler() {
+    this.handler = null;
+  }
+  async close() {
+    this.closed = true;
+  }
 }
 
-describe("connectRemote handshake", () => {
-  it("completes handshake and message exchange with server", async () => {
-    const thisDir = dirname(import.meta.url.slice(7));
-    const serverScriptPath = join(thisDir, "./fixtures/manual.js");
+async function waitUntil(predicate: () => boolean, what: string) {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timeout waiting for ${what}`);
+    await sleep(1);
+  }
+}
 
-    const basePath = join(tmpdir(), `client-test-${randomUUID()}`);
-    const pathIn = basePath + ".in";
-    const pathOut = basePath + ".out";
-    cleanupPaths.push(pathIn, pathOut);
+const sentFrames = (t: FakeTransport) => t.sent.map(decode);
 
-    execSync(`mkfifo "${pathIn}"`);
-    execSync(`mkfifo "${pathOut}"`);
-
-    const setup = FifoUtf8NlineTransport.beginConnect(pathIn, pathOut);
-
-    const server = spawn(
-      getRuntime(),
-      [serverScriptPath, `--fifo-in=${pathIn}`, `--fifo-out=${pathOut}`],
-      {
-        cwd: process.cwd(),
-        stdio: ["inherit", "inherit", "inherit"],
-      },
-    );
-
-    const client = await setup.transport;
-
-    const protoLine = await new Promise<string>((resolve) => {
-      client.onMessage((line) => resolve(line));
-    });
-    expect(isProto(decode(protoLine))).toBe(true);
-    client.removeHandler();
-
-    await client.send(
-      encode("$init", { parentName: "test-client", parentIdName: "test-client", tools: [] }),
-    );
-
-    const stateLine = await new Promise<string>((resolve) => {
-      client.onMessage((line) => resolve(line));
-    });
-    expect(isState(decode(stateLine))).toBe(true);
-    client.removeHandler();
-
-    const messages: Message[] = [];
-    let messageWaiter = makeWaiter<Message[]>();
-    let exitWaiter = makeWaiter<number>();
-
-    client.onMessage((line) => {
-      const msg = decode(line);
-      if (isMsg(msg)) {
-        messages.push(msg.$msg.body);
-        messageWaiter.resolve(messages);
-      }
-      if (isExit(msg)) {
-        exitWaiter.resolve(msg.$exit.code);
-      }
+describe("connectRemote (unit)", () => {
+  it("handshakes, sends $init, pumps state/messages, and resolves on $exit", async () => {
+    const transport = new FakeTransport();
+    const proxyPromise = connectRemote<{ pings: number }>(transport, {
+      args: {},
+      parentName: "root",
     });
 
-    await client.send(encode("$msg", { fromName: "client", body: { type: "PING", count: 42 } }));
-    expect(await messageWaiter.promise).toEqual([{ type: "PONG", count: 42 }]);
+    // 1. awaits $proto from the server
+    await waitUntil(() => transport.handler !== null, "$proto handler");
+    transport.handler!(encode("$proto", PROTO_VERSION));
 
-    client.send(encode("$msg", { type: "STOP", fromName: "client", body: { type: "STOP", count: 5 } }));
+    // 2. sends $init with domain args + parent identity
+    await waitUntil(() => sentFrames(transport).some(isInit), "$init");
+    const init = sentFrames(transport).find(isInit)!;
+    expect(init.$init).toMatchObject({ parentName: "root", parentIdName: "root" });
 
-    const exitCode = await exitWaiter.promise;
+    // 3. awaits the first $state (the ready signal)
+    await waitUntil(() => transport.handler !== null, "$state handler");
+    transport.handler!(encode("$state", { pings: 0 }));
 
-    expect(exitCode).toBe(0);
-    await client.close();
-    server.kill();
-  }, 10000);
-});
+    const proxy = await proxyPromise;
+    expect(proxy.state).toEqual({ pings: 0 });
 
-describe("connectRemote command construction", () => {
-  it("passes fifo-in and fifo-out to spawned server", async () => {
-    const basePath = join(tmpdir(), `client-test-${randomUUID()}`);
-    const pathIn = basePath + ".in";
-    const pathOut = basePath + ".out";
-    cleanupPaths.push(pathIn, pathOut);
+    // 4. pumps $state updates into the proxy's state
+    transport.handler!(encode("$state", { pings: 1 }));
+    await waitUntil(() => proxy.state.pings === 1, "state update");
 
-    execSync(`mkfifo "${pathIn}"`);
-    execSync(`mkfifo "${pathOut}"`);
+    // 5. delivers $msg to the registered handler
+    const received: unknown[] = [];
+    proxy.onMessage((msg) => received.push(msg));
+    transport.handler!(encode("$msg", { fromName: "server", body: { type: "PONG", count: 42 } }));
+    await waitUntil(() => received.length === 1, "$msg delivery");
+    expect(received[0]).toEqual({ type: "PONG", count: 42 });
 
-    const reporterPath = join(tmpdir(), `client-test-reporter-${randomUUID()}.ts`);
-    cleanupPaths.push(reporterPath);
-    await writeFile(
-      reporterPath,
-      `
-      const args = process.argv.slice(2);
-      console.log(JSON.stringify(args));
-      process.exit(0);
-    `,
+    // 6. resolves wait() on $exit
+    transport.handler!(encode("$exit", { code: 0, state: { pings: 1 } }));
+    const exit = await proxy.wait();
+    expect(exit).toEqual({ code: 0, state: { pings: 1 } });
+  });
+
+  it("rejects an unsupported protocol version", async () => {
+    const transport = new FakeTransport();
+    const proxyPromise = connectRemote(transport, { args: {} });
+
+    await waitUntil(() => transport.handler !== null, "$proto handler");
+    transport.handler!(encode("$proto", "nope.v1"));
+
+    await expect(proxyPromise).rejects.toThrow(/unsupported protocol/);
+  });
+
+  it("exposes send() that frames a $msg with the client identity", async () => {
+    const transport = new FakeTransport();
+    const proxyPromise = connectRemote<{ pings: number }, { type: string; count: number }>(
+      transport,
+      { args: {}, parentName: "root" },
     );
 
-    const server = spawn(
-      "bun",
-      ["run", reporterPath, `--fifo-in=${pathIn}`, `--fifo-out=${pathOut}`],
-      {
-        cwd: process.cwd(),
-        stdio: ["inherit", "pipe", "inherit"],
-      },
-    );
+    await waitUntil(() => transport.handler !== null, "$proto handler");
+    transport.handler!(encode("$proto", PROTO_VERSION));
+    await waitUntil(() => sentFrames(transport).some(isInit), "$init");
+    await waitUntil(() => transport.handler !== null, "$state handler");
+    transport.handler!(encode("$state", { pings: 0 }));
 
-    const stdout = await new Promise<string>((resolve) => {
-      let out = "";
-      server.stdout?.on("data", (d) => {
-        out += d.toString();
-      });
-      server.on("close", () => resolve(out));
-    });
+    const proxy = await proxyPromise;
+    proxy.send({ type: "PING", count: 7 });
 
-    const args = JSON.parse(stdout.trim());
-    expect(args).toContain(`--fifo-in=${pathIn}`);
-    expect(args).toContain(`--fifo-out=${pathOut}`);
-  }, 8000);
+    await waitUntil(() => sentFrames(transport).some(isMsg), "$msg out");
+    const msg = sentFrames(transport).find(isMsg)!;
+    expect(msg.$msg).toMatchObject({ fromName: "root", body: { type: "PING", count: 7 } });
+  });
 });

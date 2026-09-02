@@ -1,8 +1,9 @@
 // ── Client-side adapter ──────────────────────────────────────────────────────
 //
-// connectRemote: spawns the server process and bridges the wire protocol.
-// Connector wrappers (bunConnector, nodeConnector, defaultConnector) produce
-// the command array from a script path.
+// The seam's client side: `connectRemote` runs the wire handshake and pumps
+// state/messages over an already-established transport (transport-agnostic).
+// `commandConnector` is the process bootstrap — it spawns the server, builds
+// the FIFO transport, and connects over it.
 
 import { spawn, execSync, type ChildProcess } from "node:child_process";
 import { randomUUID } from "node:crypto";
@@ -12,6 +13,7 @@ import { unlink } from "node:fs/promises";
 import { FifoUtf8NlineTransport } from "./fifo.js";
 import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
 import type { Message } from "../types.js";
+import type { Transport } from "./transport.js";
 
 // ── types ──────────────────────────────────────────────────────────────────
 
@@ -40,9 +42,94 @@ export type Connector<
   OutMsg extends Message = Message,
 > = (opts: CommandSpawnOptions) => Promise<RemoteProxy<State, InMsg, OutMsg>>;
 
-// ── connectRemote ───────────────────────────────────────────────────────
+export interface ConnectOptions<Args = Record<string, unknown>> {
+  args: Args;
+  parentName?: string;
+}
+
+// ── connectRemote ───────────────────────────────────────────────────────────
 
 export async function connectRemote<
+  State = unknown,
+  InMsg extends Message = Message,
+  OutMsg extends Message = Message,
+  Args = Record<string, unknown>,
+>(transport: Transport, opts: ConnectOptions<Args>): Promise<RemoteProxy<State, InMsg, OutMsg>> {
+  // 1. await $proto and validate the version
+  const protoLine = await new Promise<string>((resolve) => {
+    transport.onMessage((line) => resolve(line));
+  });
+  const protoMsg = decode(protoLine);
+  if (!isProto(protoMsg) || protoMsg.$proto !== PROTO_VERSION) {
+    throw new Error(`unsupported protocol: ${protoLine.slice(0, 50)}`);
+  }
+  transport.removeHandler();
+
+  // 2. send $init (domain args + parent identity)
+  const parentName = opts.parentName ?? "client";
+  await transport.send(
+    encode("$init", {
+      ...(opts.args as Record<string, unknown>),
+      parentName,
+      parentIdName: parentName,
+    }),
+  );
+
+  // 3. await the first $state (the server's ready signal)
+  let currentState: Record<string, unknown> = {};
+  await new Promise<void>((resolve) => {
+    transport.onMessage((line) => {
+      const msg = decode(line);
+      if (isState(msg)) {
+        Object.assign(currentState, msg.$state as Record<string, unknown>);
+        resolve();
+      }
+    });
+  });
+  transport.removeHandler();
+
+  // 4. persistent pump
+  let msgHandler: ((msg: OutMsg) => void) | null = null;
+  let exitResolver: ((value: { code: number | null; state: State }) => void) | null = null;
+  const exitPromise = new Promise<{ code: number | null; state: State }>((resolve) => {
+    exitResolver = resolve;
+  });
+
+  transport.onMessage((line) => {
+    const msg = decode(line);
+    if (isState(msg)) {
+      Object.assign(currentState, msg.$state as Record<string, unknown>);
+    } else if (isMsg(msg)) {
+      msgHandler?.(msg.$msg.body as OutMsg);
+    } else if (isExit(msg)) {
+      if (exitResolver) {
+        exitResolver({ code: msg.$exit.code, state: msg.$exit.state as State });
+        exitResolver = null;
+      }
+    }
+  });
+
+  // 5. return the proxy
+  return {
+    get state(): State {
+      return currentState as State;
+    },
+    async ready() {},
+    send(msg: InMsg) {
+      transport.send(encode("$msg", { fromName: parentName, body: msg }));
+    },
+    async wait() {
+      return exitPromise;
+    },
+    onMessage(handler: (msg: OutMsg) => void) {
+      msgHandler = handler;
+    },
+  };
+}
+
+// ── commandConnector (process bootstrap) ───────────────────────────────────
+
+export async function commandConnector<
   State = unknown,
   InMsg extends Message = Message,
   OutMsg extends Message = Message,
@@ -67,59 +154,17 @@ export async function connectRemote<
 
   const transport = await setup.transport;
 
-  // ── handshake ───────────────────────────────────────────────────────
-  const protoLine = await new Promise<string>((resolve) => {
-    transport.onMessage((line) => resolve(line));
+  const proxy = await connectRemote<State, InMsg, OutMsg, Args>(transport, {
+    args: opts.args,
+    parentName: opts.parentName,
   });
-  const protoMsg = decode(protoLine);
-  if (!isProto(protoMsg) || protoMsg.$proto !== PROTO_VERSION) {
-    throw new Error(`unsupported protocol: ${protoLine.slice(0, 50)}`);
-  }
-  transport.removeHandler();
 
-  await transport.send(
-    encode("$init", {
-      ...(opts.args as Record<string, unknown>),
-      parentName: opts.parentName ?? "client",
-      parentIdName: opts.parentName ?? "client",
-    }),
-  );
-
-  let currentState: Record<string, unknown> = {};
-  await new Promise<void>((resolve) => {
-    transport.onMessage((line) => {
-      const msg = decode(line);
-      if (isState(msg)) {
-        Object.assign(currentState, msg.$state as Record<string, unknown>);
-        resolve();
-      }
-    });
-  });
-  transport.removeHandler();
-
-  // ── persistent handler ──────────────────────────────────────────────
-  let msgHandler: ((msg: OutMsg) => void) | null = null;
-  let exitResolver: ((value: { code: number | null; state: State }) => void) | null = null;
+  // Coordinate exit: a graceful $exit (proxy.wait) or a crash (child exit).
   const exitPromise = new Promise<{ code: number | null; state: State }>((resolve) => {
-    exitResolver = resolve;
+    proxy.wait().then(resolve);
+    childProc.on("exit", (code) => resolve({ code, state: proxy.state }));
   });
 
-  transport.onMessage((line) => {
-    const msg = decode(line);
-    if (isState(msg)) {
-      Object.assign(currentState, msg.$state as Record<string, unknown>);
-    } else if (isMsg(msg)) {
-      msgHandler?.(msg.$msg.body as OutMsg);
-    } else if (isExit(msg)) {
-      if (exitResolver) {
-        exitResolver({ code: msg.$exit.code, state: msg.$exit.state as State });
-        exitResolver = null;
-      }
-      cleanup();
-    }
-  });
-
-  // ── cleanup ─────────────────────────────────────────────────────────
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;
@@ -128,29 +173,12 @@ export async function connectRemote<
     unlink(basePath + ".in").catch(() => {});
     unlink(basePath + ".out").catch(() => {});
   };
-
-  childProc.on("exit", (code) => {
-    if (exitResolver) {
-      exitResolver({ code, state: currentState as State });
-      exitResolver = null;
-    }
-    cleanup();
-  });
+  exitPromise.then(cleanup);
 
   return {
-    get state(): State {
-      return currentState as State;
-    },
-    async ready() {},
-    send(msg: InMsg) {
-      const from = opts.parentName ?? "client";
-      transport.send(encode("$msg", { fromName: from, body: msg }));
-    },
+    ...proxy,
     async wait() {
       return exitPromise;
-    },
-    onMessage(handler: (msg: OutMsg) => void) {
-      msgHandler = handler;
     },
   };
 }
@@ -184,7 +212,3 @@ export function defaultConnector(scriptPath: string): Connector {
   if (isBun) return bunConnector(scriptPath);
   return nodeConnector(scriptPath);
 }
-
-// ── alias ───────────────────────────────────────────────────────────────────
-
-export const commandConnector = connectRemote;
