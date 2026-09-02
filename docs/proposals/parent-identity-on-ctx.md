@@ -70,8 +70,7 @@ if (sender.fromId === child.id) {
 
 ## Relationship to remote actors
 
-When a child is spawned remotely (see [Actor Remote
-Spawning](actor-remote-spawning.md)), the `$init` wire message carries
+When a child is spawned remotely (see [Remote Actors](actor-remote.md)), the `$init` wire message carries
 `parentName` and `parentIdName` so the remote child can reconstruct its
 parent identity:
 

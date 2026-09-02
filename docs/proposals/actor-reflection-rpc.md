@@ -185,6 +185,6 @@ for the dynamic portion.
 
 ## Related
 
-- [Actor Remote Spawning](actor-remote-spawning.md)
+- [Remote Actors](actor-remote.md)
 - [Actor Plugin System](actor-plugin-system.md)
 - [defineActor Proposal](define-actor-proposal.md)

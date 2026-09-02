@@ -1,7 +1,7 @@
 # WebSocket transport for remote actors
 
 **Status:** draft
-**Follows:** [actor-remote-spawning.md](./actor-remote-spawning.md)
+**Follows:** [actor-remote.md](./actor-remote.md)
 
 ## Motivation
 
