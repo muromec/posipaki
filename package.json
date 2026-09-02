@@ -1,6 +1,11 @@
 {
   "name": "posipaki",
   "version": "0.28.0",
+  "homepage": "https://posipaki-docs.muromec.nl/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muromec/posipaki.git"
+  },
   "files": [
     "dist"
   ],
