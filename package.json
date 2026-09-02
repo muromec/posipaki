@@ -28,6 +28,10 @@
       "types": "./dist/remote/index.d.ts",
       "default": "./dist/remote/index.js"
     },
+    "./remote/node": {
+      "types": "./dist/remote/node.d.ts",
+      "default": "./dist/remote/node.js"
+    },
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"
