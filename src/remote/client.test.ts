@@ -1,4 +1,4 @@
-// ── spawnRemote integration tests ──────────────────────────────────────────
+// ── connectRemote integration tests ──────────────────────────────────────────
 
 import { describe, it, expect, afterEach } from "vitest";
 import { spawn, execSync } from "node:child_process";
@@ -23,12 +23,12 @@ function getRuntime() {
   return process.argv[0];
 }
 
-describe("spawnRemote handshake", () => {
-  it("completes handshake and message exchange with child", async () => {
+describe("connectRemote handshake", () => {
+  it("completes handshake and message exchange with server", async () => {
     const thisDir = dirname(import.meta.url.slice(7));
-    const childScriptPath = join(thisDir, "./fixtures/manual.js");
+    const serverScriptPath = join(thisDir, "./fixtures/manual.js");
 
-    const basePath = join(tmpdir(), `host-test-${randomUUID()}`);
+    const basePath = join(tmpdir(), `client-test-${randomUUID()}`);
     const pathIn = basePath + ".in";
     const pathOut = basePath + ".out";
     cleanupPaths.push(pathIn, pathOut);
@@ -38,38 +38,38 @@ describe("spawnRemote handshake", () => {
 
     const setup = FifoUtf8NlineTransport.beginConnect(pathIn, pathOut);
 
-    const child = spawn(
+    const server = spawn(
       getRuntime(),
-      [childScriptPath, `--fifo-in=${pathIn}`, `--fifo-out=${pathOut}`],
+      [serverScriptPath, `--fifo-in=${pathIn}`, `--fifo-out=${pathOut}`],
       {
         cwd: process.cwd(),
         stdio: ["inherit", "inherit", "inherit"],
       },
     );
 
-    const host = await setup.transport;
+    const client = await setup.transport;
 
     const protoLine = await new Promise<string>((resolve) => {
-      host.onMessage((line) => resolve(line));
+      client.onMessage((line) => resolve(line));
     });
     expect(isProto(decode(protoLine))).toBe(true);
-    host.removeHandler();
+    client.removeHandler();
 
-    await host.send(
-      encode("$init", { parentName: "test-host", parentIdName: "test-host", tools: [] }),
+    await client.send(
+      encode("$init", { parentName: "test-client", parentIdName: "test-client", tools: [] }),
     );
 
     const stateLine = await new Promise<string>((resolve) => {
-      host.onMessage((line) => resolve(line));
+      client.onMessage((line) => resolve(line));
     });
     expect(isState(decode(stateLine))).toBe(true);
-    host.removeHandler();
+    client.removeHandler();
 
     const messages: Message[] = [];
     let messageWaiter = makeWaiter<Message[]>();
     let exitWaiter = makeWaiter<number>();
 
-    host.onMessage((line) => {
+    client.onMessage((line) => {
       const msg = decode(line);
       if (isMsg(msg)) {
         messages.push(msg.$msg.body);
@@ -80,22 +80,22 @@ describe("spawnRemote handshake", () => {
       }
     });
 
-    await host.send(encode("$msg", { fromName: "host", body: { type: "PING", count: 42 } }));
+    await client.send(encode("$msg", { fromName: "client", body: { type: "PING", count: 42 } }));
     expect(await messageWaiter.promise).toEqual([{ type: "PONG", count: 42 }]);
 
-    host.send(encode("$msg", { type: "STOP", fromName: "host", body: { type: "STOP", count: 5 } }));
+    client.send(encode("$msg", { type: "STOP", fromName: "client", body: { type: "STOP", count: 5 } }));
 
     const exitCode = await exitWaiter.promise;
 
     expect(exitCode).toBe(0);
-    await host.close();
-    child.kill();
+    await client.close();
+    server.kill();
   }, 10000);
 });
 
-describe("spawnRemote command construction", () => {
-  it("passes fifo-in and fifo-out to spawned child", async () => {
-    const basePath = join(tmpdir(), `host-test-${randomUUID()}`);
+describe("connectRemote command construction", () => {
+  it("passes fifo-in and fifo-out to spawned server", async () => {
+    const basePath = join(tmpdir(), `client-test-${randomUUID()}`);
     const pathIn = basePath + ".in";
     const pathOut = basePath + ".out";
     cleanupPaths.push(pathIn, pathOut);
@@ -103,7 +103,7 @@ describe("spawnRemote command construction", () => {
     execSync(`mkfifo "${pathIn}"`);
     execSync(`mkfifo "${pathOut}"`);
 
-    const reporterPath = join(tmpdir(), `host-test-reporter-${randomUUID()}.ts`);
+    const reporterPath = join(tmpdir(), `client-test-reporter-${randomUUID()}.ts`);
     cleanupPaths.push(reporterPath);
     await writeFile(
       reporterPath,
@@ -114,7 +114,7 @@ describe("spawnRemote command construction", () => {
     `,
     );
 
-    const child = spawn(
+    const server = spawn(
       "bun",
       ["run", reporterPath, `--fifo-in=${pathIn}`, `--fifo-out=${pathOut}`],
       {
@@ -125,10 +125,10 @@ describe("spawnRemote command construction", () => {
 
     const stdout = await new Promise<string>((resolve) => {
       let out = "";
-      child.stdout?.on("data", (d) => {
+      server.stdout?.on("data", (d) => {
         out += d.toString();
       });
-      child.on("close", () => resolve(out));
+      server.on("close", () => resolve(out));
     });
 
     const args = JSON.parse(stdout.trim());

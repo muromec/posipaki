@@ -311,40 +311,40 @@ describe("FifoUtf8NlineTransport concurrency", () => {
 
 describe("FifoUtf8NlineTransport bidirectional connect", () => {
   it("beginConnect + connect full round-trip", async () => {
-    // Simulate host (beginConnect) and child (connect) sides.
-    // Host: reads from pathIn, writes to pathOut
-    // Child: reads from pathOut, writes to pathIn
+    // Simulate client (beginConnect) and server (connect) sides.
+    // Client: reads from pathIn, writes to pathOut
+    // Server: reads from pathOut, writes to pathIn
     const basePath = join(tmpdir(), `fifo-conn-${Math.random().toString(36).slice(2)}`);
     const pathIn = basePath + ".in";
     const pathOut = basePath + ".out";
     execSync(`mkfifo "${pathIn}"`);
     execSync(`mkfifo "${pathOut}"`);
 
-    // Host: beginConnect starts reading pathIn
-    const hostSetup = FifoUtf8NlineTransport.beginConnect(pathIn, pathOut);
+    // Client: beginConnect starts reading pathIn
+    const clientSetup = FifoUtf8NlineTransport.beginConnect(pathIn, pathOut);
 
-    // Child: connect opens pathIn for writing, reads pathOut
-    const childP = FifoUtf8NlineTransport.connect(pathOut, pathIn);
+    // Server: connect opens pathIn for writing, reads pathOut
+    const serverP = FifoUtf8NlineTransport.connect(pathOut, pathIn);
 
-    const host = await hostSetup.transport;
-    const child = await childP;
+    const client = await clientSetup.transport;
+    const server = await serverP;
 
-    // Child sends to host (via pathIn)
-    const hostReceived = makeWaiter<string>();
-    host.onMessage(hostReceived.resolve);
+    // Server sends to client (via pathIn)
+    const clientReceived = makeWaiter<string>();
+    client.onMessage(clientReceived.resolve);
 
-    await child.send("child-to-host\n");
-    expect(await hostReceived.promise).toEqual("child-to-host");
+    await server.send("server-to-client\n");
+    expect(await clientReceived.promise).toEqual("server-to-client");
 
-    // Host sends to child (via pathOut)
-    const childReceived = makeWaiter<string>();
-    child.onMessage(childReceived.resolve);
+    // Client sends to server (via pathOut)
+    const serverReceived = makeWaiter<string>();
+    server.onMessage(serverReceived.resolve);
 
-    await host.send("host-to-child\n");
-    expect(await childReceived.promise).toEqual("host-to-child");
+    await client.send("client-to-server\n");
+    expect(await serverReceived.promise).toEqual("client-to-server");
 
-    await host.close();
-    await child.close();
+    await client.close();
+    await server.close();
     await unlink(pathIn).catch(() => {});
     await unlink(pathOut).catch(() => {});
   });

@@ -2,8 +2,8 @@
 //
 // Frame vocabulary: one JSON object per frame. Framing (newlines, message
 // boundaries) and serialization are the transport's concern, not here.
-//   child → host:  $proto, $state, $msg, $exit
-//   host → child:  $init, $msg
+//   server → client:  $proto, $state, $msg, $exit
+//   client → server:  $init, $msg
 import type { Message } from "../types.js";
 
 export const PROTO_VERSION = "json.v1";

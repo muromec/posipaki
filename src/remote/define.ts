@@ -1,9 +1,9 @@
 // ── defineRemoteActor ──────────────────────────────────────────────────────
 //
-// Wraps an ActorDefinition so that when spawned, it runs in a child process
+// Wraps an ActorDefinition so that when spawned, it runs in a server process
 // over two named fifos. Returns { actor, runRemoteRoot, isRemoteRoot }.
 //
-// Uses defineActor's setup hook to spawn the remote child before the first
+// Uses defineActor's setup hook to spawn the remote server before the first
 // yield, so proc.ready() shows the live remote state — same as local spawn.
 
 import { fileURLToPath } from "node:url";
@@ -13,9 +13,9 @@ import type { HandlerOptions, MethodOptions, ReflectionOptions } from "../actor-
 import { defineActor } from "../define-actor.js";
 import { stopPropagation } from "../hooks.js";
 import type { HookResult } from "../hooks.js";
-import { runChild } from "./child.js";
-import { type Connector, defaultConnector } from "./host.js";
-import type { RemoteProxy } from "./host.js";
+import { serveRemoteActor } from "./server.js";
+import { type Connector, defaultConnector } from "./client.js";
+import type { RemoteProxy } from "./client.js";
 import type { ActorDefinition } from "../actor-types.js";
 
 export interface RemoteActorOptions {
@@ -59,7 +59,7 @@ export function defineRemoteActor<
   const isRemoteRoot = !opts.manual && process.argv.includes(marker);
 
   if (isRemoteRoot) {
-    runChild(actor.fn);
+    serveRemoteActor(actor.fn);
   }
 
   const proxyDef = defineActor<
@@ -105,7 +105,7 @@ export function defineRemoteActor<
   return {
     actor: proxyDef as ActorDefinition<Args, State, InMsg, OutMsg, Reflection>,
     runRemoteRoot() {
-      return runChild(actor.fn);
+      return serveRemoteActor(actor.fn);
     },
     isRemoteRoot,
   };

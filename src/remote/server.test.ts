@@ -1,4 +1,4 @@
-// ── runChild integration tests ─────────────────────────────────────────────
+// ── serveRemoteActor integration tests ─────────────────────────────────────────────
 
 import { describe, it, expect, afterEach } from "vitest";
 import { spawn, execSync } from "node:child_process";
@@ -23,11 +23,11 @@ function getRuntime() {
   return process.argv[0];
 }
 
-describe("runChild integration", () => {
+describe("serveRemoteActor integration", () => {
   it("handshake + PING/PONG + STOP/exit with real actor", async () => {
     const thisDir = dirname(import.meta.url.slice(7));
-    const childScriptPath = join(thisDir, "./fixtures/pong.js");
-    const basePath = join(tmpdir(), `child-test-${randomUUID()}`);
+    const serverScriptPath = join(thisDir, "./fixtures/pong.js");
+    const basePath = join(tmpdir(), `server-test-${randomUUID()}`);
     const pathIn = basePath + ".in";
     const pathOut = basePath + ".out";
     cleanupPaths.push(pathIn, pathOut);
@@ -40,46 +40,46 @@ describe("runChild integration", () => {
 
     const setup = FifoUtf8NlineTransport.beginConnect(pathIn, pathOut);
 
-    const child = spawn(
+    const server = spawn(
       getRuntime(),
-      [childScriptPath, `--fifo-in=${pathIn}`, `--fifo-out=${pathOut}`],
+      [serverScriptPath, `--fifo-in=${pathIn}`, `--fifo-out=${pathOut}`],
       {
         cwd: process.cwd(),
         stdio: ["inherit", "inherit", "inherit"],
       },
     );
 
-    const host = await setup.transport;
+    const client = await setup.transport;
 
     const protoLine = await new Promise<string>((resolve) => {
-      host.onMessage((line) => resolve(line));
+      client.onMessage((line) => resolve(line));
     });
     expect(isProto(decode(protoLine))).toBe(true);
     expect(decode(protoLine).$proto).toBe(PROTO_VERSION);
-    host.removeHandler();
+    client.removeHandler();
 
-    await host.send(
+    await client.send(
       encode("$init", {
-        parentName: "test-host",
-        parentIdName: "test-host",
+        parentName: "test-client",
+        parentIdName: "test-client",
         tools: [],
       }),
     );
 
     const stateLine = await new Promise<string>((resolve) => {
-      host.onMessage((line) => resolve(line));
+      client.onMessage((line) => resolve(line));
     });
     const stateMsg = decode(stateLine);
     expect(isState(stateMsg)).toBe(true);
     expect((stateMsg.$state as Record<string, unknown>).pings).toBe(0);
-    host.removeHandler();
+    client.removeHandler();
 
     const messages: Record<string, unknown>[] = [];
     const exitWaiter = makeWaiter<{ code: number; state: unknown }>();
     let messageWaiter = makeWaiter<Record<string, unknown>[]>();
     let expectedMessageCount = 2;
 
-    host.onMessage((line) => {
+    client.onMessage((line) => {
       const msg = decode(line);
       if (isExit(msg)) {
         return exitWaiter.resolve({ code: msg.$exit.code, state: msg.$exit.state });
@@ -95,28 +95,28 @@ describe("runChild integration", () => {
       }
     });
 
-    await host.send(
+    await client.send(
       encode("$msg", {
         type: "PING",
-        fromName: "host",
+        fromName: "client",
         body: { type: "PING", count: 1 },
       }),
     );
 
     await expect(await messageWaiter.promise);
-    await host.send(
+    await client.send(
       encode("$msg", {
         type: "PING",
-        fromName: "host",
+        fromName: "client",
         body: { type: "PING", count: 2 },
       }),
     );
 
     await expect(await messageWaiter.promise);
-    await host.send(
+    await client.send(
       encode("$msg", {
         type: "PING",
-        fromName: "host",
+        fromName: "client",
         body: { type: "PING", count: 3 },
       }),
     );
@@ -130,16 +130,16 @@ describe("runChild integration", () => {
       { $state: { pings: 3 } },
     ]);
 
-    host.send(
+    client.send(
       encode("$msg", {
         type: "STOP",
-        fromName: "host",
+        fromName: "client",
         body: { type: "STOP", count: 0 },
       }),
     );
     expect(await exitWaiter.promise).toMatchObject({ code: 0 });
 
-    await host.close();
-    child.kill();
+    await client.close();
+    server.kill();
   }, 15000);
 });

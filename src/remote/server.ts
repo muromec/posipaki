@@ -1,4 +1,4 @@
-// ── Child-side adapter ─────────────────────────────────────────────────────
+// ── Server-side adapter ─────────────────────────────────────────────────────
 //
 // Wraps a posipaki actor in a CLI process that speaks the wire protocol over
 // two unidirectional named fifos.
@@ -19,7 +19,7 @@ export function makeSender(
 import { encode, decode, isInit, isMsg, PROTO_VERSION } from "./protocol.js";
 import { spawnAsync } from "../index.js";
 
-export async function runChild<Args, State, InMsg extends Message, OutMsg extends Message>(
+export async function serveRemoteActor<Args, State, InMsg extends Message, OutMsg extends Message>(
   fn: AsyncProcessFn<Args, State, InMsg, OutMsg>,
 ): Promise<void> {
   const fifoIn = process.argv.find((a) => a.startsWith("--fifo-in="))?.slice("--fifo-in=".length);
@@ -28,7 +28,7 @@ export async function runChild<Args, State, InMsg extends Message, OutMsg extend
     ?.slice("--fifo-out=".length);
 
   if (!fifoIn || !fifoOut) {
-    console.error("child: --fifo-in=<path> and --fifo-out=<path> required");
+    console.error("server: --fifo-in=<path> and --fifo-out=<path> required");
     process.exit(1);
   }
 
@@ -101,7 +101,7 @@ export async function runChild<Args, State, InMsg extends Message, OutMsg extend
   proc.wait().then(
     () => shutdown(0),
     (err: unknown) => {
-      console.error("child actor error:", err);
+      console.error("server actor error:", err);
       shutdown(1);
     },
   );

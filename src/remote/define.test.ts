@@ -8,12 +8,12 @@ import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-vi.mock("./child.js", () => ({
-  runChild: vi.fn(() => Promise.resolve()),
+vi.mock("./server.js", () => ({
+  serveRemoteActor: vi.fn(() => Promise.resolve()),
   makeSender: vi.fn(),
 }));
 
-vi.mock("./host.js", async (importOriginal) => {
+vi.mock("./client.js", async (importOriginal) => {
   let actual = {};
   if (importOriginal) {
     actual = await importOriginal();
@@ -21,7 +21,7 @@ vi.mock("./host.js", async (importOriginal) => {
 
   return {
     ...actual,
-    spawnRemote: vi.fn(() =>
+    connectRemote: vi.fn(() =>
       Promise.resolve({
         state: { pings: 0 },
         ready: async () => {},

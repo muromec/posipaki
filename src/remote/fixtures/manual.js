@@ -30,7 +30,7 @@ rl.on("line", async (line) => {
       if (body.type === "PING") {
         await writeFd.write(
           JSON.stringify({
-            $msg: { type: "PONG", fromName: "child", body: { type: "PONG", count: body.count } },
+            $msg: { type: "PONG", fromName: "server", body: { type: "PONG", count: body.count } },
           }) + "\n",
         );
       } else if (body.type === "STOP") {

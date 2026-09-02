@@ -1,6 +1,6 @@
-// ── Host-side adapter ──────────────────────────────────────────────────────
+// ── Client-side adapter ──────────────────────────────────────────────────────
 //
-// commandConnector: spawns a child process and bridges the wire protocol.
+// connectRemote: spawns the server process and bridges the wire protocol.
 // Connector wrappers (bunConnector, nodeConnector, defaultConnector) produce
 // the command array from a script path.
 
@@ -40,9 +40,9 @@ export type Connector<
   OutMsg extends Message = Message,
 > = (opts: CommandSpawnOptions) => Promise<RemoteProxy<State, InMsg, OutMsg>>;
 
-// ── commandConnector ───────────────────────────────────────────────────────
+// ── connectRemote ───────────────────────────────────────────────────────
 
-export async function spawnRemote<
+export async function connectRemote<
   State = unknown,
   InMsg extends Message = Message,
   OutMsg extends Message = Message,
@@ -80,8 +80,8 @@ export async function spawnRemote<
   await transport.send(
     encode("$init", {
       ...(opts.args as Record<string, unknown>),
-      parentName: opts.parentName ?? "host",
-      parentIdName: opts.parentName ?? "host",
+      parentName: opts.parentName ?? "client",
+      parentIdName: opts.parentName ?? "client",
     }),
   );
 
@@ -143,7 +143,7 @@ export async function spawnRemote<
     },
     async ready() {},
     send(msg: InMsg) {
-      const from = opts.parentName ?? "host";
+      const from = opts.parentName ?? "client";
       transport.send(encode("$msg", { fromName: from, body: msg }));
     },
     async wait() {
@@ -187,4 +187,4 @@ export function defaultConnector(scriptPath: string): Connector {
 
 // ── alias ───────────────────────────────────────────────────────────────────
 
-export const commandConnector = spawnRemote;
+export const commandConnector = connectRemote;

@@ -1,7 +1,7 @@
 // ── Sender identity reconstruction ─────────────────────────────────────────
 
 import { describe, it, expect } from "vitest";
-import { makeSender } from "./child.js";
+import { makeSender } from "./server.js";
 
 describe("sender reconstruction", () => {
   const parentId = Symbol.for("test-parent");
