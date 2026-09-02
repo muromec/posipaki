@@ -318,6 +318,8 @@ export function defineActor<
         name?: string;
         toParent?: (msg: OutMsg, from: SenderInfo) => void;
         addPlugins?: ActorPlugin[];
+        parentName?: string | null;
+        parentId?: symbol | null;
       },
     ): Promise<
       AsyncProcess<
@@ -335,6 +337,8 @@ export function defineActor<
         runtime,
         opts?.name ?? assembly.name ?? "actor",
         opts?.toParent,
+        opts?.parentName,
+        opts?.parentId,
       )(args);
       attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);
       return proc as AsyncProcess<

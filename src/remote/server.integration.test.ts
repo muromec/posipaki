@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
-import { FifoUtf8NlineTransport } from "./fifo.js";
-import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
+import { FifoUtf8NlineTransport } from "./transports/fifo.js";
+import { encode, decode, VERSION } from "./protocols/json1.js";
+import { isProto, isState, isMsg, isExit } from "./channel.js";
 import { makeWaiter } from "../util.js";
 import type { Message } from "../types.js";
 
@@ -55,15 +56,15 @@ describe("serveRemoteActor — FIFO integration", () => {
       client.onMessage((line) => resolve(line));
     });
     expect(isProto(decode(protoLine))).toBe(true);
-    expect(decode(protoLine).$proto).toBe(PROTO_VERSION);
+    expect(decode(protoLine).$proto).toBe(VERSION);
     client.removeHandler();
 
     await client.send(
-      encode("$init", {
+      encode({ $init: {
         parentName: "test-client",
         parentIdName: "test-client",
         tools: [],
-      }),
+      } }),
     );
 
     const stateLine = await new Promise<string>((resolve) => {
@@ -96,29 +97,29 @@ describe("serveRemoteActor — FIFO integration", () => {
     });
 
     await client.send(
-      encode("$msg", {
+      encode({ $msg: {
         type: "PING",
         fromName: "client",
         body: { type: "PING", count: 1 },
-      }),
+      } }),
     );
 
     await expect(await messageWaiter.promise);
     await client.send(
-      encode("$msg", {
+      encode({ $msg: {
         type: "PING",
         fromName: "client",
         body: { type: "PING", count: 2 },
-      }),
+      } }),
     );
 
     await expect(await messageWaiter.promise);
     await client.send(
-      encode("$msg", {
+      encode({ $msg: {
         type: "PING",
         fromName: "client",
         body: { type: "PING", count: 3 },
-      }),
+      } }),
     );
     await expect(await messageWaiter.promise).toEqual([
       { $msg: { body: { type: "PONG", count: 1 }, fromName: "remote" } },
@@ -131,11 +132,11 @@ describe("serveRemoteActor — FIFO integration", () => {
     ]);
 
     client.send(
-      encode("$msg", {
+      encode({ $msg: {
         type: "STOP",
         fromName: "client",
         body: { type: "STOP", count: 0 },
-      }),
+      } }),
     );
     expect(await exitWaiter.promise).toMatchObject({ code: 0 });
 

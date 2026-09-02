@@ -1,9 +1,10 @@
 let defineActor;
-let runFifoServer;
+let serveRemoteActor;
+let fifoArgvSpawner;
 
 try {
   ({ defineActor } = await import("../../../dist/index.js"));
-  ({ runFifoServer } = await import("../../../dist/remote/index.js"));
+  ({ serveRemoteActor, fifoArgvSpawner } = await import("../../../dist/remote/index.js"));
 } catch {
   console.error(
     "Posipaki remote actor failed to start.\nFailed to import, no built version of the library found.\nRun npm run build or bun run build first.\nExiting now",
@@ -22,4 +23,4 @@ const echoActor = defineActor({
   },
 });
 
-runFifoServer(echoActor.fn);
+serveRemoteActor(echoActor, fifoArgvSpawner);

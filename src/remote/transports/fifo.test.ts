@@ -7,7 +7,7 @@ import { join } from "node:path";
 import { execSync } from "node:child_process";
 import { unlink } from "node:fs/promises";
 import { FifoUtf8NlineTransport } from "./fifo.js";
-import { makeWaiter } from "../util.js";
+import { makeWaiter } from "../../util.js";
 
 let pipeCounter = 0;
 

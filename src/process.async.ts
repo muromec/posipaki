@@ -636,10 +636,12 @@ export function spawnAsync<
   fn: AsyncProcessFn<Args, State, InMessage, OutMessage>,
   pname: string,
   toParent?: MessageCallback<OutMessage>,
+  parentName?: string | null,
+  parentId?: symbol | null,
 ): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage, {}> {
   return (args: Args) => {
     const proc = new AsyncProcess<Args, State, InMessage, OutMessage, {}>(fn, pname, toParent);
-    proc.start(args);
+    proc.start(args, parentName, parentId);
     return proc;
   };
 }

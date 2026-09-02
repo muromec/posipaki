@@ -1,15 +1,15 @@
-// ── Server-side adapter ─────────────────────────────────────────────────────
+// ── Server side of the seam ────────────────────────────────────────────────
 //
-// Serves a posipaki actor over the remote-actor wire protocol. The seam's
-// server side: `serveRemoteActor` runs an actor over an already-established
-// transport (transport-agnostic). `runFifoServer` is the FIFO CLI entry point
-// that discovers its named fifos from argv and serves over them.
+// serveRemoteActor serves a posipaki actor over a frame Channel produced by a
+// spawner. It knows only the frame vocabulary (channel.ts) — no protocol, no
+// transport, no spawner. The spawner has already done the $proto handshake.
 
-import type { AsyncProcessFn, Message } from "../types.js";
-import { FifoUtf8NlineTransport } from "./fifo.js";
-import { encode, decode, isInit, isMsg, PROTO_VERSION } from "./protocol.js";
-import { spawnAsync } from "../index.js";
-import type { Transport } from "./transport.js";
+import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
+import type { Message } from "../types.js";
+import type { Channel } from "./channel.js";
+import { isInit, isMsg } from "./channel.js";
+
+export type Spawner = () => Promise<Channel>;
 
 export function makeSender(
   fromName: string,
@@ -27,62 +27,59 @@ export async function serveRemoteActor<
   State,
   InMsg extends Message,
   OutMsg extends Message,
->(fn: AsyncProcessFn<Args, State, InMsg, OutMsg>, transport: Transport): Promise<void> {
-  // 1. Send protocol version
-  await transport.send(encode("$proto", PROTO_VERSION));
+  R extends ReflectionOptions,
+>(actor: ActorDefinition<Args, State, InMsg, OutMsg, R>, spawner: Spawner): Promise<void> {
+  const channel = await spawner();
 
-  // 2. Wait for $init
-  const initMsg = await new Promise<Record<string, unknown>>((resolve) => {
-    transport.onMessage((line) => {
-      const msg = decode(line);
-      if (isInit(msg)) resolve(msg.$init);
-    });
+  // await $init
+  const initFrame = await new Promise<Record<string, unknown>>((resolve) => {
+    channel.onMessage((frame) => resolve(frame));
   });
-  transport.removeHandler();
+  channel.removeHandler();
+  if (!isInit(initFrame)) {
+    throw new Error("serveRemoteActor: expected $init");
+  }
 
-  const parentName = (initMsg.parentName as string) ?? null;
-  const parentIdName = (initMsg.parentIdName as string) ?? null;
+  const init = initFrame.$init;
+  const parentName = (init.parentName as string) ?? null;
+  const parentIdName = (init.parentIdName as string) ?? null;
   const parentId = parentIdName ? Symbol.for(parentIdName) : null;
-  const { parentName: _pn, parentIdName: _pid, ...initArgs } = initMsg;
+  const { parentName: _pn, parentIdName: _pid, ...initArgs } = init;
 
-  const wrappedFn: typeof fn = async function* (ctx, args) {
-    (ctx as Record<string, unknown>).parentName = parentName;
-    (ctx as Record<string, unknown>).parentId = parentId;
-    return yield* fn(ctx, args);
-  };
+  const proc = await actor.spawn(initArgs as unknown as Args, {
+    name: "remote",
+    parentName,
+    parentId,
+  });
 
-  const proc = spawnAsync(wrappedFn, "remote")(initArgs as unknown as Args);
-
-  // 3. Bridge actor output → transport
+  // bridge actor output → channel
   proc.subscribe("message", async (msg, sender) => {
     try {
-      await transport.send(encode("$msg", { fromName: sender.fromName, body: msg }));
+      await channel.send({ $msg: { fromName: sender.fromName, body: msg } });
     } catch {
       console.error("Error sending out the message");
     }
   });
   proc.subscribe("state", async () => {
     try {
-      await transport.send(encode("$state", proc.state as Record<string, unknown>));
+      await channel.send({ $state: proc.state as Record<string, unknown> });
     } catch (e) {
       console.error("Error sending out the message", e);
     }
   });
 
   await proc.ready();
+  await channel.send({ $state: proc.state as Record<string, unknown> });
 
-  await transport.send(encode("$state", proc.state as Record<string, unknown>));
-
-  // 4. Bridge transport input → actor
-  transport.onMessage((line) => {
-    const msg = decode(line);
-    if (isMsg(msg)) {
-      const { fromName, body } = msg.$msg;
+  // bridge channel input → actor
+  channel.onMessage((frame) => {
+    if (isMsg(frame)) {
+      const { fromName, body } = frame.$msg;
       proc.send(body as InMsg, makeSender(fromName, parentName, parentId));
     }
   });
 
-  // 5. Await actor exit, then announce it and close
+  // await actor exit, announce it, close
   let code = 0;
   try {
     await proc.wait();
@@ -90,26 +87,6 @@ export async function serveRemoteActor<
     console.error("server actor error:", err);
     code = 1;
   }
-  await transport.send(encode("$exit", { code, state: proc.state }));
-  await transport.close();
-}
-
-export async function runFifoServer<
-  Args,
-  State,
-  InMsg extends Message,
-  OutMsg extends Message,
->(fn: AsyncProcessFn<Args, State, InMsg, OutMsg>): Promise<void> {
-  const fifoIn = process.argv.find((a) => a.startsWith("--fifo-in="))?.slice("--fifo-in=".length);
-  const fifoOut = process.argv
-    .find((a) => a.startsWith("--fifo-out="))
-    ?.slice("--fifo-out=".length);
-
-  if (!fifoIn || !fifoOut) {
-    console.error("server: --fifo-in=<path> and --fifo-out=<path> required");
-    process.exit(1);
-  }
-
-  const transport = await FifoUtf8NlineTransport.connect(fifoOut, fifoIn);
-  await serveRemoteActor(fn, transport);
+  await channel.send({ $exit: { code, state: proc.state } });
+  await channel.close();
 }

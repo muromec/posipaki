@@ -54,6 +54,8 @@ export interface ActorDefinition<
       name?: string;
       toParent?: (msg: OutMsg, from: SenderInfo) => void;
       addPlugins?: ActorPlugin[];
+      parentName?: string | null;
+      parentId?: symbol | null;
     },
   ): Promise<
     AsyncProcess<

@@ -6,15 +6,16 @@
 import { open, type FileHandle } from "node:fs/promises";
 import { createReadStream, createWriteStream, type ReadStream, type WriteStream } from "node:fs";
 import * as readline from "node:readline";
-import type { Transport } from "./transport.js";
+import type { StringTransport } from "../channel.js";
 
-export class FifoUtf8NlineTransport implements Transport {
+export class FifoUtf8NlineTransport implements StringTransport {
   private readFd: FileHandle | null;
   private writeFd: FileHandle | null;
   private rl: readline.Interface | null;
   private rs: ReadStream | null;
   private ws: WriteStream | null;
   private pvtOnMessage: ((line: string) => void) | null = null;
+  private pvtOnClose: (() => void) | null = null;
   private closed = false;
   private closingPromise: Promise<void> | null = null;
   private pvtError: Error | null = null;
@@ -37,6 +38,7 @@ export class FifoUtf8NlineTransport implements Transport {
       });
 
       this.rl.on("close", () => {
+        this.pvtOnClose?.();
         this.close();
       });
 
@@ -154,6 +156,10 @@ export class FifoUtf8NlineTransport implements Transport {
     const prev = this.pvtOnMessage;
     this.pvtOnMessage = null;
     return prev;
+  }
+
+  onClose(handler: () => void): void {
+    this.pvtOnClose = handler;
   }
 
   get hasHandler(): boolean {

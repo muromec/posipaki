@@ -6,8 +6,9 @@ import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
-import { FifoUtf8NlineTransport } from "./fifo.js";
-import { encode, decode, isProto, isMsg, isState, isExit } from "./protocol.js";
+import { FifoUtf8NlineTransport } from "./transports/fifo.js";
+import { encode, decode } from "./protocols/json1.js";
+import { isProto, isMsg, isState, isExit } from "./channel.js";
 import type { Message } from "../types.js";
 import { makeWaiter } from "../util.js";
 
@@ -56,7 +57,7 @@ describe("FIFO handshake", () => {
     client.removeHandler();
 
     await client.send(
-      encode("$init", { parentName: "test-client", parentIdName: "test-client", tools: [] }),
+      encode({ $init: { parentName: "test-client", parentIdName: "test-client", tools: [] } }),
     );
 
     const stateLine = await new Promise<string>((resolve) => {
@@ -80,10 +81,10 @@ describe("FIFO handshake", () => {
       }
     });
 
-    await client.send(encode("$msg", { fromName: "client", body: { type: "PING", count: 42 } }));
+    await client.send(encode({ $msg: { fromName: "client", body: { type: "PING", count: 42 } } }));
     expect(await messageWaiter.promise).toEqual([{ type: "PONG", count: 42 }]);
 
-    client.send(encode("$msg", { type: "STOP", fromName: "client", body: { type: "STOP", count: 5 } }));
+    client.send(encode({ $msg: { type: "STOP", fromName: "client", body: { type: "STOP", count: 5 } } }));
 
     const exitCode = await exitWaiter.promise;
 

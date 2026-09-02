@@ -1,8 +1,23 @@
-export { serveRemoteActor, runFifoServer, makeSender } from "./server.js";
-export { commandConnector, bunConnector, nodeConnector, defaultConnector } from "./client.js";
-export type { CommandSpawnOptions, RemoteProxy, Connector } from "./client.js";
-export { defineRemoteActor } from "./define.js";
-export type { RemoteActorOptions, RemoteActorBundle } from "./define.js";
-export { FifoUtf8NlineTransport } from "./fifo.js";
-export type { Transport } from "./transport.js";
-export * from "./protocol.js";
+// ── remote module public surface ───────────────────────────────────────────
+
+// seam
+export { serveRemoteActor, makeSender } from "./server.js";
+export type { Spawner } from "./server.js";
+export { remoteClient } from "./client.js";
+export type { ClientSpawner } from "./client.js";
+
+// frame vocabulary (shared, pure)
+export type { Channel, StringTransport } from "./channel.js";
+export { isProto, isInit, isState, isMsg, isExit } from "./channel.js";
+
+// json1 protocol
+export { VERSION, encode, decode, json1Channel } from "./protocols/json1.js";
+
+// transports + spawners
+export { FifoUtf8NlineTransport } from "./transports/fifo.js";
+export { commandSpawner } from "./spawners/fifo-command.js";
+export { fifoArgvSpawner } from "./spawners/fifo-argv.js";
+
+// subprocess glue
+export { defineSubprocessActor } from "./define-subprocess.js";
+export type { SubprocessActorOptions, SubprocessActorBundle } from "./define-subprocess.js";

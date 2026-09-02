@@ -1,30 +1,30 @@
-// ── serveRemoteActor unit tests (in-memory fake transport) ────────────────
-//
-// These exercise the transport-agnostic serve loop without spawning a process
-// or touching a fifo. The FIFO end-to-end path is covered separately in
-// server.integration.test.ts.
+// ── serveRemoteActor unit tests (in-memory fake channel) ───────────────────
 
 import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "../index.js";
 import { serveRemoteActor } from "./server.js";
-import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
+import { isState, isMsg, isExit } from "./channel.js";
+import type { Channel } from "./channel.js";
 import { sleep } from "../util.js";
-import type { Transport } from "./transport.js";
 
-class FakeTransport implements Transport {
-  sent: string[] = [];
-  handler: ((frame: string) => void) | null = null;
+class FakeChannel implements Channel {
+  sent: Record<string, unknown>[] = [];
+  handler: ((frame: Record<string, unknown>) => void) | null = null;
+  closeHandler: (() => void) | null = null;
   closed = false;
 
-  async send(frame: string) {
+  async send(frame: Record<string, unknown>) {
     this.sent.push(frame);
   }
-  onMessage(handler: (frame: string) => void) {
+  onMessage(handler: (frame: Record<string, unknown>) => void) {
     if (this.handler) throw new Error("handler already set");
     this.handler = handler;
   }
   removeHandler() {
     this.handler = null;
+  }
+  onClose(handler: () => void) {
+    this.closeHandler = handler;
   }
   async close() {
     this.closed = true;
@@ -54,66 +54,48 @@ function makeEcho() {
   });
 }
 
-const sentFrames = (t: FakeTransport) => t.sent.map(decode);
-
 describe("serveRemoteActor (unit)", () => {
   it("handshakes, bridges messages and state, and announces exit", async () => {
-    const transport = new FakeTransport();
-    const serve = serveRemoteActor(makeEcho().fn, transport);
+    const channel = new FakeChannel();
+    const serve = serveRemoteActor(makeEcho(), () => Promise.resolve(channel));
 
-    // 1. announces protocol version first
-    await waitUntil(() => transport.sent.length >= 1, "$proto");
-    expect(decode(transport.sent[0])).toEqual({ $proto: PROTO_VERSION });
+    // 1. awaits $init
+    await waitUntil(() => channel.handler !== null, "$init handler");
+    channel.handler!({ $init: { parentName: "root", parentIdName: "root" } });
 
-    // 2. waits for $init, then spawns
-    await waitUntil(() => transport.handler !== null, "$init handler");
-    transport.handler!(encode("$init", { parentName: "root", parentIdName: "root" }));
+    // 2. emits initial $state
+    await waitUntil(() => channel.sent.some(isState), "initial $state");
+    expect(channel.sent.find(isState)!.$state).toEqual({ pings: 0 });
 
-    // 3. emits initial $state
-    await waitUntil(() => sentFrames(transport).some(isState), "initial $state");
-    const initial = sentFrames(transport).find(isState)!;
-    expect(initial.$state).toEqual({ pings: 0 });
+    // 3. forwards $msg → actor → $msg out
+    await waitUntil(() => channel.handler !== null, "message handler");
+    channel.handler!({ $msg: { fromName: "root", body: { type: "PING", count: 2 } } });
+    await waitUntil(() => channel.sent.some(isMsg), "$msg reply");
+    expect(channel.sent.find(isMsg)!.$msg).toMatchObject({
+      fromName: "remote",
+      body: { type: "PONG", count: 2 },
+    });
 
-    // 4. bridges $msg in → actor → $msg out + mirrored state
-    await waitUntil(() => transport.handler !== null, "message handler");
-    transport.handler!(encode("$msg", { fromName: "root", body: { type: "PING", count: 2 } }));
-
-    await waitUntil(() => sentFrames(transport).some(isMsg), "$msg reply");
-    const pong = sentFrames(transport).find(isMsg)!;
-    expect(pong.$msg).toMatchObject({ fromName: "remote", body: { type: "PONG", count: 2 } });
-
-    await waitUntil(
-      () =>
-        sentFrames(transport).some(
-          (f) => isState(f) && f.$state.pings === 1,
-        ),
-      "mirrored state",
-    );
-
-    // 5. STOP → $exit + close
-    transport.handler!(encode("$msg", { fromName: "root", body: { type: "STOP" } }));
-    await waitUntil(() => sentFrames(transport).some(isExit), "$exit");
+    // 4. STOP → $exit + close
+    channel.handler!({ $msg: { fromName: "root", body: { type: "STOP" } } });
+    await waitUntil(() => channel.sent.some(isExit), "$exit");
 
     await serve;
-    expect(transport.closed).toBe(true);
-
-    const exit = sentFrames(transport).find(isExit)!;
-    expect(exit.$exit.code).toBe(0);
+    expect(channel.closed).toBe(true);
+    expect(channel.sent.find(isExit)!.$exit.code).toBe(0);
   });
 
-  it("does not emit the initial $state before $init", async () => {
-    const transport = new FakeTransport();
-    const serve = serveRemoteActor(makeEcho().fn, transport);
+  it("does not emit initial $state before $init", async () => {
+    const channel = new FakeChannel();
+    const serve = serveRemoteActor(makeEcho(), () => Promise.resolve(channel));
 
-    await waitUntil(() => transport.sent.length >= 1, "$proto");
-    // no $init yet — the serve loop must be blocked waiting for it
-    expect(sentFrames(transport).filter(isState)).toEqual([]);
+    await waitUntil(() => channel.handler !== null, "$init handler");
+    expect(channel.sent.filter(isState)).toEqual([]);
 
-    // release it so the test tears down cleanly
-    await waitUntil(() => transport.handler !== null, "$init handler");
-    transport.handler!(encode("$init", { parentName: "root", parentIdName: "root" }));
-    await waitUntil(() => sentFrames(transport).some(isState), "initial $state");
-    transport.handler!(encode("$msg", { fromName: "root", body: { type: "STOP" } }));
+    channel.handler!({ $init: { parentName: "root", parentIdName: "root" } });
+    await waitUntil(() => channel.sent.some(isState), "initial $state");
+    await waitUntil(() => channel.handler !== null, "message handler");
+    channel.handler!({ $msg: { fromName: "root", body: { type: "STOP" } } });
     await serve;
   });
 });
