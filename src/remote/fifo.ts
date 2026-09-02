@@ -6,8 +6,9 @@
 import { open, type FileHandle } from "node:fs/promises";
 import { createReadStream, createWriteStream, type ReadStream, type WriteStream } from "node:fs";
 import * as readline from "node:readline";
+import type { Transport } from "./transport.js";
 
-export class FifoUtf8NlineTransport {
+export class FifoUtf8NlineTransport implements Transport {
   private readFd: FileHandle | null;
   private writeFd: FileHandle | null;
   private rl: readline.Interface | null;

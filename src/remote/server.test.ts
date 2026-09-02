@@ -1,145 +1,119 @@
-// ── serveRemoteActor integration tests ─────────────────────────────────────────────
+// ── serveRemoteActor unit tests (in-memory fake transport) ────────────────
+//
+// These exercise the transport-agnostic serve loop without spawning a process
+// or touching a fifo. The FIFO end-to-end path is covered separately in
+// server.integration.test.ts.
 
-import { describe, it, expect, afterEach } from "vitest";
-import { spawn, execSync } from "node:child_process";
-import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { randomUUID } from "node:crypto";
-import { unlink, writeFile } from "node:fs/promises";
-import { FifoUtf8NlineTransport } from "./fifo.js";
+import { describe, it, expect } from "vitest";
+import { defineActor, defineMessages } from "../index.js";
+import { serveRemoteActor } from "./server.js";
 import { encode, decode, isProto, isState, isMsg, isExit, PROTO_VERSION } from "./protocol.js";
-import { makeWaiter } from "../util.js";
-import type { Message } from "../types.js";
+import { sleep } from "../util.js";
+import type { Transport } from "./transport.js";
 
-const cleanupPaths: string[] = [];
+class FakeTransport implements Transport {
+  sent: string[] = [];
+  handler: ((frame: string) => void) | null = null;
+  closed = false;
 
-afterEach(async () => {
-  for (const p of cleanupPaths.splice(0)) {
-    await unlink(p).catch(() => {});
+  async send(frame: string) {
+    this.sent.push(frame);
   }
-});
-
-function getRuntime() {
-  return process.argv[0];
+  onMessage(handler: (frame: string) => void) {
+    if (this.handler) throw new Error("handler already set");
+    this.handler = handler;
+  }
+  removeHandler() {
+    this.handler = null;
+  }
+  async close() {
+    this.closed = true;
+  }
 }
 
-describe("serveRemoteActor integration", () => {
-  it("handshake + PING/PONG + STOP/exit with real actor", async () => {
-    const thisDir = dirname(import.meta.url.slice(7));
-    const serverScriptPath = join(thisDir, "./fixtures/pong.js");
-    const basePath = join(tmpdir(), `server-test-${randomUUID()}`);
-    const pathIn = basePath + ".in";
-    const pathOut = basePath + ".out";
-    cleanupPaths.push(pathIn, pathOut);
+async function waitUntil(predicate: () => boolean, what: string) {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timeout waiting for ${what}`);
+    await sleep(1);
+  }
+}
 
-    /*
-    Yes, there is no fs.mkfifo in nodejs as of version 26.7.0
-    */
-    execSync(`mkfifo "${pathIn}"`);
-    execSync(`mkfifo "${pathOut}"`);
-
-    const setup = FifoUtf8NlineTransport.beginConnect(pathIn, pathOut);
-
-    const server = spawn(
-      getRuntime(),
-      [serverScriptPath, `--fifo-in=${pathIn}`, `--fifo-out=${pathOut}`],
-      {
-        cwd: process.cwd(),
-        stdio: ["inherit", "inherit", "inherit"],
+function makeEcho() {
+  return defineActor({
+    name: "echo",
+    inMessages: defineMessages<{ type: "PING"; count: number }>(),
+    outMessages: defineMessages<{ type: "PONG"; count: number }>(),
+    setup: () => ({ pings: 0 }),
+    handlers: {
+      async PING(msg: { type: "PING"; count: number }) {
+        this.state.pings += 1;
+        await this.emit({ type: "PONG", count: msg.count });
       },
+    },
+  });
+}
+
+const sentFrames = (t: FakeTransport) => t.sent.map(decode);
+
+describe("serveRemoteActor (unit)", () => {
+  it("handshakes, bridges messages and state, and announces exit", async () => {
+    const transport = new FakeTransport();
+    const serve = serveRemoteActor(makeEcho().fn, transport);
+
+    // 1. announces protocol version first
+    await waitUntil(() => transport.sent.length >= 1, "$proto");
+    expect(decode(transport.sent[0])).toEqual({ $proto: PROTO_VERSION });
+
+    // 2. waits for $init, then spawns
+    await waitUntil(() => transport.handler !== null, "$init handler");
+    transport.handler!(encode("$init", { parentName: "root", parentIdName: "root" }));
+
+    // 3. emits initial $state
+    await waitUntil(() => sentFrames(transport).some(isState), "initial $state");
+    const initial = sentFrames(transport).find(isState)!;
+    expect(initial.$state).toEqual({ pings: 0 });
+
+    // 4. bridges $msg in → actor → $msg out + mirrored state
+    await waitUntil(() => transport.handler !== null, "message handler");
+    transport.handler!(encode("$msg", { fromName: "root", body: { type: "PING", count: 2 } }));
+
+    await waitUntil(() => sentFrames(transport).some(isMsg), "$msg reply");
+    const pong = sentFrames(transport).find(isMsg)!;
+    expect(pong.$msg).toMatchObject({ fromName: "remote", body: { type: "PONG", count: 2 } });
+
+    await waitUntil(
+      () =>
+        sentFrames(transport).some(
+          (f) => isState(f) && f.$state.pings === 1,
+        ),
+      "mirrored state",
     );
 
-    const client = await setup.transport;
+    // 5. STOP → $exit + close
+    transport.handler!(encode("$msg", { fromName: "root", body: { type: "STOP" } }));
+    await waitUntil(() => sentFrames(transport).some(isExit), "$exit");
 
-    const protoLine = await new Promise<string>((resolve) => {
-      client.onMessage((line) => resolve(line));
-    });
-    expect(isProto(decode(protoLine))).toBe(true);
-    expect(decode(protoLine).$proto).toBe(PROTO_VERSION);
-    client.removeHandler();
+    await serve;
+    expect(transport.closed).toBe(true);
 
-    await client.send(
-      encode("$init", {
-        parentName: "test-client",
-        parentIdName: "test-client",
-        tools: [],
-      }),
-    );
+    const exit = sentFrames(transport).find(isExit)!;
+    expect(exit.$exit.code).toBe(0);
+  });
 
-    const stateLine = await new Promise<string>((resolve) => {
-      client.onMessage((line) => resolve(line));
-    });
-    const stateMsg = decode(stateLine);
-    expect(isState(stateMsg)).toBe(true);
-    expect((stateMsg.$state as Record<string, unknown>).pings).toBe(0);
-    client.removeHandler();
+  it("does not emit the initial $state before $init", async () => {
+    const transport = new FakeTransport();
+    const serve = serveRemoteActor(makeEcho().fn, transport);
 
-    const messages: Record<string, unknown>[] = [];
-    const exitWaiter = makeWaiter<{ code: number; state: unknown }>();
-    let messageWaiter = makeWaiter<Record<string, unknown>[]>();
-    let expectedMessageCount = 2;
+    await waitUntil(() => transport.sent.length >= 1, "$proto");
+    // no $init yet — the serve loop must be blocked waiting for it
+    expect(sentFrames(transport).filter(isState)).toEqual([]);
 
-    client.onMessage((line) => {
-      const msg = decode(line);
-      if (isExit(msg)) {
-        return exitWaiter.resolve({ code: msg.$exit.code, state: msg.$exit.state });
-      }
-
-      messages.push(msg);
-      if (messages.length === expectedMessageCount) {
-        messageWaiter.resolve(messages);
-
-        // wait for next 2
-        messageWaiter = makeWaiter<Record<string, unknown>[]>();
-        expectedMessageCount += 2;
-      }
-    });
-
-    await client.send(
-      encode("$msg", {
-        type: "PING",
-        fromName: "client",
-        body: { type: "PING", count: 1 },
-      }),
-    );
-
-    await expect(await messageWaiter.promise);
-    await client.send(
-      encode("$msg", {
-        type: "PING",
-        fromName: "client",
-        body: { type: "PING", count: 2 },
-      }),
-    );
-
-    await expect(await messageWaiter.promise);
-    await client.send(
-      encode("$msg", {
-        type: "PING",
-        fromName: "client",
-        body: { type: "PING", count: 3 },
-      }),
-    );
-    await expect(await messageWaiter.promise).toEqual([
-      { $msg: { body: { type: "PONG", count: 1 }, fromName: "remote" } },
-      { $state: { pings: 1 } },
-      { $msg: { body: { type: "PONG", count: 2 }, fromName: "remote" } },
-      { $state: { pings: 2 } },
-
-      { $msg: { body: { type: "PONG", count: 3 }, fromName: "remote" } },
-      { $state: { pings: 3 } },
-    ]);
-
-    client.send(
-      encode("$msg", {
-        type: "STOP",
-        fromName: "client",
-        body: { type: "STOP", count: 0 },
-      }),
-    );
-    expect(await exitWaiter.promise).toMatchObject({ code: 0 });
-
-    await client.close();
-    server.kill();
-  }, 15000);
+    // release it so the test tears down cleanly
+    await waitUntil(() => transport.handler !== null, "$init handler");
+    transport.handler!(encode("$init", { parentName: "root", parentIdName: "root" }));
+    await waitUntil(() => sentFrames(transport).some(isState), "initial $state");
+    transport.handler!(encode("$msg", { fromName: "root", body: { type: "STOP" } }));
+    await serve;
+  });
 });

@@ -13,7 +13,7 @@ import type { HandlerOptions, MethodOptions, ReflectionOptions } from "../actor-
 import { defineActor } from "../define-actor.js";
 import { stopPropagation } from "../hooks.js";
 import type { HookResult } from "../hooks.js";
-import { serveRemoteActor } from "./server.js";
+import { runFifoServer } from "./server.js";
 import { type Connector, defaultConnector } from "./client.js";
 import type { RemoteProxy } from "./client.js";
 import type { ActorDefinition } from "../actor-types.js";
@@ -59,7 +59,7 @@ export function defineRemoteActor<
   const isRemoteRoot = !opts.manual && process.argv.includes(marker);
 
   if (isRemoteRoot) {
-    serveRemoteActor(actor.fn);
+    runFifoServer(actor.fn);
   }
 
   const proxyDef = defineActor<
@@ -105,7 +105,7 @@ export function defineRemoteActor<
   return {
     actor: proxyDef as ActorDefinition<Args, State, InMsg, OutMsg, Reflection>,
     runRemoteRoot() {
-      return serveRemoteActor(actor.fn);
+      return runFifoServer(actor.fn);
     },
     isRemoteRoot,
   };

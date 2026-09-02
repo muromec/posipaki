@@ -1,10 +1,15 @@
 // ── Server-side adapter ─────────────────────────────────────────────────────
 //
-// Wraps a posipaki actor in a CLI process that speaks the wire protocol over
-// two unidirectional named fifos.
+// Serves a posipaki actor over the remote-actor wire protocol. The seam's
+// server side: `serveRemoteActor` runs an actor over an already-established
+// transport (transport-agnostic). `runFifoServer` is the FIFO CLI entry point
+// that discovers its named fifos from argv and serves over them.
 
 import type { AsyncProcessFn, Message } from "../types.js";
 import { FifoUtf8NlineTransport } from "./fifo.js";
+import { encode, decode, isInit, isMsg, PROTO_VERSION } from "./protocol.js";
+import { spawnAsync } from "../index.js";
+import type { Transport } from "./transport.js";
 
 export function makeSender(
   fromName: string,
@@ -16,24 +21,13 @@ export function makeSender(
   }
   return { fromName, fromId: Symbol() };
 }
-import { encode, decode, isInit, isMsg, PROTO_VERSION } from "./protocol.js";
-import { spawnAsync } from "../index.js";
 
-export async function serveRemoteActor<Args, State, InMsg extends Message, OutMsg extends Message>(
-  fn: AsyncProcessFn<Args, State, InMsg, OutMsg>,
-): Promise<void> {
-  const fifoIn = process.argv.find((a) => a.startsWith("--fifo-in="))?.slice("--fifo-in=".length);
-  const fifoOut = process.argv
-    .find((a) => a.startsWith("--fifo-out="))
-    ?.slice("--fifo-out=".length);
-
-  if (!fifoIn || !fifoOut) {
-    console.error("server: --fifo-in=<path> and --fifo-out=<path> required");
-    process.exit(1);
-  }
-
-  const transport = await FifoUtf8NlineTransport.connect(fifoOut, fifoIn);
-
+export async function serveRemoteActor<
+  Args,
+  State,
+  InMsg extends Message,
+  OutMsg extends Message,
+>(fn: AsyncProcessFn<Args, State, InMsg, OutMsg>, transport: Transport): Promise<void> {
   // 1. Send protocol version
   await transport.send(encode("$proto", PROTO_VERSION));
 
@@ -58,22 +52,18 @@ export async function serveRemoteActor<Args, State, InMsg extends Message, OutMs
   };
 
   const proc = spawnAsync(wrappedFn, "remote")(initArgs as unknown as Args);
+
+  // 3. Bridge actor output → transport
   proc.subscribe("message", async (msg, sender) => {
     try {
-      const encodedMsg = encode("$msg", {
-        fromName: sender.fromName,
-        body: msg,
-      });
-      await transport.send(encodedMsg);
+      await transport.send(encode("$msg", { fromName: sender.fromName, body: msg }));
     } catch {
       console.error("Error sending out the message");
     }
   });
-
   proc.subscribe("state", async () => {
     try {
-      const encodedState = encode("$state", proc.state as Record<string, unknown>);
-      await transport.send(encodedState);
+      await transport.send(encode("$state", proc.state as Record<string, unknown>));
     } catch (e) {
       console.error("Error sending out the message", e);
     }
@@ -83,26 +73,43 @@ export async function serveRemoteActor<Args, State, InMsg extends Message, OutMs
 
   await transport.send(encode("$state", proc.state as Record<string, unknown>));
 
-  // 6. Forward incoming messages to the actor
+  // 4. Bridge transport input → actor
   transport.onMessage((line) => {
     const msg = decode(line);
     if (isMsg(msg)) {
       const { fromName, body } = msg.$msg;
-      proc.send(body as InMsg, { fromName, fromId: Symbol() });
+      proc.send(body as InMsg, makeSender(fromName, parentName, parentId));
     }
   });
 
-  // 7. On actor exit, send $exit
-  const shutdown = async (code: number) => {
-    await transport.send(encode("$exit", { code, state: proc.state }));
-    await transport.close();
-    process.exit(code);
-  };
-  proc.wait().then(
-    () => shutdown(0),
-    (err: unknown) => {
-      console.error("server actor error:", err);
-      shutdown(1);
-    },
-  );
+  // 5. Await actor exit, then announce it and close
+  let code = 0;
+  try {
+    await proc.wait();
+  } catch (err) {
+    console.error("server actor error:", err);
+    code = 1;
+  }
+  await transport.send(encode("$exit", { code, state: proc.state }));
+  await transport.close();
+}
+
+export async function runFifoServer<
+  Args,
+  State,
+  InMsg extends Message,
+  OutMsg extends Message,
+>(fn: AsyncProcessFn<Args, State, InMsg, OutMsg>): Promise<void> {
+  const fifoIn = process.argv.find((a) => a.startsWith("--fifo-in="))?.slice("--fifo-in=".length);
+  const fifoOut = process.argv
+    .find((a) => a.startsWith("--fifo-out="))
+    ?.slice("--fifo-out=".length);
+
+  if (!fifoIn || !fifoOut) {
+    console.error("server: --fifo-in=<path> and --fifo-out=<path> required");
+    process.exit(1);
+  }
+
+  const transport = await FifoUtf8NlineTransport.connect(fifoOut, fifoIn);
+  await serveRemoteActor(fn, transport);
 }
