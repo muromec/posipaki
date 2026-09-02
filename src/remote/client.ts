@@ -96,6 +96,11 @@ export function remoteClient<
       }
       this.agreeToStop();
     },
+    async afterEnd() {
+      if (this.state.private.channel) {
+        await this.state.private.channel.close();
+      }
+    },
   });
 
   return proxyDef as unknown as ActorDefinition<Args, State, InMsg, OutMsg, R>;

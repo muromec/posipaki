@@ -77,4 +77,23 @@ describe("remoteClient (unit)", () => {
     channel.handler!({ $exit: { code: 0, state: { count: 1 } } });
     await proc.wait();
   });
+
+  it("closes the channel when the proxy stops", async () => {
+    const channel = new FakeChannel();
+    const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
+      "counter",
+      () => Promise.resolve(channel),
+    );
+
+    const proc = await actor.spawn({ start: 0 });
+    while (!channel.handler) await sleep(1);
+    channel.handler!({ $state: { count: 0 } });
+
+    proc.send({ type: "STOP" });
+    while (!channel.sent.some((f) => isMsg(f))) await sleep(1);
+    channel.handler!({ $exit: { code: 0, state: { count: 0 } } });
+    await proc.wait();
+
+    expect(channel.closed).toBe(true);
+  });
 });
