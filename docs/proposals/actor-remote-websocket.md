@@ -1,5 +1,10 @@
 # WebSocket transport for remote actors
 
+> **Superseded.** The WebSocket transport is implemented — see
+> [actor-remote.md](./actor-remote.md). This draft predates the server/client
+> rename and the spawner design; its file references (`protocol.ts`, `child.ts`,
+> `host.ts`) are stale.
+
 **Status:** draft
 **Follows:** [actor-remote.md](./actor-remote.md)
 

@@ -1,31 +1,27 @@
 # Remote Actors
 
-**Status:** draft
+**Status:** Implemented
 
-> **Note:** this replaces the earlier "Actor Process Isolation & Context
-> Mobility" draft, which was written around FIFO child processes and used
-> "host"/"child" naming. The primitive is unchanged — context mobility — but the
-> topology is now stated as a **server/client** split, the layering is corrected
-> (framing is a transport concern, not a protocol concern), and
-> the layers below the glue are a stable interface rather than internals.
+The primitive is **context mobility**: run a posipaki actor in any execution
+context that can speak a small protocol, and let consumers treat local and
+remote identically. The actor doesn't know it's remote; the consumer doesn't
+either.
 
 ## Motivation
 
-All actors currently run in a single Node process, but the architecture already
-message-passes between actors. The remote-actor primitive is **context
-mobility**: run a posipaki actor in any execution context that can speak a small
-protocol, and let consumers treat local and remote identically.
-
-That context can be a child process, a web worker, a different machine over
-WebSocket, an SSH session, a sandbox. The actor doesn't know it's remote; the
-consumer doesn't either.
+Actors message-pass in a single process, but the runtime is already
+transport-agnostic about *who* a message goes to. The remote-actor primitive
+moves an actor's inbox and outbox across a boundary — a child process, a web
+worker, a different machine over WebSocket, an SSH session, a sandbox — while
+the actor's `setup`, handlers, and storage stay in the **server** and a thin
+**client** proxy stands in for it locally.
 
 ## The model: a server/client split
 
-A remote actor is a classic server/client pair speaking one protocol:
+A remote actor is a server/client pair speaking one protocol:
 
-- **Server** — holds the real actor (`fn`, `setup`, handlers, and whatever
-  storage the handlers close over). It serves the actor's state and messages.
+- **Server** — holds the real actor (`setup`, handlers, and whatever storage the
+  handlers close over). It serves the actor's state and messages.
 - **Client** — holds a proxy. It connects to a server and drives the actor
   through it.
 
@@ -34,61 +30,66 @@ which the server dispatches to the actor's handler. The actor's `emit` becomes
 `$msg` back, which the client delivers to the proxy's subscribers. State mirrors
 server → client as `$state`.
 
-The two endpoints are the two faces of **one seam** — the wire protocol. They are
-mirror images, sit at the same distance above the transport, and version/evolve
-**together**: any change to the frame vocabulary touches both sides at once.
+The two endpoints are the two faces of **one seam** — the wire protocol. They
+are mirror images, sit at the same distance above the transport, and
+version/evolve **together**: any change to the frame vocabulary touches both
+sides at once.
 
-> **Naming.** The current `src/remote/` names these backwards: `child.ts`
-> (`runChild`) is the **server**, and `host.ts` (`spawnRemote`) is the
-> **client**. This proposal renames them. We avoid location words — "frontend"/
-> "backend" (breaks for workers, where both sides are in one browser) and
-> "host"/"child" (breaks for non-process transports) — and use the role words
-> server/client throughout.
+> **Naming.** The roles are named by what they *do*, not where they live:
+> `server` (serves the actor) and `client` (drives a proxy). Location words are
+> avoided — "frontend"/"backend" breaks for workers (both sides in one browser),
+> "host"/"child" breaks for non-process transports.
 
 ## Layers
 
 ```
 ┌──────────────────────────────────────────────────────────────┐
-│  glue       defineRemoteActor                 sugar          │
+│  glue       defineSubprocessActor               sugar        │
 ├──────────────────────────────────────────────────────────────┤
-│  seam       serveRemoteActor · connectRemote  server/client  │
+│  seam       serveRemoteActor · remoteClient     server/client│
 ├──────────────────────────────────────────────────────────────┤
-│  transport  FIFO · WebSocket · Worker         framing + ser  │
+│  channel    Channel · StringTransport · guards  frame vocab  │
 ├──────────────────────────────────────────────────────────────┤
-│  protocol   frame vocabulary + guards + version              │
+│  transport  FIFO · WebSocket · Worker           framing      │
+├──────────────────────────────────────────────────────────────┤
+│  protocol   json1 (json.v1) · clone (clone.v1)  encoding     │
 └──────────────────────────────────────────────────────────────┘
 ```
 
+| Layer | Files | Owns |
+| --- | --- | --- |
+| **Protocol** | `protocols/json1.ts` | JSON `encode`/`decode` + the version string (`json.v1`). The worker's structured-clone encoding (`clone.v1`) has no JSON and lives in its transport. |
+| **Channel** | `channel.ts` | `Channel` (frame objects), `StringTransport` (frame strings), and the frame guards. This is the seam's shared vocabulary. |
+| **Transport** | `transports/*.ts` | Framing + movement. FIFO and WebSocket move encoded strings; Worker moves frame objects directly. |
+| **Spawner** | `spawners/*.ts` | Environment bootstrap: how a transport is *obtained* on each side, plus the `$proto` handshake. |
+| **Seam** | `server.ts`, `client.ts` | `serveRemoteActor` / `remoteClient` — pump frames over a `Channel`. |
+| **Glue** | `define-subprocess.ts` | `defineSubprocessActor` — wrap the client side as a normal actor definition. |
+
 Each rung is a stable interface, usable on its own. You don't have to climb to
-the top.
-
-| Layer | Owns |
-| --- | --- |
-| **Protocol** | The frame vocabulary (`$proto`/`$init`/`$state`/`$msg`/`$exit`), the type guards, and a version. **Object-shaped, not string-shaped.** |
-| **Transport** | Framing + movement. How a byte stream is split back into frames and moved. |
-| **Seam** | Two endpoints — `serveRemoteActor` (server) and `connectRemote` (client) — each pumps the protocol over a transport. |
-| **Glue** | `defineRemoteActor` — the demoable sugar that wraps the client side into a normal actor. |
-
-The protocol semantics do not change when the transport does.
+the top, and the seam never sees a specific protocol, transport, or spawner.
 
 ## Protocol
 
 The protocol is a set of **frame objects** — plain JS objects carrying a single
-`$`-key each — plus the JSON encoding (`encode`/`decode`), type guards, and a
-version string. It knows nothing about framing; that is the transport's business.
+`$`-key each. It knows nothing about framing; that is the transport's business.
 
 ### Version
 
-`PROTO_VERSION = "json.v1"` — names the *encoding* (JSON). The frame vocabulary
-(the `$`-keys and their meaning) is fixed; the same frames could equally be
-carried as `asn1.v1` or `protobuf.v1`. The version deliberately does **not** name
-the *framing* — newlines, message boundaries — that is the transport's concern
-(the old `"ndjson.v1"` conflated the two). The handshake checks encoding
-compatibility and acts as the server's "I'm ready" signal.
+The version names the *encoding*, not the framing.
+
+- `VERSION = "json.v1"` — JSON encoding (`protocols/json1.ts`). The frame
+  vocabulary is fixed; the same frames could equally be carried as
+  `asn1.v1` or `protobuf.v1`.
+- `WORKER_VERSION = "clone.v1"` — structured clone, the worker's native
+  `postMessage` encoding. No JSON round-trip; the transport moves frame objects
+  as-is.
+
+The handshake checks encoding compatibility and acts as the server's "I'm
+ready" signal.
 
 ### Frame vocabulary
 
-Five frames, matching the implementation:
+Five frames:
 
 | Frame | Direction | Purpose |
 | --- | --- | --- |
@@ -98,8 +99,6 @@ Five frames, matching the implementation:
 | `$msg` | bidirectional | a posipaki message crossing the boundary |
 | `$exit` | server → client | graceful exit + final state |
 
-Each frame is one object:
-
 ```json
 { "$proto": "json.v1" }
 { "$init": { "start": 0, "parentName": "host", "parentIdName": "host" } }
@@ -108,15 +107,18 @@ Each frame is one object:
 { "$exit": { "code": 0, "state": { "count": 42 } } }
 ```
 
-The guards (`isProto`, `isInit`, `isState`, `isMsg`, `isExit`) operate on these
-objects.
+The guards (`isProto`, `isInit`, `isState`, `isMsg`, `isExit`) narrow a decoded
+frame to one of these shapes. `server.ts` and `client.ts` speak only in `Channel`
+plus these guards.
 
 ### Sender identity
 
-`$msg` carries `fromName` plus the message body. On receipt the sender is
-reconstructed as `{ fromName, fromId: Symbol() }` — a fresh symbol, because a
-plain symbol can't survive serialization. Cross-boundary *message* identity is
-therefore not preserved (a known shortcoming).
+`$msg` carries `fromName` plus the message body. On receipt the server rebuilds
+the sender with `makeSender(fromName, parentName, parentId)`: if the message is
+from the parent (`fromName === parentName`), the parent's `Symbol.for` id is
+used; otherwise a fresh `Symbol()`. Cross-boundary *message* identity is
+therefore not preserved for non-parent senders — a plain symbol can't survive
+serialization.
 
 `$init` is different: `parentName`/`parentIdName` are `Symbol.for` names, so the
 parent's identity *does* round-trip — both sides resolve the same global symbol
@@ -124,79 +126,108 @@ by name.
 
 ### Framing is **not** here
 
-The earlier draft's `encode` did `JSON.stringify(...) + "\n"` in one step,
-conflating encoding with framing. That was a bug:
-
 - **Encoding** (JSON) is the protocol's job — `encode`/`decode` turn a frame
   object into a string and back, and the version names it (`json.v1`).
 - **Framing** is how a byte stream is split back into discrete messages. It
   belongs to the transport — the transport is the thing that must split the
   stream.
 
-So `encode`/`decode` stay in the protocol (JSON only, no `\n`); the transport
-adds and strips the delimiter.
+So `encode`/`decode` stay in the protocol (JSON only, no delimiter); the
+transport adds and strips the delimiter. WebSocket and Worker have native
+message boundaries, so they add nothing.
 
 ## Transport
 
+There are two currency types above the transport:
+
 ```ts
-interface Transport {
+interface StringTransport {
   send(frame: string): void | Promise<void>;
   onMessage(handler: (frame: string) => void): void;
   removeHandler(): void;
+  onClose(handler: () => void): void;
+  close(): Promise<void>;
+}
+
+interface Channel {
+  send(frame: Record<string, unknown>): void | Promise<void>;
+  onMessage(handler: (frame: Record<string, unknown>) => void): void;
+  removeHandler(): void;
+  onClose(handler: () => void): void;
   close(): Promise<void>;
 }
 ```
 
-The transport moves **encoded frames** (JSON strings) and owns framing and
-movement; the protocol's `encode`/`decode` sits above it.
+`StringTransport` moves encoded frames (strings); `Channel` moves decoded frame
+objects. `json1Channel(transport)` wraps the former into the latter.
 
-| Transport | Framing | Client reaches the server by |
+| Transport | Implements | Encoding | Client reaches the server by |
+| --- | --- | --- | --- |
+| **FIFO** (`fifo.ts`) | `StringTransport` | `json.v1` | spawning the child and opening the fifo |
+| **WebSocket** (`websocket.ts`) | `StringTransport` | `json.v1` | connecting to `ws://` / upgrading a request |
+| **Worker** (`worker.ts`) | `Channel` | `clone.v1` | `new Worker(url)` |
+
+FIFO and WebSocket carry JSON-encoded strings; `json1Channel` decodes them. The
+worker case is different: `postMessage` structured-clones the frame object
+directly, so `WorkerTransport` implements `Channel` and there is no JSON.
+
+## Spawners
+
+A transport is *how* frames move; a spawner is *how a transport is obtained*.
+The seam takes a spawner, not a transport, so environment differences — and
+future isolation wrappers (`sudo`, `bwrap`, `docker`) — are a spawner transform,
+not a seam concern.
+
+```ts
+type Spawner = () => Promise<Channel>;          // server side
+type ClientSpawner<Args> = (args: Args) => Promise<Channel>;  // client side
+```
+
+The spawner owns the `$proto` handshake: the server spawner **sends** `$proto`
+and returns the channel; the client spawner **awaits and validates** `$proto`
+and returns the channel. The seam starts at `$init` and never sees the version
+string.
+
+| Spawner | Side | Bootstraps by |
 | --- | --- | --- |
-| **FIFO** | newline (`\n`) | spawning the child and opening the fifo |
-| **WebSocket** | native message boundary | connecting to `ws://` / upgrading a request |
-| **Worker** | native message boundary | `new Worker(url)` |
-
-FIFO and WebSocket both carry `json.v1` (JSON-encoded frames). The worker case is
-different: `postMessage` structured-clones the frame object directly (no JSON),
-so it is a distinct encoding and version — a future concern. The seam is
-unchanged; only the transport and the spawner differ.
+| `fifoArgvSpawner()` | server | reading `--fifo-in`/`--fifo-out` from argv |
+| `commandSpawner(command)` | client | `mkfifo` + spawning the command |
+| `wsServerSpawner(ws)` | server | wrapping an already-upgraded socket |
+| `wsClientSpawner(url)` | client | `new WebSocket(url)` |
+| `workerSelfSpawner()` | server | wrapping the worker-global `self` |
+| `workerClientSpawner(url)` | client | `new Worker(url)` |
 
 ## The seam
 
-### Server — `serveRemoteActor(fn, transport, { env })`
+### Server — `serveRemoteActor(actor, spawner)`
 
-Serves one actor over an already-established transport:
+Serves one actor over a `Channel` produced by the spawner:
 
-1. send `$proto`
+1. await the spawner's channel (the `$proto` handshake is already done)
 2. await `$init`, split domain args from parent identity
-3. spawn `fn(args, env)`
-4. bridge: transport-in → `actor.send`; `actor` emit → `$msg`/`$state`; on exit → `$exit`
-5. close the transport
+3. spawn `actor` via `actor.spawn(args, { name: "remote", parentName, parentId })`
+4. bridge: channel-in → `proc.send`; `proc` emit → `$msg`/`$state`; on exit → `$exit`
+5. close the channel
 
-This is today's `runChild`, with the argv/FIFO bootstrap peeled off and the loop
-extracted as `bridgeActor(fn, transport, { env })`.
+It takes the `ActorDefinition` (not a bare `fn`), so plugins and reflection
+survive the spawn — only `actor.spawn` runs `resolvePlugins` and
+`attachReflection`.
 
-### Client — `connectRemote(transport, opts) → RemoteProxy`
+### Client — `remoteClient(name, spawner)`
 
-Connects to a server over an already-established transport:
+Returns a full `ActorDefinition` whose `setup` connects through the spawner and
+whose handlers drive a proxy:
 
-1. await `$proto`, validate version
-2. send `$init` (domain args + parent identity)
-3. await first `$state` → `ready()`
-4. pump `$state`/`$msg`/`$exit` into the proxy
-5. return the proxy
+1. `setup` awaits the channel, sends `$init`, awaits the first `$state`
+2. `onMessage` forwards each message over the wire and `stopPropagation`s
+3. `onStopRequested` sends `STOP` and awaits `$exit`
+4. `afterEnd` closes the channel
 
-This is today's `spawnRemote`, with the `mkfifo` + `spawn` bootstrap peeled off.
-
-```ts
-interface RemoteProxy<State, InMsg, OutMsg> {
-  readonly state: State;
-  ready(): Promise<void>;
-  send(msg: InMsg): void;
-  wait(): Promise<{ code: number | null; state: State }>;
-  onMessage(handler: (msg: OutMsg) => void): void;
-}
-```
+The proxy is an ordinary actor — `spawn`/`send`/`state`/`wait` work exactly as
+for a local actor. The `afterEnd` close is what lets the client terminate the
+peer: a worker can't self-terminate (Bun has no `self.close`), so the client
+must `terminate()` it when the proxy ends. For FIFO and WebSocket the close is
+idempotent and harmless.
 
 The two functions are the **same seam seen from two sides**, not two layers. They
 must version together, because they share the protocol.
@@ -206,88 +237,47 @@ must version together, because they share the protocol.
 | Scenario | What the client sees |
 | --- | --- |
 | server sends `$exit` | `$exit` frame, then close |
-| clean close, no `$exit` | close code; `wait()` resolves `{ code, lastState }` |
+| clean close, no `$exit` | close; `wait()` resolves `{ code, lastState }` |
 | abrupt drop / SIGKILL | close; `wait()` resolves `{ code: null, lastState }` |
 
 `STOP` works end-to-end: client `send({ type: "STOP" })` → server
 `onStopRequested` → `$exit` → client `wait()` resolves.
 
-## The glue — `defineRemoteActor`
+## The glue — `defineSubprocessActor`
 
-The demoable sugar. It wraps an actor definition so spawning it runs it remote,
-while the same module can also be the server entry point (today: a
-`--remote=<pathhash>` argv marker). From the consumer's perspective, local and
-remote spawn identically:
-
-```ts
-// one file, both ends
-export const counterRemote = defineRemoteActor(CounterActor, import.meta.url);
-
-// same call, same shape as a local actor
-const proc = counterRemote.spawn(null)({ start: 0 });
-await proc.ready();
-proc.send({ type: "INCREMENT", by: 1 });
-proc.state;
-await proc.wait();
-```
-
-Under the hood it is just the client side of the seam wrapped as a normal actor
-definition via `makeProxyDef`: `setup` connects and stashes `{ public:
-remote.state, private: { remote } }`, `onMessage` forwards + stops propagation,
-`onStopRequested` sends STOP and waits.
-
-## `env` — execution context
-
-`setup` gains a second parameter, threaded from the spawn site:
+The demoable sugar for the subprocess case. It wraps an actor definition so
+spawning it runs it in a subprocess over two named fifos, while the same module
+can also be the server entry point:
 
 ```ts
-setup?: (
-  this: ActorContext,
-  args: Args,
-  env: SetupEnv,
-) => InternalState | Promise<InternalState>;
+export const counterRemote = defineSubprocessActor(CounterActor, import.meta.url);
+// counterRemote.actor        — the proxy (spawn it like a local actor)
+// counterRemote.runRemoteRoot() — serve the real actor (called by the child)
+// counterRemote.isRemoteRoot   — true when running inside the child
 ```
 
-`spawnAsync(fn, name)(args, env)` → `start(args, env)` →
-`setup.call(self, args, env)`.
-
-- **args** — domain (what the actor operates on) — serialized in `$init`.
-- **env** — execution context (where it runs: the socket, the request, the peer,
-  the url) — local, never serialized, setup-only (handlers reach it via
-  `this.state`).
-
-This replaces smuggling context through args: the demo's `setup({ peer })`
-becomes `setup(args, { peer })`.
-
-## What changes in `src/remote/`
-
-1. **Rename** server/client: `runChild` → `serveRemoteActor`, `spawnRemote` →
-   `connectRemote`; `child.ts`/`host.ts` → `server.ts`/`client.ts`.
-2. **Extract** the serve loop from `runChild`'s argv parsing →
-   `bridgeActor(fn, transport, { env })`.
-3. **Extract** the handshake + pump from `spawnRemote`'s mkfifo/spawn →
-   `connectRemote(transport, opts)`.
-4. **Introduce** the `Transport` interface; make `FifoUtf8NlineTransport`
-   implement it.
-5. **Slim** the protocol: drop `encode`/`decode`-to-string from the protocol
-   (frame vocabulary + guards + version remain); byte transports own their JSON
-   serialization.
-6. **Thread `env`** through the spawn path (a core change, touching
-   `process.async.ts` and `define-actor.ts`).
-7. **Add** `WebSocketTransport` and a worker transport as `Transport`
-   implementations (separate follow-up proposals).
+Under the hood it is just the client side of the seam plus a FIFO bootstrap:
+`--remote=<pathhash>` argv-marker detection for `isRemoteRoot`, runner
+auto-detection (`bun`/`node`), and `commandSpawner`. This is the only place in
+the subprocess path that imports transports/protocols.
 
 ## Out of scope
 
 Process-isolation wrappers from the earlier draft (`withSudo`, `withBwrap`,
-`withSsh`) are FIFO-transport concerns — they rewrite the spawn command — and are
-not part of the transport-agnostic seam. They stay out of the general proposal.
+`withSsh`) are FIFO-transport concerns — they rewrite the spawn command — and
+are not part of the transport-agnostic seam. With the spawner design they become
+spawner transforms.
+
+`env` (a `setup(args, env)` execution-context parameter carrying the socket,
+request, or peer) is a separate future concern: it threads through
+`spawnAsync`/`start`, not through the remote seam, and is deliberately not
+conflated with `$init`.
 
 ## Open questions
 
 - **Route naming on the server.** `serveRemoteActor` takes an already-established
-  transport; mapping a WebSocket route to an actor name/`fn` stays in the
-  consumer's court (or a small `name → fn` registry helper).
+  channel; mapping a WebSocket route to an actor name stays in the consumer's
+  court (or a small `name → actor` registry helper).
 - **`parentName`/`parentIdName` for a multi-client server.** For one server, many
   clients, what identifies each connection?
 - **`$fd` (stdout/stderr forwarding).** The earlier draft proposed a sixth frame
