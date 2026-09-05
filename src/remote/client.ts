@@ -64,6 +64,9 @@ export function remoteClient<
       channel.onMessage((frame) => {
         if (isState(frame)) {
           Object.assign(currentState, frame.$state);
+          // $state frames arrive outside this actor's dispatch loop; notify
+          // state subscribers so observers (Vue, nextState, …) see the change.
+          this.ctx.notify();
         } else if (isMsg(frame)) {
           this.emit(frame.$msg.body as OutMsg);
         } else if (isExit(frame)) {

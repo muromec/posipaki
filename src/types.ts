@@ -95,6 +95,10 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   parentId: symbol | null;
   sendSelf: (msg: IM | StopMessage) => void;
   toParent: ProcessMessageCb<OM>;
+  /** Fire this process's state subscribers now (no message round-trip).
+   *  Used when something outside the dispatch loop — e.g. a remote $state
+   *  frame — mutates `state` and the change must still be observed. */
+  notify: () => void;
   /** Invoked by the runtime after the process emits EXIT to its parent.
    *  Best-effort teardown that must not delay the exit signal. */
   afterExit?: () => Promise<void> | void;

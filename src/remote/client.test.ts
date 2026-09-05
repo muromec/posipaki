@@ -78,6 +78,25 @@ describe("remoteClient (unit)", () => {
     await proc.wait();
   });
 
+  it("notifies state subscribers when a $state frame arrives", async () => {
+    const channel = new FakeChannel();
+    const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
+      "counter",
+      () => Promise.resolve(channel),
+    );
+    const proc = await actor.spawn({ start: 0 });
+    while (!channel.handler) await sleep(1);
+    channel.handler!({ $state: { count: 0 } });
+    while (proc.state?.count !== 0) await sleep(1);
+
+    const seen: Array<{ count: number }> = [];
+    proc.subscribe("state", () => seen.push(proc.state as { count: number }));
+
+    channel.handler!({ $state: { count: 5 } });
+    while (seen.length === 0) await sleep(1);
+    expect(seen[0]).toEqual({ count: 5 });
+  });
+
   it("closes the channel when the proxy stops", async () => {
     const channel = new FakeChannel();
     const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(

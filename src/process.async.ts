@@ -157,6 +157,9 @@ export class AsyncProcess<
       toParent: (msg) => {
         this.messageSubscribers.forEach((cb) => cb(msg as OutMessage, selfCtx));
       },
+      notify: () => {
+        this.notify();
+      },
     };
 
     this.current = this.pvtWatchExit(ctx, arg0);
