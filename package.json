@@ -44,7 +44,7 @@
   },
   "scripts": {
     "build": "bash scripts/build.sh",
-    "test": "vitest run",
+    "test": "bash scripts/test.sh",
     "test:watch": "vitest",
     "lint": "oxlint"
   },

@@ -20,7 +20,7 @@ fi
 # ── bun ────────────────────────────────────────────────────────────
 if [ -z "$runner" ] || [ "$runner" = "bun" ]; then
   if command -v bun >/dev/null 2>&1; then
-    exec bun test --isolate "$@"
+    exec bun test --isolate --parallel=8 "$@"
   fi
 fi
 
