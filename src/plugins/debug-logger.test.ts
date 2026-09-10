@@ -4,7 +4,7 @@ import { describe, it, expect, beforeEach } from "vitest";
 import { defineActor, defineMessages } from "../define-actor.js";
 import type { Message } from "../types.js";
 import { debugLogger, defaultMsgFilter } from "./debug-logger.js";
-import type { Logger } from "./debug-logger.js";
+import type { Logger, MessageLogOpts } from "./debug-logger.js";
 import assert from "assert";
 import { nextState } from "../testing/tick-utils.js";
 
@@ -28,6 +28,8 @@ interface DebugCall {
   msgType?: string;
   event?: string;
   payload?: unknown;
+  direction?: "in" | "out";
+  senderName?: string;
 }
 
 function recordFactory(calls: DebugCall[]): (name: string) => Logger {
@@ -40,8 +42,15 @@ function recordFactory(calls: DebugCall[]): (name: string) => Logger {
     error: () => {
       calls.push({ name, kind: "error" });
     },
-    msg: (message: Message) => {
-      calls.push({ name, kind: "msg", msgType: message.type, payload: message });
+    msg: (message: Message, opts?: MessageLogOpts) => {
+      calls.push({
+        name,
+        kind: "msg",
+        msgType: message.type,
+        payload: message,
+        direction: opts?.direction,
+        senderName: opts?.sender?.fromName,
+      });
     },
     lifecycle: (event: string, detail?: unknown) => {
       calls.push({ name, kind: "lifecycle", event, payload: detail });
@@ -220,6 +229,62 @@ describe("debugLogger", () => {
       expect(decoratedLog.lifecycle).toBeTypeOf("function");
 
       await proc.stop();
+    });
+  });
+
+  describe("resolved process name", () => {
+    it("binds the logger to the name the actor is spawned with", async () => {
+      // No `name` in the definition — the framework assigns it at spawn time.
+      const Actor = defineActor({
+        inMessages: Pin,
+        outMessages: Pout,
+        setup: () => ({ x: 0 }),
+        plugins: [debugLogger({ factory: recordFactory(calls) })],
+        handlers: {
+          POKE() {},
+          NOP() {},
+        },
+      });
+
+      const proc = await Actor.spawn({}, { name: "spawned-name" });
+      await proc.ready();
+      await proc.stop();
+
+      const names = calls.map((c) => c.name);
+      expect(names.length).toBeGreaterThan(0);
+      expect(names.every((n) => n === "spawned-name")).toBe(true);
+      expect(names).not.toContain("actor");
+    });
+  });
+
+  describe("traffic context", () => {
+    it("reports direction and sender for observed traffic", async () => {
+      const Actor = defineActor({
+        name: "traffic-test",
+        inMessages: Pin,
+        outMessages: Pout,
+        setup: () => ({ x: 0 }),
+        plugins: [debugLogger({ factory: recordFactory(calls) })],
+        handlers: {
+          POKE() {
+            this.emit({ type: "POKE", value: 1 });
+          },
+          NOP() {},
+        },
+      });
+
+      const proc = await Actor.spawn({});
+      await proc.ready();
+      proc.send({ type: "NOP" }, { fromName: "sender-x", fromId: Symbol("sender-x") });
+      proc.send({ type: "POKE", value: 1 });
+      await proc.stop();
+
+      const inbound = calls.find((c) => c.kind === "msg" && c.msgType === "NOP");
+      expect(inbound?.direction).toBe("in");
+      expect(inbound?.senderName).toBe("sender-x");
+
+      const outbound = calls.find((c) => c.kind === "msg" && c.direction === "out");
+      expect(outbound?.msgType).toBe("POKE");
     });
   });
 

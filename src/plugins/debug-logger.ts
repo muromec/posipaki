@@ -1,6 +1,6 @@
 import type { ActorPlugin } from "../hooks";
 import { mergeConfigs } from "../hooks";
-import type { Message } from "../types";
+import type { Message, SenderInfo } from "../types";
 
 declare module "../index" {
   interface ActorDecorated {
@@ -11,8 +11,18 @@ declare module "../index" {
 export interface DebugLogFn {
   (message: string, ...args: unknown[]): void;
 }
+/**
+ * Optional context for a logged message.  The plugin fills both fields for the
+ * traffic it observes; a caller logging a message by hand may omit them.
+ */
+export interface MessageLogOpts {
+  /** Who sent it.  Present for traffic observed by the plugin. */
+  sender?: SenderInfo;
+  /** Direction: "in" = received by this actor, "out" = emitted by it. */
+  direction?: "in" | "out";
+}
 export interface MessageLogFn {
-  (message: Message): void;
+  (message: Message, opts?: MessageLogOpts): void;
 }
 export interface LifecycleLogFn {
   (event: string, detail?: unknown): void;
@@ -73,12 +83,46 @@ export function defaultMsgFilter(msg: Message): Message {
 function defaultFactory(name: string): Logger {
   return {
     debug: (...a: unknown[]) => console.debug(`[${name}]`, ...a),
-    msg: (msg: Message) => console.debug(`[${name}] ←`, msg),
+    msg: (msg: Message, opts?: MessageLogOpts) =>
+      console.debug(`[${name}] ${opts?.direction === "out" ? "→" : "←"} ${msg.type}`, msg),
     info: (...a: unknown[]) => console.info(`[${name}]`, ...a),
     warn: (...a: unknown[]) => console.warn(`[${name}]`, ...a),
     error: (...a: unknown[]) => console.error(`[${name}]`, ...a),
     lifecycle: (event: string, detail?: unknown) =>
       console.debug(`[${name}] lifecycle ${event}`, detail ?? ""),
+  };
+}
+
+/**
+ * A logger that is constructed on first use, and rebuilt if the name it is
+ * bound to changes.
+ *
+ * The plugin cannot build its logger eagerly: `config.name` is only a
+ * *preferred* name — most actors leave it unset and get their process name
+ * assigned by the framework — so binding a logger to it at plugin time files
+ * every entry under the fallback name.  Deferring construction until the actor
+ * has actually started means the factory always receives the resolved name.
+ */
+function deferredLogger(factory: LoggerFactory, getName: () => string): Logger {
+  let inner: Logger | null = null;
+  let boundTo: string | null = null;
+
+  const resolve = (): Logger => {
+    const name = getName();
+    if (!inner || boundTo !== name) {
+      inner = factory(name);
+      boundTo = name;
+    }
+    return inner;
+  };
+
+  return {
+    debug: (msg: string, ...args: unknown[]) => resolve().debug(msg, ...args),
+    info: (msg: string, ...args: unknown[]) => resolve().info(msg, ...args),
+    warn: (msg: string, ...args: unknown[]) => resolve().warn(msg, ...args),
+    error: (msg: string, ...args: unknown[]) => resolve().error(msg, ...args),
+    msg: (msg: Message, opts?: MessageLogOpts) => resolve().msg(msg, opts),
+    lifecycle: (event: string, detail?: unknown) => resolve().lifecycle(event, detail),
   };
 }
 
@@ -94,8 +138,10 @@ export function debugLogger(opts?: DebugLoggerOpts): ActorPlugin {
   const factory = opts?.factory ?? defaultFactory;
   const msgFilter = opts?.msgFilter ?? defaultMsgFilter;
   return async function debugLoggerPlugin(config) {
-    const name: string = config.name ?? "actor";
-    const log = factory(name);
+    // Preferred name as a placeholder; replaced with the resolved process name
+    // in `beforeStart`, before anything is logged.
+    let name: string = config.name ?? "actor";
+    const log = deferredLogger(factory, () => name);
 
     let result = mergeConfigs(config, {
       methods: { ...config.methods },
@@ -103,6 +149,9 @@ export function debugLogger(opts?: DebugLoggerOpts): ActorPlugin {
     });
 
     result = mergeConfigs(result, {
+      beforeStart() {
+        name = this.name;
+      },
       afterStart() {
         log.lifecycle("started");
       },
@@ -118,15 +167,15 @@ export function debugLogger(opts?: DebugLoggerOpts): ActorPlugin {
       onError(err: unknown) {
         log.error(`${(err as Error)?.message ?? err}`);
       },
-      onMessage(msg: Message) {
+      onMessage(msg: Message, sender: SenderInfo) {
         if (ignoreSet.has(msg.type)) return;
         const m = msgFilter ? msgFilter(msg) : msg;
-        if (m) log.msg(m);
+        if (m) log.msg(m, { sender, direction: "in" });
       },
-      onEmit(msg: Message) {
+      onEmit(msg: Message, sender: SenderInfo) {
         if (ignoreSet.has(msg.type)) return;
         const m = msgFilter ? msgFilter(msg) : msg;
-        if (m) log.debug(`${name} → ${m.type}`, m);
+        if (m) log.msg(m, { sender, direction: "out" });
       },
     });
 
