@@ -43,8 +43,16 @@ same actor rejects `wait()` and emits EXIT (the correct behaviour).
 for an error handler to say "I only observed this".
 
 **Fix:** `propagateError()` / `PROPAGATE_SENTINEL` (mirroring
-`stopPropagation()`). Lifecycle hook call sites now pass an internal error
-handler that calls `onError` (so the logger still logs) and then returns the
-sentinel, which makes `callHook` rethrow. Message hooks (`onMessage`, `onEmit`)
-and handlers keep the old behaviour: `onError` may absorb those and the actor
-carries on.
+`stopPropagation()`).  `callHook` now asks the error handler what it decided:
+returning the sentinel means "I only observed this — let it propagate", and the
+error keeps going.
+
+Lifecycle hook call sites pass an internal handler that calls `onError` (so a
+logger still logs) and then returns the sentinel, so a broken lifecycle hook is
+always fatal.  Message hooks and handlers are not forced either way: they are
+called with `onError` itself, and its *return value* decides — nothing (the
+default, and what the bundled logger returns) absorbs the error and the actor
+carries on; `propagateError()` declines to handle it and the actor goes down like
+any other fatal error.  With `chainHook` the actor's own handler has the last
+word, so its `propagateError()` is honoured even under a plugin that returned
+nothing.

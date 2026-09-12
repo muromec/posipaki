@@ -6,7 +6,7 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 import type { ActorPlugin } from "./actor-types.js";
 import { defineActor, defineMessages } from "./define-actor.js";
-import { stopPropagation, mergeConfigs, type HookResult } from "./hooks.js";
+import { stopPropagation, propagateError, mergeConfigs, type HookResult } from "./hooks.js";
 import { withTimeout } from "./util.js";
 import type { Message, SenderInfo } from "./types.js";
 import { nextState } from "./testing/";
@@ -374,6 +374,29 @@ describe("hooks.onError", () => {
     await expect(proc.wait()).rejects.toThrow();
     // second message was not processed
     expect(proc.state!.count).toBe(1);
+  });
+
+  it("an error handler may also decline a handler error, making it fatal", async () => {
+    const Actor = defineActor({
+      name: "test",
+      inMessages: PokeIn,
+      setup: () => ({ count: 0 }),
+      onError() {
+        return propagateError();
+      },
+      handlers: {
+        POKE() {
+          throw new Error("HANDLER BOOM");
+        },
+      },
+    });
+
+    const proc = await Actor.spawn({});
+    await proc.ready();
+    proc.send({ type: "POKE", value: 1 });
+
+    // Nothing absorbed it: the actor goes down like it would without a handler.
+    await expect(proc.wait()).rejects.toThrow("HANDLER BOOM");
   });
 });
 

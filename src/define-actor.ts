@@ -169,11 +169,16 @@ export function defineActor<
       actorCtxMap.set(ctx.id, self);
       /**
        * Lifecycle hooks are the actor's own control flow: if one throws, the
-       * state machine is half-applied.  `onError` still observes the error (a
-       * logger logs it), but it cannot absorb it — the actor goes down and its
-       * parent still gets the EXIT, instead of staying up with nothing left to
-       * do.  Message hooks and handlers keep the old behaviour: `onError` may
-       * absorb those, and the actor carries on.
+       * state machine is half-applied, so the error is fatal — `onError` still
+       * observes it (a logger logs it), but it cannot absorb it.  The actor goes
+       * down and its parent still gets the EXIT, instead of staying up with
+       * nothing left to do.
+       *
+       * Message hooks and handlers are not forced either way: they are called
+       * with `onError` itself, and its *return value* decides — nothing means
+       * "handled, carry on" (the default, and what an observing logger
+       * returns), `propagateError()` means "not handled", and the actor goes
+       * down with the same EXIT.
        */
       const hookErrorHandler = async (e: unknown): Promise<unknown> => {
         try {
