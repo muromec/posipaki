@@ -168,3 +168,36 @@ describe("afterStart()", () => {
     expect(proc.state!.events).toContain("async-after");
   });
 });
+
+// ── messages sent before ready() ───────────────────────────────────────────
+
+describe("a message sent while setup is still running", () => {
+  it("is handled, not swallowed", async () => {
+    const handled: string[] = [];
+    const Actor = defineActor({
+      name: "test",
+      inMessages: defineMessages<CounterIn>(),
+      async setup() {
+        await new Promise((r) => setTimeout(r, 20));
+        return { count: 0 };
+      },
+      handlers: {
+        POKE() {
+          handled.push("POKE");
+        },
+      },
+    });
+
+    // spawn() resolves as soon as the process handle exists; the caller has no
+    // way to know the initial state has not been delivered yet.
+    const proc = await Actor.spawn({});
+    proc.send({ type: "POKE" });
+
+    await proc.ready();
+    // A macrotask turn for the tick that send() scheduled, and one to spare.
+    await new Promise((r) => setTimeout(r, 20));
+
+    expect(handled).toEqual(["POKE"]);
+    await proc.stop();
+  });
+});
