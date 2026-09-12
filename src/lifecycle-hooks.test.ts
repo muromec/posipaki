@@ -377,6 +377,61 @@ describe("hooks.onError", () => {
   });
 });
 
+// ── a hook error is fatal even when onError observes it ─────────────────
+//
+// `onError` exists so an actor can *observe* an error — log it, count it.  It
+// must not turn a broken lifecycle hook into a survivable one: a hook is the
+// actor's own control flow, and throwing halfway through it leaves the state
+// machine half-applied.  Absorbing that leaves a live actor with nothing left
+// to do and no EXIT for its parent (found in email-agent: a reflector whose
+// reflection pass died before reporting stayed up, silently, forever).
+
+describe("hooks — a hook error is fatal even with onError", () => {
+  it("onChildExit throws → the actor goes down and still emits EXIT", async () => {
+    const Child = defineActor({ name: "child", setup: () => ({}), handlers: {} });
+    const seen: string[] = [];
+
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return {};
+      },
+      onError(err) {
+        seen.push((err as Error).message);
+      },
+      onChildExit() {
+        throw new Error("boom from onChildExit");
+      },
+      handlers: {},
+    });
+
+    const sent: string[] = [];
+    const proc = await Parent.spawn({}, { toParent: (m: { type: string }) => sent.push(m.type) });
+    await proc.ready();
+    (proc.children[0] as { send: (m: unknown, s: unknown) => void }).send(
+      { type: "STOP" },
+      { fromName: "test", fromId: Symbol("t") },
+    );
+
+    // Bounded: the failure being guarded against is that `wait()` never settles,
+    // so the test must say that rather than hang on it.
+    const outcome = await Promise.race([
+      proc.wait().then(
+        () => "resolved",
+        (e) => "rejected:" + (e as Error).message,
+      ),
+      new Promise((r) => setTimeout(() => r("never settled"), 500)),
+    ]);
+
+    expect(outcome).toBe("rejected:boom from onChildExit");
+    // The handler got to see the error ...
+    expect(seen).toContain("boom from onChildExit");
+    // ... and the actor went down, telling its parent, instead of idling.
+    expect(sent).toContain("EXIT");
+  });
+});
+
 // ── adversarial ──────────────────────────────────────────────────────────
 
 describe("hooks — adversarial", () => {

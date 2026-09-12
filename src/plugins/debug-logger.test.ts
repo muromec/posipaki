@@ -321,5 +321,36 @@ describe("debugLogger", () => {
       expect(await nextState(proc)).toEqual({ x: 42 });
       await proc.stop();
     });
+    it("logs a lifecycle hook error without absorbing it: the actor still goes down", async () => {
+      // The plugin registers onError, so it *observes* errors.  Observing must
+      // not change failure semantics: a broken lifecycle hook still takes the
+      // actor down (and tells its parent), instead of leaving it up with
+      // nothing left to do.
+      const Child = defineActor({ name: "child", setup: () => ({}), handlers: {} });
+      const Parent = defineActor({
+        name: "plugin-parent",
+        plugins: [debugLogger({ factory: recordFactory(calls) })],
+        async setup() {
+          await this.fork(Child, undefined, {});
+          return {};
+        },
+        onChildExit() {
+          throw new Error("boom from onChildExit");
+        },
+        handlers: {},
+      });
+
+      const sent: string[] = [];
+      const proc = await Parent.spawn({}, { toParent: (m: { type: string }) => sent.push(m.type) });
+      await proc.ready();
+      (proc.children[0] as { send: (m: unknown, s: unknown) => void }).send(
+        { type: "STOP" },
+        { fromName: "test", fromId: Symbol("t") },
+      );
+
+      await expect(proc.wait()).rejects.toThrow("boom from onChildExit");
+      expect(sent).toContain("EXIT");
+      expect(calls.some((c) => c.kind === "error")).toBe(true);
+    });
   });
 });

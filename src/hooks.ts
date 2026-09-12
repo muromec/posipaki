@@ -4,13 +4,18 @@
 // Hooks are additive — multiple callbacks can register for the same hook
 // point, and they fire in registration order.
 
-import { STOP_SENTINEL, stopPropagation } from "./actor-types.js";
+import {
+  STOP_SENTINEL,
+  stopPropagation,
+  PROPAGATE_SENTINEL,
+  propagateError,
+} from "./actor-types.js";
 import type { HookResult, ActorPlugin, PluginTransform, AnyConfig } from "./actor-types.js";
 
 // ── stop propagation sentinel ────────────────────────────────────────────
 
 // Re-exports from actor-types.ts (backward compatibility)
-export { STOP_SENTINEL, stopPropagation };
+export { STOP_SENTINEL, stopPropagation, PROPAGATE_SENTINEL, propagateError };
 export type { HookResult, ActorPlugin, PluginTransform };
 
 // ── type augmentation (Fastify-style) ────────────────────────────────────
@@ -117,9 +122,15 @@ export async function callHook<T, I extends unknown[], O>(
       return await fn.call(thisArg, ...args);
     } catch (e) {
       if (eh) {
+        let decision: unknown;
         try {
-          await eh(e);
-        } catch {}
+          decision = await eh(e);
+        } catch {
+          // An error inside the error handler must not mask the original one.
+        }
+        // An observing handler says so by returning the sentinel: the error it
+        // did not handle keeps propagating, so the actor still goes down.
+        if (decision === PROPAGATE_SENTINEL) throw e;
       } else {
         throw e;
       }

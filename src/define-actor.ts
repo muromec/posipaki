@@ -24,7 +24,7 @@ import type {
   AnyConfig,
   HidePrivate,
 } from "./actor-types.js";
-import { STOP_SENTINEL } from "./actor-types.js";
+import { STOP_SENTINEL, PROPAGATE_SENTINEL } from "./actor-types.js";
 import { ActorDecorated, type ActorPlugin, ActorReflection, callHook } from "./hooks.js";
 
 export function defineMessages<OutMsg extends Message = Message>(): ActorMessages<OutMsg> {
@@ -167,8 +167,24 @@ export function defineActor<
         },
       };
       actorCtxMap.set(ctx.id, self);
+      /**
+       * Lifecycle hooks are the actor's own control flow: if one throws, the
+       * state machine is half-applied.  `onError` still observes the error (a
+       * logger logs it), but it cannot absorb it — the actor goes down and its
+       * parent still gets the EXIT, instead of staying up with nothing left to
+       * do.  Message hooks and handlers keep the old behaviour: `onError` may
+       * absorb those, and the actor carries on.
+       */
+      const hookErrorHandler = async (e: unknown): Promise<unknown> => {
+        try {
+          await assembly.onError?.call(self, e);
+        } catch {
+          // An error in the error handler must not mask the original one.
+        }
+        return PROPAGATE_SENTINEL;
+      };
       ctx.afterExit = async () => {
-        await callHook(assembly.afterEnd, assembly.onError, self, exitReason);
+        await callHook(assembly.afterEnd, hookErrorHandler, self, exitReason);
       };
 
       for (const [k, v] of decorated) {
@@ -177,7 +193,7 @@ export function defineActor<
 
       await callHook(
         assembly.beforeStart,
-        assembly.onError,
+        hookErrorHandler,
         self as ActorContext<
           Args,
           never, // state not set yet
@@ -207,7 +223,7 @@ export function defineActor<
       }
       self.state = rawState;
       yield hidePrivate(rawState);
-      await callHook(assembly.afterStart, assembly.onError, self);
+      await callHook(assembly.afterStart, hookErrorHandler, self);
 
       yield* runDispatchAsync<WithSender<InMsg | ExitMessage>>(
         ctx.pname,
@@ -215,7 +231,7 @@ export function defineActor<
           const [msg, sender] = stamped;
           if (msg.type === "STOP") {
             if (assembly.onStopRequested) {
-              await callHook(assembly.onStopRequested, assembly.onError, self);
+              await callHook(assembly.onStopRequested, hookErrorHandler, self);
               // Hook may call agreeToStop(). If not, actor keeps running.
             } else {
               exitReason = "stopped";
@@ -233,7 +249,7 @@ export function defineActor<
             }
             await callHook(
               assembly.onChildExit,
-              assembly.onError,
+              hookErrorHandler,
               self,
               childName,
               msg as ExitMessage,
@@ -245,7 +261,7 @@ export function defineActor<
               for (const orphan of orphans) {
                 // Default when no hook is defined: hard-kill the orphan.
                 const decision = assembly.onOrphan
-                  ? await callHook(assembly.onOrphan, assembly.onError, self, orphan)
+                  ? await callHook(assembly.onOrphan, hookErrorHandler, self, orphan)
                   : "force-stop";
                 if (decision === "adopt") {
                   ctx.adopt(orphan);
@@ -286,7 +302,7 @@ export function defineActor<
         () => done,
       );
 
-      await callHook(assembly.beforeEnd, assembly.onError, self, exitReason);
+      await callHook(assembly.beforeEnd, hookErrorHandler, self, exitReason);
     };
   }
 

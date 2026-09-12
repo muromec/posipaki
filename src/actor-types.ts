@@ -200,7 +200,7 @@ export type ActorConfig<
       ReflectionMethods & ActorReflection
     >,
     error?: unknown,
-  ) => HookResult | Promise<HookResult>;
+  ) => HookResult | ErrorResult | Promise<HookResult | ErrorResult>;
 
   onEmit?: (
     this: ActorContext<
@@ -333,6 +333,21 @@ export const STOP_SENTINEL = Symbol("posipaki.stopPropagation");
 
 /** Type-safe sentinel for short-circuiting onMessage hooks. */
 export const stopPropagation = (): typeof STOP_SENTINEL => STOP_SENTINEL;
+
+/**
+ * Returned by an `onError` handler that only *observed* the error — logged it,
+ * counted it — and did not handle it.  The framework then lets the error
+ * propagate: the actor still goes down and its parent still gets the EXIT.
+ * Without this an observing handler (the bundled debug logger is one) silently
+ * turns a broken lifecycle hook into a survivor with nothing left to do.
+ */
+export const PROPAGATE_SENTINEL = Symbol("posipaki.propagateError");
+
+/** Type-safe sentinel for an onError handler that did not handle the error. */
+export const propagateError = (): typeof PROPAGATE_SENTINEL => PROPAGATE_SENTINEL;
+
+/** Return type of onError handlers: void (handled) or sentinel (not handled). */
+export type ErrorResult = void | typeof PROPAGATE_SENTINEL;
 
 // ── hook function types ──────────────────────────────────────────────────
 
