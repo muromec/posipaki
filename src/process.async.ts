@@ -23,6 +23,20 @@ type AsyncProcessGenerator<ProcessState, InMessage extends Message> = AsyncGener
 
 type NotifyFn = () => void;
 
+/**
+ * Framework-internal traffic: a message no actor ever sees.  Used to resume the
+ * generator without delivering anything — `start()` uses it to move past the
+ * initial yield, and `wake()` to give a parked dispatch loop one chance to
+ * notice that it is done.  Actors skip it before any hook or handler runs.
+ */
+export const INTERNAL_ADVANCE = "__ADVANCE__";
+
+/** Sender stamp for the messages above. */
+const internalSender = (): SenderInfo => ({
+  fromName: "__internal__",
+  fromId: Symbol("__internal__"),
+});
+
 // ---- runDispatchAsync -------------------------------------------------------
 
 type AsyncReducer<M> = (msg: M) => Promise<void>;
@@ -101,6 +115,11 @@ export class AsyncProcess<
   private pvtIsPaused: boolean = false;
   private pvtDead: boolean = false;
   private pvtTickInProgress: boolean = false;
+  /** True once the initial state has been delivered and `start()` has advanced
+   *  the generator into its dispatch loop.  Until then no tick may run: the
+   *  generator is still suspended at the initial yield, which belongs to
+   *  `start()` and would swallow a message handed to it (see `start()`). */
+  private pvtDispatchLive: boolean = false;
   private pvtExitReject: ((e: unknown) => void) | null = null;
   private pvtReady!: Waiter;
   private pvtResolveReady!: () => void;
@@ -154,6 +173,9 @@ export class AsyncProcess<
       sendSelf: (msg) => {
         this.send([msg, selfCtx]);
       },
+      wake: () => {
+        this.pvtWake();
+      },
       toParent: (msg) => {
         this.messageSubscribers.forEach((cb) => cb(msg as OutMessage, selfCtx));
       },
@@ -174,13 +196,15 @@ export class AsyncProcess<
       // runs its finally block (EXIT/STOP) and the inner generator
       // enters its dispatch loop.
       const advance: WithSender<InMessage | StopMessage> = [
-        { type: "__ADVANCE__" } as InMessage,
-        {
-          fromName: "__internal__",
-          fromId: Symbol("__internal__"),
-        } as SenderInfo,
+        { type: INTERNAL_ADVANCE } as InMessage,
+        internalSender(),
       ];
+      // Only now may a tick feed the generator.  Anything that arrived while
+      // we were still setting up waited in the buffer: no tick is pending for
+      // it (they were all held back), so schedule one.
+      this.pvtDispatchLive = true;
       this.pvtEatResult(this.current!.next(advance));
+      if (this.buffer.length > 0) this.pvtScheduleTick();
     });
     return this;
   }
@@ -241,8 +265,27 @@ export class AsyncProcess<
 
   // ---- message processing ---------------------------------------------------
 
+  /**
+   * Give a parked dispatch loop one chance to notice a flag that was set from
+   * outside it.  Clearing `done` is not enough on its own: an idle process is
+   * suspended at its dispatch yield, and nothing re-reads the flag until
+   * something resumes it.  A stop that arrives as a message (STOP) resumes the
+   * loop by itself; this is for the paths that do not.
+   */
+  pvtWake(): void {
+    if (this.pvtDead || !this.pvtDispatchLive) return;
+    // The loop is running right now: it re-checks the flag as soon as the
+    // reducer returns, so a wake-up message would only sit in the buffer.
+    if (this.pvtTickInProgress) return;
+    this.send([{ type: INTERNAL_ADVANCE } as InMessage, internalSender()]);
+  }
+
   protected async pvtTick(): Promise<void> {
-    if (!this.current || this.pvtTickInProgress) return;
+    // A message that arrives before the initial state is delivered is kept in
+    // the buffer, not fed to the generator: the generator is still suspended at
+    // its initial yield, and the value sent to that yield is discarded — the
+    // message would be lost and `start()`'s advance would take its place.
+    if (!this.current || !this.pvtDispatchLive || this.pvtTickInProgress) return;
 
     this.pvtTickInProgress = true;
     try {

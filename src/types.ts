@@ -99,6 +99,10 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
    *  Used when something outside the dispatch loop — e.g. a remote $state
    *  frame — mutates `state` and the change must still be observed. */
   notify: () => void;
+  /** Resume a dispatch loop that is parked at its yield so it can notice a
+   *  flag set from outside the loop (see `ActorContext.exit()`).  No-op when
+   *  the loop is already running, or the process is dead.  Internal. */
+  wake: () => void;
   /** Invoked by the runtime after the process emits EXIT to its parent.
    *  Best-effort teardown that must not delay the exit signal. */
   afterExit?: () => Promise<void> | void;

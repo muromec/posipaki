@@ -41,7 +41,9 @@ describe("remoteClient (unit)", () => {
       () => Promise.resolve(channel),
     );
 
-    const proc = await actor.spawn({ start: 0 });
+    // awaitReady: false — this proxy's setup() waits for the server's first
+    // $state frame, which only arrives after spawn() has returned.
+    const proc = await actor.spawn({ start: 0 }, { awaitReady: false });
 
     while (!channel.sent.some(isInit)) await sleep(1);
     expect(channel.sent.find(isInit)!.$init).toMatchObject({
@@ -84,7 +86,9 @@ describe("remoteClient (unit)", () => {
       "counter",
       () => Promise.resolve(channel),
     );
-    const proc = await actor.spawn({ start: 0 });
+    // awaitReady: false — this proxy's setup() waits for the server's first
+    // $state frame, which only arrives after spawn() has returned.
+    const proc = await actor.spawn({ start: 0 }, { awaitReady: false });
     while (!channel.handler) await sleep(1);
     channel.handler!({ $state: { count: 0 } });
     while (proc.state?.count !== 0) await sleep(1);
@@ -104,7 +108,9 @@ describe("remoteClient (unit)", () => {
       () => Promise.resolve(channel),
     );
 
-    const proc = await actor.spawn({ start: 0 });
+    // awaitReady: false — this proxy's setup() waits for the server's first
+    // $state frame, which only arrives after spawn() has returned.
+    const proc = await actor.spawn({ start: 0 }, { awaitReady: false });
     while (!channel.handler) await sleep(1);
     channel.handler!({ $state: { count: 0 } });
 

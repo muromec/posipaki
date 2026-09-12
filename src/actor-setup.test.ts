@@ -84,9 +84,10 @@ describe("setup()", () => {
       },
       handlers: { POKE() {} },
     });
-    const proc = await Actor.spawn({});
+    // awaitReady: false on purpose — the emit happens *during* setup, and this
+    // test is about that message reaching the parent before ready().
+    const proc = await Actor.spawn({}, { awaitReady: false });
     expect(await nextMessage(proc)).toMatchObject({ type: "READY" });
-    // Emits during setup go to toParent before ready()
     await proc.ready();
     expect(proc.state).toEqual({ isOk: true });
     await proc.stop();
@@ -188,9 +189,9 @@ describe("a message sent while setup is still running", () => {
       },
     });
 
-    // spawn() resolves as soon as the process handle exists; the caller has no
-    // way to know the initial state has not been delivered yet.
-    const proc = await Actor.spawn({});
+    // The unsafe spawn: the handle comes back before the initial state is
+    // there, which is exactly the window this test is about.
+    const proc = await Actor.spawn({}, { awaitReady: false });
     proc.send({ type: "POKE" });
 
     await proc.ready();
@@ -198,6 +199,36 @@ describe("a message sent while setup is still running", () => {
     await new Promise((r) => setTimeout(r, 20));
 
     expect(handled).toEqual(["POKE"]);
+    await proc.stop();
+  });
+});
+
+describe("spawn({ awaitReady })", () => {
+  const Slow = () =>
+    defineActor({
+      name: "test",
+      inMessages: defineMessages<CounterIn>(),
+      async setup() {
+        await new Promise((r) => setTimeout(r, 20));
+        return { count: 1 };
+      },
+      handlers: { POKE() {} },
+    });
+
+  it("waits for the initial state by default", async () => {
+    const Actor = Slow();
+    const proc = await Actor.spawn({});
+    // No ready() call on purpose: spawn is the one that waited.
+    expect(proc.state).toEqual({ count: 1 });
+    await proc.stop();
+  });
+
+  it("hands back the raw handle with awaitReady: false", async () => {
+    const Actor = Slow();
+    const proc = await Actor.spawn({}, { awaitReady: false });
+    expect(proc.state).toBeNull();
+    await proc.ready();
+    expect(proc.state).toEqual({ count: 1 });
     await proc.stop();
   });
 });

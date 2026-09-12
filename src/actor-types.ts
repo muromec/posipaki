@@ -56,6 +56,8 @@ export interface ActorDefinition<
       addPlugins?: ActorPlugin[];
       parentName?: string | null;
       parentId?: symbol | null;
+      /** Wait for the initial state before resolving.  Default `true`. */
+      awaitReady?: boolean;
     },
   ): Promise<
     AsyncProcess<

@@ -3,7 +3,13 @@
 // Compiles a declarative config into an AsyncProcessFn.  Built on top of
 // the existing runDispatchAsync / spawnAsync primitives.
 //
-import { type AsyncProcess, runDispatchAsync, spawnAsync, AnyProcess } from "./process.async.js";
+import {
+  type AsyncProcess,
+  runDispatchAsync,
+  spawnAsync,
+  AnyProcess,
+  INTERNAL_ADVANCE,
+} from "./process.async.js";
 import type {
   WithSender,
   SenderInfo,
@@ -144,6 +150,9 @@ export function defineActor<
         exit(reason: unknown) {
           exitReason = reason;
           done = true;
+          // The loop only re-reads `done` when it is resumed: an idle actor is
+          // parked at its dispatch yield and would sit there forever.
+          ctx.wake();
         },
         $child: {} as Record<string, AnyProcess>,
         decorators: {},
@@ -234,6 +243,7 @@ export function defineActor<
         ctx.pname,
         async (stamped) => {
           const [msg, sender] = stamped;
+          if (msg.type === INTERNAL_ADVANCE) return; // framework traffic, not a message
           if (msg.type === "STOP") {
             if (assembly.onStopRequested) {
               await callHook(assembly.onStopRequested, hookErrorHandler, self);
@@ -341,6 +351,13 @@ export function defineActor<
         addPlugins?: ActorPlugin[];
         parentName?: string | null;
         parentId?: symbol | null;
+        /**
+         * Resolve only once the initial state is available.  Default `true`:
+         * a spawned process is safe to send to when `spawn()` returns.  Pass
+         * `false` for the raw handle — the caller then has to `await
+         * proc.ready()` itself before sending anything it wants handled.
+         */
+        awaitReady?: boolean;
       },
     ): Promise<
       AsyncProcess<
@@ -362,6 +379,7 @@ export function defineActor<
         opts?.parentId,
       )(args);
       attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);
+      if (opts?.awaitReady !== false) await proc.ready();
       return proc as AsyncProcess<
         Args,
         HidePrivate<InternalState>,

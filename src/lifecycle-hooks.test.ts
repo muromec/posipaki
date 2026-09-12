@@ -1227,3 +1227,32 @@ describe("orphan policy: buffer drop (unparent vs leave)", () => {
     await gg.stop();
   });
 });
+
+// ── exit() called from outside the dispatch loop ─────────────────────────────
+
+describe("exit() from outside the dispatch loop", () => {
+  it("ends an idle actor", async () => {
+    const reasons: string[] = [];
+    let quit!: () => void;
+    const Actor = defineActor({
+      name: "test",
+      setup() {
+        // Something that is not a message: a timer, a reflection method, a
+        // test helper holding the actor context.
+        quit = () => this.exit("asked to");
+        return {};
+      },
+      beforeEnd(reason: unknown) {
+        reasons.push(String(reason));
+      },
+      handlers: {},
+    });
+
+    const proc = await Actor.spawn({});
+    // Idle: parked at its dispatch yield, with nothing to wake it.
+    quit();
+    await proc.wait();
+
+    expect(reasons).toEqual(["asked to"]);
+  });
+});
