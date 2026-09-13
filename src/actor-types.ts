@@ -178,6 +178,11 @@ export type ActorConfig<
     reason?: unknown,
   ) => HookResult | Promise<HookResult>;
 
+  /**
+   * Runs once the actor has ended — after its EXIT.  It is *not* called when the
+   * actor never started (`setup()` or a pre-start hook threw): the state is
+   * typed as present here, and an actor that never got one has nothing to end.
+   */
   afterEnd?: (
     this: ActorContext<
       Args,

@@ -114,6 +114,12 @@ export class AsyncProcess<
   private exitWaiter: Waiter;
   private pvtIsPaused: boolean = false;
   private pvtDead: boolean = false;
+  /**
+   * Set once the initial state exists.  An actor whose start failed never got
+   * one: it is dead on arrival, and its end-of-life hooks must not run against
+   * a state that never arrived (see `pvtStartFailed`).
+   */
+  private pvtStarted: boolean = false;
   private pvtTickInProgress: boolean = false;
   /** True once the initial state has been delivered and `start()` has advanced
    *  the generator into its dispatch loop.  Until then no tick may run: the
@@ -137,6 +143,9 @@ export class AsyncProcess<
     this.exitWaiter = makeWaiter();
     this.pvtReady = makeWaiter();
     this.pvtResolveReady = this.pvtReady.resolve;
+    // `ready()` carries a failed start to whoever awaited it.  A caller that
+    // never awaited it must not turn that into an unhandled rejection.
+    void this.pvtReady.promise.catch(() => {});
   }
 
   /** Compact handle for `util.inspect` — actor state often holds process
@@ -185,8 +194,10 @@ export class AsyncProcess<
     };
 
     this.current = this.pvtWatchExit(ctx, arg0);
-    void this.current.next().then((ret: IteratorResult<State | null, void>) => {
+    void this.current.next().then(
+      (ret: IteratorResult<State | null, void>) => {
       this.state = ret.value ?? null;
+      this.pvtStarted = true;
       this.pvtResolveReady();
       if (ret.done) {
         this.exitWaiter.resolve();
@@ -205,8 +216,35 @@ export class AsyncProcess<
       this.pvtDispatchLive = true;
       this.pvtEatResult(this.current!.next(advance));
       if (this.buffer.length > 0) this.pvtScheduleTick();
-    });
+      },
+      // The generator threw before its first yield: setup() — or a hook that
+      // runs before it — failed, so there is no state and nothing to dispatch.
+      (e: unknown) => this.pvtStartFailed(e),
+    );
     return this;
+  }
+
+  /**
+   * The process never started: its first `next()` rejected before any state
+   * existed.  The failure *is* the outcome, so `ready()` carries it — `spawn()`
+   * waits on `ready()`, which is what turns a spawner that fails into a spawn
+   * that fails, with its own error intact.  Whoever is already parked in
+   * `wait()` is told as well; a later `wait()` sees the process as ended.
+   */
+  private pvtStartFailed(e: unknown): void {
+    this.pvtDead = true;
+    // Abandon the generator: it is already finished (it threw), but nothing
+    // may tick it again.
+    this.current = null;
+    this.buffer.length = 0;
+    this.nextTick?.cancel();
+    this.nextTick = null;
+    this.pvtUnsubscribeAll();
+
+    this.pvtReady.reject(e);
+    this.pvtExitReject?.(e);
+    this.pvtExitReject = null;
+    this.exitWaiter.resolve();
   }
 
   /** Wrap the user's generator so EXIT/STOP logic fires on completion. */
@@ -238,7 +276,11 @@ export class AsyncProcess<
       // Unsubscribe from children/monitored processes so a dead parent
       // doesn't keep receiving their messages (handoff collectors stay on the orphans).
       this.pvtUnsubscribeAll();
-      if (ctx.afterExit) await ctx.afterExit();
+      // An actor that never got a state never started, and `afterEnd` is handed
+      // a context whose state is typed as present: running it there means every
+      // implementation that reads `this.state` trips over an undefined one —
+      // and swaps the caller's error for its own TypeError.
+      if (ctx.afterExit && this.pvtStarted) await ctx.afterExit();
     }
   }
 

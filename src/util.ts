@@ -8,7 +8,7 @@ export function debugLog(level: boolean, ...args: Array<unknown>) {
 type ReducerClosure<M> = (msg: M) => void;
 type ReadyFn = () => boolean;
 type NotifyFn<T = void> = (v: T) => void;
-type ErrorFn = (e: Error | null) => void;
+type ErrorFn = (e: unknown) => void;
 
 /**
  * Generator helper that loops, yielding `null` and feeding incoming

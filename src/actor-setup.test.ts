@@ -203,6 +203,39 @@ describe("a message sent while setup is still running", () => {
   });
 });
 
+describe("setup() that throws", () => {
+  it("fails the spawn, without running the end-of-life hooks", async () => {
+    const ended: string[] = [];
+    const Actor = defineActor({
+      name: "test",
+      async setup(): Promise<{ count: number }> {
+        throw new Error("no setup for you");
+      },
+      handlers: {},
+      afterEnd() {
+        ended.push("afterEnd");
+      },
+    });
+
+    // spawn() is where the caller waits for the state, so that is where the
+    // reason has to arrive.
+    await expect(Actor.spawn({})).rejects.toThrow("no setup for you");
+
+    // The raw handle reports the same error to whoever asks it directly.
+    const proc = await Actor.spawn({}, { awaitReady: false });
+    await expect(proc.ready()).rejects.toThrow("no setup for you");
+    expect(proc.state).toBeNull();
+
+    // An actor that never got a state never started: `afterEnd` is handed a
+    // context whose state is typed as present, so running it here is how a
+    // caller's own error gets replaced by a TypeError from a hook.
+    expect(ended).toEqual([]);
+
+    // And it is already over: stopping it is a no-op, not a hang.
+    expect(await proc.stop()).toBe(true);
+  });
+});
+
 describe("spawn({ awaitReady })", () => {
   const Slow = () =>
     defineActor({
