@@ -80,6 +80,27 @@ describe("remoteClient (unit)", () => {
     await proc.wait();
   });
 
+  it("rejects the spawn when the spawner fails", async () => {
+    const failure = new Error("no environment for you");
+    const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
+      "counter",
+      () => Promise.reject(failure),
+    );
+
+    // The spawner's failure is the caller's business, and it is the only thing
+    // that can explain it: spawn() has to reject with that error.  Today the
+    // process never settles — setup() threw, so no state ever arrived, and the
+    // end-of-life hooks then run against that missing state instead.
+    await expect(
+      Promise.race([
+        actor.spawn({ start: 0 }, {}),
+        sleep(2_000).then(() => {
+          throw new Error("spawn neither resolved nor rejected");
+        }),
+      ]),
+    ).rejects.toThrow("no environment for you");
+  });
+
   it("notifies state subscribers when a $state frame arrives", async () => {
     const channel = new FakeChannel();
     const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
