@@ -1,43 +1,55 @@
-// ── The way in as a spawner ────────────────────────────────────────────────
+// ── Running an actor on a host that is already there ───────────────────────
 //
-// A spawner is what the remote seam asks for: hand it the args the client was
-// spawned with, and it returns a channel.  Here that is two channels into the
-// same host — the kit goes up over one, the actor speaks over the other — and
-// the host's own output is kept out of the protocol all the way.
+// The connector knows one thing: how to open a channel to a named host and run
+// something on it.  It does not start anything, hold it, or care what else runs
+// there — no host to reach, no channel, and what ssh says is the reason.
+//
+// Two knobs, and they are the whole way in:
+//
+//   prepare   optional — runs once before the actor, on the host, for an actor
+//             that has to be put there first (see stage.ts for the kit);
+//   command   what to run, as an argv, given what prepare left behind.
 
 import type { ChildProcess, StdioOptions } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { clientChannel, stderrSink } from "posipaki/remote/node";
 import type { LineStreams, OutputFd, OutputSink } from "posipaki/remote/node";
 import type { Channel, ClientSpawner } from "posipaki/remote";
-import { sshRunCommand } from "./commands.js";
+import { sshEntry } from "./commands.js";
+import { runHost } from "./host.js";
+import type { HostResult, HostRun, SpawnChild } from "./host.js";
 import { spawnChild as startOnHost } from "./host.js";
-import type { HostRun, SpawnChild } from "./host.js";
 import { SshSpecError } from "./spec.js";
-import type { SshSpec, SshStaged } from "./spec.js";
-import { sshStage } from "./stage.js";
 
-/** How the host is reached and watched — everything but what runs on it. */
-export interface SshHostOptions {
+/** What a prepare step is handed: the host, and a way to run something on it. */
+export interface SshPrepare {
+  host: string;
+  /** Run a command on the host and wait for what it said. */
+  run(command: string[], stdin?: string): Promise<HostResult>;
+}
+
+/** A way into a host that is already there. */
+export interface SshConnectSpec<Args, Prepared = void> {
+  /** The host to reach, as ssh itself accepts it.  Required: this runs actors on hosts, it does not find them. */
+  host: string;
+  /** Runs once before the actor.  Optional: what the host already has needs nothing. */
+  prepare?: (ctx: SshPrepare) => Promise<Prepared>;
+  /** The actor's argv on the host, given what prepare left behind. */
+  command: (args: Args, prepared: Prepared) => string[];
+}
+
+/** How the host's process is started and watched — everything but what runs on it. */
+export interface SshConnectOptions {
   /** Where the host's own output goes.  Defaults to our stderr, tagged with the host. */
   onOutput?: OutputSink;
   /** How long to wait for the host's first protocol frame. */
   handshakeTimeoutMs?: number;
   /** Called when the host's process is gone, whichever way it went. */
   onGone?: () => void;
-  /** How host commands run while staging.  Injectable, so tests need no host. */
+  /** How host commands run.  Injectable, so tests need no host. */
   runHost?: HostRun;
   /** How the host's process is started.  Injectable, so a test can hold the process. */
   spawnChild?: SpawnChild;
-}
-
-export interface SshSpawnerOptions<Args> extends SshHostOptions {
-  /**
-   * The payload's own arguments, built from the args the client was spawned
-   * with.  This package knows where the payload is and how it is started, not
-   * what it wants to be told.
-   */
-  args?: (args: Args, staged: SshStaged) => string[];
 }
 
 /** How much of what a failed host said we quote as the reason. */
@@ -53,11 +65,11 @@ function errorText(err: unknown): string {
  * spawn with what it said, rather than a channel that never answers.
  */
 async function openChannel(
-  spec: SshSpec,
+  host: string,
   command: string[],
-  options: SshHostOptions,
+  options: SshConnectOptions,
 ): Promise<Channel> {
-  const sink = options.onOutput ?? stderrSink(spec.host);
+  const sink = options.onOutput ?? stderrSink(host);
   let tail = "";
   const output: OutputSink = (fd: OutputFd, data: string) => {
     if (fd === 2) tail = (tail + data).slice(-REASON_TAIL);
@@ -103,7 +115,7 @@ async function openChannel(
     ]);
   } catch (err) {
     child.kill();
-    throw new SshSpecError(`ssh ${spec.host} is not available: ${errorText(err)}`);
+    throw new SshSpecError(`ssh ${host} is not available: ${errorText(err)}`);
   }
 
   // The host's own exit is the channel's close: whichever side goes first, the
@@ -117,17 +129,22 @@ async function openChannel(
 }
 
 /**
- * The ssh way in: stage the kit over one ssh, then run the actor over a second
- * one whose own stdin/stdout are the wire.  Every spawn stages — the host probes
- * first, so an actor that is already there is not written again.
+ * The connector: the host is there, the actor is prepared if it has to be, and
+ * it runs on the run's own stdin/stdout.  Nothing here starts or stops anything
+ * — a host that cannot be reached fails, and says so.
  */
-export function sshSpawner<Args>(
-  spec: SshSpec,
-  options: SshSpawnerOptions<Args> = {},
+export function sshConnector<Args, Prepared = void>(
+  spec: SshConnectSpec<Args, Prepared>,
+  options: SshConnectOptions = {},
 ): ClientSpawner<Args> {
+  const run = options.runHost ?? runHost;
   return async (args: Args): Promise<Channel> => {
-    const staged = await sshStage(spec, options.runHost ? { runHost: options.runHost } : {});
-    const argv = sshRunCommand(spec, staged, options.args?.(args, staged) ?? []);
-    return openChannel(spec, argv, options);
+    const prepared = spec.prepare
+      ? await spec.prepare({
+          host: spec.host,
+          run: (command, stdin = "") => run(command, stdin),
+        })
+      : (undefined as Prepared);
+    return openChannel(spec.host, sshEntry(spec.host, spec.command(args, prepared)), options);
   };
 }
