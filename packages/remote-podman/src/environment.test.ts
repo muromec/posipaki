@@ -11,7 +11,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
-import { containerKeepaliveCommand } from "./commands.js";
+import { containerExistsCommand, containerKeepaliveCommand, containerRemoveCommand } from "./commands.js";
 import { podmanEnvironment } from "./environment.js";
 import type { PodmanEnvironmentOptions } from "./environment.js";
 import type { HostRun, SpawnChild } from "./host.js";
@@ -121,11 +121,47 @@ it("starts a container for the actor, runs it in there, and lets the container g
   await channel.close().catch(() => {});
 });
 
-it("says the container is not available when it cannot be held", async () => {
+it("takes over a name that is already taken, because the container here is the actor's", async () => {
+  const container = spec();
+  const fake = host(container);
+  const commands: string[][] = [];
+  let there = true;
+  const environment = podmanEnvironment<{ env: string }>(container, {
+    runHost: async (command) => {
+      commands.push(command);
+      if (command[1] === "rm") {
+        there = false;
+        return { code: 0, stdout: "", stderr: "" };
+      }
+      if (command[1] === "container") return { code: there ? 0 : 1, stdout: "", stderr: "" };
+      return { code: 0, stdout: REPORT, stderr: "" };
+    },
+    startHost: async (command) => {
+      there = true;
+      return fake.startHost(command);
+    },
+    spawnChild: fake.spawnChild,
+    pollMs: 1,
+    watchMs: 10,
+  });
+
+  const channel = await environment({ env: "agent" });
+  // It was there, so it was taken down, and what came up is ours.
+  expect(commands.slice(0, 2)).toEqual([
+    containerExistsCommand(container.container),
+    containerRemoveCommand(container.container),
+  ]);
+  expect(fake.started).toEqual([containerKeepaliveCommand(container)]);
+  children[0].kill();
+  await channel.close().catch(() => {});
+});
+
+it("says the container is not available when it was told to fail instead of take over", async () => {
   const container = spec();
   const fake = host(container);
   const environment = podmanEnvironment<{ env: string }>(container, {
-    // Somebody else is holding it, and this environment did not ask to reuse.
+    // Somebody else is holding it, and this environment asked to hold nothing else's.
+    onConflict: "fail",
     runHost: async (command) =>
       command[1] === "container" ? { code: 0, stdout: "", stderr: "" } : { code: 0, stdout: REPORT, stderr: "" },
     startHost: fake.startHost,

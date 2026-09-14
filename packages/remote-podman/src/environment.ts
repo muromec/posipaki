@@ -69,13 +69,18 @@ async function holdContainer(
  * Run an actor in a container of its own: the container is started for it and
  * let go when its channel is gone.  Each spawn gets its own container, so this
  * is not the shape for two actors sharing one.
+ *
+ * The container here exists for the actor, so it is one we assume we manage: a
+ * name that is taken is taken over — what is there is killed and ours is started
+ * (`onConflict: "replace"`).  An environment that must not do that says so.
  */
 export function podmanEnvironment<Args>(
   spec: ContainerSpec & KitSpec,
   options: PodmanEnvironmentOptions<Args> = {},
 ): ClientSpawner<Args> {
+  const { onConflict = "replace" } = options;
   return async (args: Args): Promise<Channel> => {
-    const holder = await holdContainer(spec, options);
+    const holder = await holdContainer(spec, { ...options, onConflict });
     const connect = podmanCopy<Args>(spec, {
       ...options,
       onGone: () => {
