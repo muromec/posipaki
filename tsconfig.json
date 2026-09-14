@@ -10,7 +10,13 @@
     "strict": true,
     "skipLibCheck": true,
     "lib": ["ES2018", "DOM"],
-    "types": ["node"]
+    "types": ["node"],
+    "paths": {
+      "posipaki": ["./src/index.ts"],
+      "posipaki/remote": ["./src/remote/index.ts"],
+      "posipaki/remote/node": ["./src/remote/node.ts"],
+      "posipaki/testing": ["./src/testing/index.ts"]
+    }
   },
   "include": ["src"],
   "exclude": []

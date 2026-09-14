@@ -107,7 +107,13 @@ posipaki becomes a workspace monorepo; the root stays the core package:
   claim is which posipaki it speaks, so a package and the core it builds against are
   published together;
 - names are unscoped, matching `posipaki` and its subpaths: `posipaki-remote-ssh`,
-  `posipaki-remote-podman`.
+  `posipaki-remote-podman`;
+- a package declares `posipaki` as a dependency like any other, and the tree resolves it
+  without a release: the root's `tsconfig.json` maps the core's entry points at `src/`, so a
+  package's tests and typecheck run against the working tree, and the root's `overrides`
+  resolve the dependency to this checkout, so an install needs nothing published;
+- `npm run build` at the root builds the tree — the core, then every package — because a
+  release is one release.
 
 ## Delivery
 
