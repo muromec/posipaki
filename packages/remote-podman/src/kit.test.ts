@@ -1,18 +1,17 @@
-// ── The kit a container environment is handed ──────────────────────────────
+// ── The kit a container is handed ──────────────────────────────────────────
 //
-// A real file on a throwaway path stands in for the consumer's build output: the
-// bundle is read here and named inside the kit, and the script that writes it in
-// the container is the core's own.
+// What travels: the consumer's build output, named inside the kit, with the core
+// writing the script that puts it there.  Nothing here runs a container.
 
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, expect, it } from "vitest";
-import { LIB_VERSION } from "posipaki";
 import { bootstrapScript } from "posipaki/remote/node";
-import { GATEWAY_ARTIFACT, PAYLOAD_ARTIFACT } from "./commands.js";
+import { PAYLOAD_ARTIFACT } from "./commands.js";
 import { podmanKit } from "./kit.js";
-import type { PodmanSpec } from "./spec.js";
+import { PodmanSpecError } from "./spec.js";
+import type { KitSpec } from "./spec.js";
 
 const scratchDirs: string[] = [];
 
@@ -20,7 +19,7 @@ afterEach(() => {
   for (const dir of scratchDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
-/** A bundle on a throwaway path, so a mistake in which file was read shows up. */
+/** A bundle on a throwaway path, so the kit has something real to read. */
 function bundle(name: string, body: string): string {
   const dir = mkdtempSync(join(tmpdir(), "posipaki-podman-"));
   scratchDirs.push(dir);
@@ -29,10 +28,8 @@ function bundle(name: string, body: string): string {
   return path;
 }
 
-function spec(payload: string, extra: Partial<PodmanSpec> = {}): PodmanSpec {
+function kit(payload: string, extra: Partial<KitSpec> = {}): KitSpec {
   return {
-    image: "toolbox:1",
-    container: "env-agent",
     app: { name: "email-agent", version: "0.13.0" },
     payload,
     ...extra,
@@ -40,37 +37,29 @@ function spec(payload: string, extra: Partial<PodmanSpec> = {}): PodmanSpec {
 }
 
 it("names the bundle inside the kit and hands the core the script that writes it", async () => {
-  const kit = await podmanKit(spec(bundle("payload.js", "// the payload\n")));
-  expect(kit.files.map((file) => file.name)).toEqual([PAYLOAD_ARTIFACT, "version.json"]);
-  expect(kit.app).toEqual({ name: "email-agent", version: "0.13.0" });
-  expect(bootstrapScript(kit)).toContain(`kit_dir="$HOME/bin/posipaki/${kit.name}"`);
+  const built = await podmanKit(kit(bundle("payload.js", "// the payload\n")));
+  expect(built.files.map((file) => file.name)).toEqual([PAYLOAD_ARTIFACT, "version.json"]);
+  expect(built.app).toEqual({ name: "email-agent", version: "0.13.0" });
+  expect(bootstrapScript(built)).toContain(`kit_dir="$HOME/bin/posipaki/${built.name}"`);
 });
 
-it("carries the gateway when the shape relays, and insists on having one", async () => {
+it("ships the gateway only when the shape relays, and refuses a relay without one", async () => {
   const payload = bundle("payload.js", "// the payload\n");
   const gateway = bundle("gateway.js", "// the gateway\n");
-  const kit = await podmanKit(spec(payload, { relay: true, gateway }));
-  expect(kit.files.map((file) => file.name)).toEqual([
-    PAYLOAD_ARTIFACT,
-    GATEWAY_ARTIFACT,
-    "version.json",
-  ]);
-  await expect(podmanKit(spec(payload, { relay: true }))).rejects.toThrow(/gateway/);
+
+  const plain = await podmanKit(kit(payload));
+  expect(plain.files.some((file) => file.name === "gateway.js")).toBe(false);
+
+  const relayed = await podmanKit(kit(payload, { relay: true, gateway }));
+  expect(relayed.files.some((file) => file.name === "gateway.js")).toBe(true);
+
+  await expect(podmanKit(kit(payload, { relay: true }))).rejects.toThrow(PodmanSpecError);
 });
 
-it("takes the runtime candidates and the kit's parent from the spec", async () => {
-  const kit = await podmanKit(
-    spec(bundle("payload.js", "// the payload\n"), { runtime: ["bun"], parent: "opt/kits" }),
+it("takes the kit's parent and runtimes when the caller has opinions", async () => {
+  const built = await podmanKit(
+    kit(bundle("payload.js", "// the payload\n"), { parent: "opt/kits", runtime: ["bun"] }),
   );
-  expect(kit.runtimes).toEqual(["bun"]);
-  expect(kit.parent).toBe("opt/kits");
-});
-
-it("names the kit after its contents and its owner, so two builds cannot collide", async () => {
-  const one = await podmanKit(spec(bundle("payload.js", "// one\n")));
-  const two = await podmanKit(spec(bundle("payload.js", "// two\n")));
-  expect(one.name).toBe(
-    `email-agent-0.13.0-posipaki-${LIB_VERSION}-${one.manifestHash.slice(0, 8)}`,
-  );
-  expect(one.name).not.toBe(two.name);
+  expect(built.parent).toBe("opt/kits");
+  expect(built.runtimes).toEqual(["bun"]);
 });

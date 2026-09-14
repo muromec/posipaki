@@ -12,63 +12,17 @@ import {
   containerKeepaliveCommand,
   containerRemoveCommand,
   podmanEntry,
-  podmanRunCommand,
   podmanStageCommand,
 } from "./commands.js";
-import type { PodmanSpec, PodmanStaged } from "./spec.js";
+import type { ContainerSpec } from "./spec.js";
 
-const SPEC: PodmanSpec = {
-  image: "registry.example.org/team/toolbox:1.2",
-  container: "env-agent",
-  app: { name: "email-agent", version: "0.13.0" },
-  payload: "build/env-payload.js",
-};
-
-const STAGED: PodmanStaged = { kitDir: "/home/u/bin/posipaki/kit-1", runtime: "/usr/bin/node" };
+const CONTAINER = "env-agent";
+const SPEC: ContainerSpec = { image: "registry.example.org/team/toolbox:1.2", container: CONTAINER };
 
 describe("the commands into a container", () => {
-  it("uses the name the consumer gave, and takes nothing from the image", () => {
-    const elsewhere = { ...SPEC, image: "localhost:5000/app_v2:edge" };
-    expect(podmanStageCommand(elsewhere)).toEqual(["podman", "exec", "-i", "env-agent", "sh", "-s"]);
-  });
-
-  it("stages with one exec and a shell, the script on stdin", () => {
-    expect(podmanStageCommand(SPEC)).toEqual(["podman", "exec", "-i", "env-agent", "sh", "-s"]);
-  });
-
-  it("runs the staged payload on the run's own stdin/stdout", () => {
-    expect(podmanRunCommand(SPEC, STAGED, ["--env=agent"])).toEqual([
-      "podman",
-      "exec",
-      "-i",
-      "env-agent",
-      "/usr/bin/node",
-      `${STAGED.kitDir}/${PAYLOAD_ARTIFACT}`,
-      "--env=agent",
-    ]);
-  });
-
-  it("runs the gateway, naming the payload as its worker, when the shape relays", () => {
-    expect(podmanRunCommand({ ...SPEC, relay: true }, STAGED, ["--env=agent"])).toEqual([
-      "podman",
-      "exec",
-      "-i",
-      "env-agent",
-      "/usr/bin/node",
-      `${STAGED.kitDir}/${GATEWAY_ARTIFACT}`,
-      "--env=agent",
-      `--worker=${STAGED.kitDir}/${PAYLOAD_ARTIFACT}`,
-    ]);
-  });
-
-  it("enters whatever container it was given", () => {
-    expect(podmanEntry({ ...SPEC, container: "env-agent" }, ["true"])).toEqual([
-      "podman",
-      "exec",
-      "-i",
-      "env-agent",
-      "true",
-    ]);
+  it("enters by the name it was given, and takes nothing from the image", () => {
+    expect(podmanEntry(CONTAINER, ["true"])).toEqual(["podman", "exec", "-i", "env-agent", "true"]);
+    expect(podmanStageCommand(CONTAINER)).toEqual(["podman", "exec", "-i", "env-agent", "sh", "-s"]);
   });
 
   it("gives the container its life: a run held by stdin, a probe, a removal", () => {
@@ -84,12 +38,17 @@ describe("the commands into a container", () => {
       "-c",
       "cat >/dev/null",
     ]);
-    expect(containerExistsCommand(SPEC)).toEqual([
+    expect(containerExistsCommand(CONTAINER)).toEqual([
       "podman",
       "container",
       "exists",
       "env-agent",
     ]);
-    expect(containerRemoveCommand(SPEC)).toEqual(["podman", "rm", "-f", "env-agent"]);
+    expect(containerRemoveCommand(CONTAINER)).toEqual(["podman", "rm", "-f", "env-agent"]);
+  });
+
+  it("names the artifacts inside the kit", () => {
+    expect(PAYLOAD_ARTIFACT).toBe("payload.js");
+    expect(GATEWAY_ARTIFACT).toBe("gateway.js");
   });
 });

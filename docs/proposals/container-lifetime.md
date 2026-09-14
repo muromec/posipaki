@@ -1,145 +1,72 @@
-# The container's life when there is more than one consumer
+# A container and a way into it
 
-**Status:** design. `attached` is built, and the name rule is now in the code: the container's
-name comes from the consumer and is required. Everything else — the collision verdicts, the
-labels, membership, `managed`, the guest role — is written down here and not implemented,
-deliberately.
+**Status:** design settled, and built: the container actor, the connector by name, the copy
+shape and the environment composite are in `posipaki-remote-podman`.  What this note keeps is
+the shape of the thing and the list of what we deliberately did not build.
 **Follows:** [environment-remote-spawner-packages.md](./environment-remote-spawner-packages.md)
 
-## The question
+## The question it started from
 
 *What if one consumer starts the container, another joins, then the first one exits?*
 
-Today: the container is the first consumer's property and the second one borrows it. The
-borrower's `ensureContainer` returns `null`, and that `null` is precisely "I hold nothing" —
-no handle, so nothing to hand over, keep up or remove. When the owner leaves, by any route,
-its stdin closes, the keepalive's reader sees EOF, `--rm` takes the container away, and the
-borrower's `podman exec` channels die with it. The borrower recovers on its next spawn
-(nothing is there, so it starts one and becomes the owner), but the live channel is gone.
+The answer that survived is that this is two questions wearing one coat. A container has a life,
+and a way into it does not — so they are separate pieces, and neither has to guess about the
+other.
 
-That is defensible for as long as a container is one consumer's cache. It stops being
-defensible once the same library runs in more than one application on one host.
+## The three pieces
 
-## What a consumer is
-
-An application, not posipaki. email-agent is one; another app using this package on the same
-host is another, and it is a correction worth keeping: the two are not the same consumer, they
-do not know each other, and nothing in the package may assume they cooperate.
-
-## The vocabulary
-
-| Word | Values | State |
+| Piece | What it owns | What it does not |
 | --- | --- | --- |
-| name | given by the consumer | built, and required: nothing is derived |
-| lifetime | `attached` | built |
-| | `managed` | acknowledged, not built |
-| collision | `fail` | built (the default) |
-| | `join` | acknowledged, not built |
-| role | owner | built |
-| | member | acknowledged, not built |
-| | guest | acknowledged, not built |
+| `containerActor` | the container's life: it starts one, holds it, counts the consumers that retain it, lets it go at the end, and says when the container disappears | it does not adopt a container somebody else holds, and it knows nothing about what runs inside |
+| `podmanConnector` / `podmanCopy` | the way in by name: an optional prepare step and a command, on the exec's own stdin/stdout | it does not start, hold or remove a container — no container, and podman's own words are the reason |
+| `podmanEnvironment` | both together, for one actor | it is not a way to share: two actors that want one container ask the container actor for it |
 
-**Ownership is a fact on the resource, not a reading of its name.** A container we create
-carries podman labels: `posipaki=1`, a fingerprint of the spec (image, user, mounts, env,
-runtime, relay — canonicalised and hashed) and the fingerprint's format version. The name is a
-string somebody typed; a label is what lets us answer "is this ours, and is it built the way
-we think?" before we `exec` into it, write a kit into its filesystem, or remove it.
+The composite is there because "run this actor in a container of its own, and stop it when the
+actor is done" is the common case; the pieces are there because it is not the only one.  In the
+consumer (email-agent) that leaves exactly two cases:
 
-## The shapes
+- **share a container inside the agent** — one `containerActor` per name, retained by each
+  consumer, started when the first arrives and stopped when the last leaves.  External processes
+  that sideload into it are their own business, not ours;
+- **run an actor in a container by name** — `podmanConnector`, and no container means failure.
+  Nothing to check, nothing to adopt: podman says "no such container" and that is the answer.
 
-### attached — the environment is a child of its consumers (built)
+Where *we* assume we manage the container's life — our own images, our own names — the actor is
+started with `onConflict: "replace"`; where the container is somebody else's, it is left alone.
 
-An *attached* `podman run --rm -i --name <n> <image> sh -c 'cat >/dev/null'` whose main
-process only reads its stdin. While a consumer holds the write end, the container is up and
-`podman exec` can open as many channels as it likes; when the holder goes, the reader sees EOF,
-the main process exits, and `--rm` removes the container. Nothing has to remember to clean up.
+## What a taken name does
 
-### managed — the environment is the point (acknowledged, not built)
+| `onConflict` | Behaviour |
+| --- | --- |
+| `fail` (default) | touches nothing, and says what it found: a name that is taken is a question for the consumer, not a guess for us |
+| `reuse` | a wanted name gets a moment to be freed (a container goes a moment after its holder); if it is really held, run in it and hold nothing |
+| `replace` | remove what is there and start our own — for containers we manage |
 
-`podman run -d`, with a life independent of every consumer: guests are natural, the holder
-question disappears, and so does the free cleanup — removal is explicit, or a TTL we opted
-into. It is a different lifetime model rather than a flag on the first one, and the seam is one
-field: asking for `managed` before it exists throws.
+Adopting silently was the thing that had to go: it hands one consumer the use of a container
+whose life another one owns, which is exactly the bug the question was about.
 
-### collision — what "it is already there" means (settled, not built)
+## The run seam
 
-The container's name is given by the consumer and is required; nothing is derived from the
-image, because a name decides who else ends up in that container — its mounts, its user, its
-network — and a package that guesses it is deciding that for the application. So a collision is
-always between two names that somebody asserted: another app using the same one deliberately,
-or a leftover container from an earlier configuration.
+Everything about *what runs* is two knobs, which is also what the ssh package will adopt when it
+settles:
 
-Meeting an existing container therefore has three verdicts:
+- `prepare?` — runs once before the actor, in the container.  `podmanCopy` fills it in with the
+  kit staging; an actor already in the image needs none;
+- `command(args, prepared)` — the argv inside the container, given what prepare left behind.
 
-- labelled, fingerprint matches — ours, built as we expect: join, if the caller asked to;
-- labelled, fingerprint differs — a conflict, and it fails: a container built to another spec
-  has no stage dir, maybe another runtime and user, so `exec` misbehaves subtly;
-- unlabelled — not ours: fail. We do not stage into it, exec into it, or remove it.
+That is the difference between "copies itself in" and "runs a pre-installed command in the
+PATH", and nothing else in the package has to know which one it is.
 
-Failing is the default and the only sound one; joining is an explicit opt-in, and it is what a
-consumer asks for when it deliberately gives a container the same name another consumer uses.
+## What we deliberately did not build
 
-None of this is in the code yet: today a container that is already there is borrowed whatever it
-is, which is the opposite of failing, and the labels that would tell us whose it is do not
-exist.
-`removeContainer` follows from this and should refuse an unlabelled container unless forced:
-`podman rm -f` on somebody else's container is the sharp end of getting this wrong.
-
-Two starts racing is the same family. Both probes see nothing, both start; the loser gets
-"name already in use", its `waitForContainer` then succeeds on the winner's container, and it
-returns a handle it does not own. Labels are what let the loser know whose container it found;
-until they exist, the mismatch is only visible in what the container does not have.
-
-### roles — who holds it up
-
-Under attached life a holder is not optional: the keepalive *is* the container's process, so a
-container nobody holds has no life at all. That is why a guest is a role and not a lifetime
-model:
-
-- **owner** — started it, holds it, may remove it;
-- **member** — joined it and holds, so it keeps the light on past the owner's exit; the last
-  one out gives EOF (a FIFO with one writer per member is how the kernel can do the counting);
-- **guest** — joined, holds nothing, never removes, never starts what it will not hold, and
-  reports a container that goes rather than resurrecting it.
-
-What exists today is the owner and an unnamed borrower: the second consumer joins, holds
-nothing and cannot remove — and it differs from the guest below only in that it will start a
-container when there is none.
-
-A kit needs no such care: it is named after the build that made it
-(`<app>-<version>-posipaki-<core>-<manifest8>`), so two consumers can stage into one container
-without landing on each other's files. What sharing gives away is the container itself — its
-mounts, its user, its network — which is why a name worth sharing has to be chosen, not
-guessed.
-
-## Invariants
-
-1. We never stage into, exec into or remove a container we cannot prove is ours.
-2. Under attached life, holding is the only thing that keeps the container up; a consumer that
-   will not hold may only join.
-3. A shape that is nameable but not built fails loudly. Approximating it with the nearest built
-   thing would be worse than not having it.
-
-## The effort now
-
-Small, and additive to what is there:
-
-- the guess is gone: `container` is required in the spec, and the derived name
-  (`posipaki-<image>`) with it;
-- the labels, with the fingerprint and its version;
-- `collision: fail` as the default, with an error that names the container and says what it
-  looks like — unlabelled, or labelled with a different fingerprint;
-- `removeContainer` refusing unlabelled containers unless forced;
-- the richer fields present in the spec and the options, so the next shape is additive.
-
-## Open questions
-
-- **Is cross-consumer sharing real?** Since nobody shares a name by accident any more, it now
-  happens only when a consumer asks for it by reusing a name and opting into joining. If that
-  never happens, membership is never built and the FIFO stays what it is today: a transport.
-- **Membership: writer count or lease?** A FIFO held open by each member counts holders in the
-  kernel and self-cleans on a crash; a lease file needs liveness checks and a reaper. If
-  membership is built, the FIFO is the shape to beat.
-- **A guest when the container goes:** report and stop, or re-join on next use? The package
-  should report; whether that is an error to the caller is the caller's business.
-- **Managed removal:** explicit only, or a TTL we opt into?
+- **Ownership labels and a spec fingerprint.**  The label was there to answer "is this container
+  ours?" — a question only the *consumer* can answer, and `onConflict` makes it answer it once
+  instead of the package hashing a spec and guessing.
+- **Membership across processes (a FIFO's writer count, a lease file).**  Sharing happens inside
+  one agent, where a count in an actor is enough.  Two agents sharing one container through a
+  container name is not a case we have.
+- **A `managed` lifetime** (detached `-d`, TTL, an operator's long-lived box).  A container that
+  outlives every consumer is an operator's machine, not a package's lifetime model; the
+  attached life is the one with no cleanup code, which is why it is the one we have.
+- **A guest role.**  With `reuse`, a guest is what the second consumer already is: it holds
+  nothing, and it learns that the container went through `onGone` and `GONE`.

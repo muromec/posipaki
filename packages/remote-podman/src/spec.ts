@@ -1,22 +1,27 @@
 // ── What a container environment is ────────────────────────────────────────
 //
-// One object describes the whole way in: which image, which container (named, or
-// derived from the image), what to stage inside it, who owns the kit, and how the
-// run is shaped.  The commands are built from it and nothing here talks to
-// podman, so every shape is asserted without a container.
+// Two things, kept apart on purpose: a container that exists, and an actor that
+// runs inside one.  A container is an image and a name — and the name is never
+// derived, because it decides who else ends up in that container.  What runs
+// inside is a command: either one the image already has, or one a prepare step
+// puts there.
 
 import type { KitApp } from "posipaki/remote/node";
 
-/** A container reached with podman, and the kit run inside it. */
-export interface PodmanSpec {
+/** The container itself: the image to start from, and what to call it. */
+export interface ContainerSpec {
   /** The image the container is started from. */
   image: string;
   /**
-   * The container to use, named by the consumer.  There is no default: a name
-   * taken from the image would be a guess, and the name decides who else can be
-   * in there, so guessing it is worse than not having one.
+   * The container's name, given by the consumer.  There is no default: a name
+   * taken from the image would be a guess, and a name is what decides who else
+   * can be in there.
    */
   container: string;
+}
+
+/** The actor that gets staged in: who owns the kit, and which bundles it has. */
+export interface KitSpec {
   /** The kit's owner: the app name and its build version.  Names the kit directory. */
   app: KitApp;
   /** The payload bundle on this machine, as the consumer built it. */
@@ -41,7 +46,7 @@ export interface PodmanStaged {
   runtime: string;
 }
 
-/** Something about the way in does not hold: a spec that cannot be staged, or a container that never came up. */
+/** Something about a container does not hold: a spec that cannot be staged, or one that never came up. */
 export class PodmanSpecError extends Error {
   constructor(message: string) {
     super(message);

@@ -1,19 +1,19 @@
-// ── Staging the kit in the container ───────────────────────────────────────
+// ── Putting the actor in the container ─────────────────────────────────────
 //
-// The first channel: the container is there (or we start it and wait for it), the
-// bootstrap script goes in on stdin, and one report line per step comes back.
-// Nothing of the payload runs yet — that is the second channel — so a failure here
-// is a readable reason instead of a dead channel.
+// The preparing channel: the bootstrap script goes in on stdin, and one report
+// line per step comes back.  Nothing of the payload runs yet — that is the run
+// channel — so a failure here is a readable reason instead of a dead channel.
+//
+// This is what a prepare step is for the copy shape, and it is the only prepare
+// this package ships: an actor already in the image needs none.
 
 import { bootstrapScript, parseBootstrapReport } from "posipaki/remote/node";
 import { podmanStageCommand } from "./commands.js";
 import { runHost } from "./host.js";
-import type { HostResult } from "./host.js";
+import type { HostResult, HostRun } from "./host.js";
 import { podmanKit } from "./kit.js";
-import { ensureContainer } from "./lifetime.js";
-import type { PodmanLifetimeOptions } from "./lifetime.js";
 import { PodmanSpecError } from "./spec.js";
-import type { PodmanSpec, PodmanStaged } from "./spec.js";
+import type { KitSpec, PodmanStaged } from "./spec.js";
 
 /** How much of what a failed command said we quote back. */
 const SAID_TAIL = 400;
@@ -26,26 +26,26 @@ function said(result: HostResult): string {
 }
 
 /**
- * Put the kit in the container and say what will run it.  The container comes
- * first, because there is nothing to stage into without it; staging itself is
- * idempotent on the far side — it probes, writes only what is missing, reports.
+ * Put the kit in the container and say what will run it.  Idempotent on the far
+ * side: it probes, writes only what is missing, and reports — so preparing an
+ * actor that is already there costs one exec and no writes.
  */
 export async function podmanStage(
-  spec: PodmanSpec,
-  options: PodmanLifetimeOptions = {},
+  container: string,
+  kit: KitSpec,
+  run: HostRun = runHost,
 ): Promise<PodmanStaged> {
   // The kit is read first: a spec that cannot be staged should fail before a
-  // container is started on its behalf.
-  const kit = await podmanKit(spec);
-  await ensureContainer(spec, options);
-  const result = await (options.runHost ?? runHost)(podmanStageCommand(spec), bootstrapScript(kit));
+  // command is run on its behalf.
+  const built = await podmanKit(kit);
+  const result = await run(podmanStageCommand(container), bootstrapScript(built));
   const report = parseBootstrapReport(result.stdout);
   if (report.kind === "error") {
     // A report that never arrived is not a reason; what the container said is.
     const incomplete =
       report.reason.startsWith("incomplete") || report.reason.startsWith("no report");
     throw new PodmanSpecError(
-      `staging into container ${spec.container} failed: ${report.reason}${
+      `staging into container ${container} failed: ${report.reason}${
         incomplete ? ` (${said(result)})` : ""
       }`,
     );

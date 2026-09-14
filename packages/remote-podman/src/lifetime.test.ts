@@ -1,28 +1,27 @@
 // ── The container's life, with a host that is handed in ────────────────────
 //
 // Everything podman would do is injected: the probe answers, the container is a
-// stand-in handle.  So what is asserted is the policy — start once, hold it,
-// replace it if it died, let it go when it never came up.
+// stand-in handle.  So what is asserted is the policy — start what is not there
+// and hold it, and for a name that is taken: reuse it, replace it, or refuse.
 
 import { expect, it } from "vitest";
-import { containerKeepaliveCommand, containerRemoveCommand } from "./commands.js";
+import {
+  containerExistsCommand,
+  containerKeepaliveCommand,
+  containerRemoveCommand,
+} from "./commands.js";
 import type { HostResult, HostRun } from "./host.js";
-import { ensureContainer, removeContainer, stopContainer } from "./lifetime.js";
+import { containerExists, removeContainer, startContainer } from "./lifetime.js";
 import type { ContainerHandle, HostStart } from "./lifetime.js";
-import type { PodmanSpec } from "./spec.js";
+import type { ContainerSpec } from "./spec.js";
 
 /** A spec whose container name is its own, so one test cannot disturb another. */
-function spec(name: string): PodmanSpec {
-  return {
-    image: "toolbox:1",
-    container: name,
-    app: { name: "email-agent", version: "0.13.0" },
-    payload: "build/env-payload.js",
-  };
+function spec(name: string): ContainerSpec {
+  return { image: "toolbox:1", container: name };
 }
 
 /** A host runner that answers the probe as told and records what it was asked. */
-function probe(answers: Array<HostResult["code"]>): { run: HostRun; commands: string[][] } {
+function probe(answers: number[]): { run: HostRun; commands: string[][] } {
   const commands: string[][] = [];
   const run: HostRun = async (command) => {
     commands.push(command);
@@ -33,43 +32,100 @@ function probe(answers: Array<HostResult["code"]>): { run: HostRun; commands: st
 }
 
 /** The podman we are not running: a handle that only says what it was told. */
-function startFrom(record: string[][]): HostStart {
+function startFrom(record: string[][], alive: () => boolean = () => true): HostStart {
   return async (command) => {
     record.push(command);
     return {
       name: command[command.indexOf("--name") + 1] ?? "",
-      alive: () => true,
+      alive,
       stop: async () => {},
     };
   };
 }
 
-it("leaves a container that is already there exactly as it is", async () => {
-  const { run, commands } = probe([0]);
-  const started: string[][] = [];
-  const held = await ensureContainer(spec("env-already"), { runHost: run, startHost: startFrom(started) });
-  expect(held).toBeNull();
-  expect(started).toEqual([]);
-  expect(commands).toEqual([["podman", "container", "exists", "env-already"]]);
+it("asks whether a container is there, whoever started it", async () => {
+  const there = probe([0]);
+  expect(await containerExists("env-a", there.run)).toBe(true);
+  expect(there.commands).toEqual([containerExistsCommand("env-a")]);
+
+  const missing = probe([1]);
+  expect(await containerExists("env-b", missing.run)).toBe(false);
 });
 
-it("starts one when it is not there, waits for it, and holds it", async () => {
-  // The probe says "not yet" twice before the container answers.
-  const { run } = probe([1, 1, 0]);
+it("starts one that is not there, waits for it, and hands back the handle", async () => {
+  // "Not yet" once, then it answers.
+  const { run } = probe([1, 0]);
   const started: string[][] = [];
-  const held = await ensureContainer(spec("env-fresh"), {
+  const result = await startContainer(spec("env-fresh"), {
     runHost: run,
     startHost: startFrom(started),
     pollMs: 1,
   });
 
   expect(started).toEqual([containerKeepaliveCommand(spec("env-fresh"))]);
-  expect(held).not.toBeNull();
-  // The same handle comes back on the next spawn: one container per process.
-  const again = await ensureContainer(spec("env-fresh"), { runHost: run, startHost: startFrom(started) });
-  expect(again).toBe(held);
+  expect(result.handle?.name).toBe("env-fresh");
+  expect(result.conflict).toBeNull();
+});
+
+it("refuses a name that is already taken, and touches nothing", async () => {
+  const { run, commands } = probe([0]);
+  const started: string[][] = [];
+  await expect(
+    startContainer(spec("env-taken"), { runHost: run, startHost: startFrom(started) }),
+  ).rejects.toThrow(/container env-taken is already running, and is not ours to hold/);
+  expect(started).toEqual([]);
+  expect(commands).toEqual([containerExistsCommand("env-taken")]);
+});
+
+it("reuses a container somebody else holds when asked, and holds nothing itself", async () => {
+  const { run, commands } = probe([0]);
+  const started: string[][] = [];
+  const result = await startContainer(spec("env-theirs"), {
+    runHost: run,
+    startHost: startFrom(started),
+    onConflict: "reuse",
+    reapMs: 1,
+    pollMs: 1,
+  });
+
+  expect(result).toEqual({ handle: null, conflict: "reuse" });
+  expect(started).toEqual([]);
+  // All it did was ask, as often as the short reap window allowed.
+  expect(commands[0]).toEqual(containerExistsCommand("env-theirs"));
+  expect(commands.every((command) => command[1] === "container")).toBe(true);
+});
+
+it("waits out a container that is going away, then starts its own", async () => {
+  // There, still there, gone, then up after our start.
+  const { run } = probe([0, 0, 1, 0]);
+  const started: string[][] = [];
+  const result = await startContainer(spec("env-going"), {
+    runHost: run,
+    startHost: startFrom(started),
+    onConflict: "reuse",
+    reapMs: 100,
+    pollMs: 1,
+  });
+
+  expect(result.handle?.name).toBe("env-going");
   expect(started).toHaveLength(1);
-  await stopContainer("env-fresh");
+});
+
+it("replaces what is there when asked, and holds what it started", async () => {
+  const { run, commands } = probe([0, 1, 0]);
+  const started: string[][] = [];
+  const result = await startContainer(spec("env-replace"), {
+    runHost: run,
+    startHost: startFrom(started),
+    onConflict: "replace",
+    reapMs: 100,
+    pollMs: 1,
+  });
+
+  expect(commands[0]).toEqual(containerExistsCommand("env-replace"));
+  expect(commands[1]).toEqual(containerRemoveCommand("env-replace"));
+  expect(started).toEqual([containerKeepaliveCommand(spec("env-replace"))]);
+  expect(result.handle).not.toBeNull();
 });
 
 it("says so when it never comes up, and lets go of what it started", async () => {
@@ -83,7 +139,7 @@ it("says so when it never comes up, and lets go of what it started", async () =>
     },
   };
   await expect(
-    ensureContainer(spec("env-never"), {
+    startContainer(spec("env-never"), {
       runHost: run,
       startHost: async () => handle,
       startTimeoutMs: 20,
@@ -93,29 +149,21 @@ it("says so when it never comes up, and lets go of what it started", async () =>
   expect(stopped).toBe(1);
 });
 
-it("starts a fresh one when the container died under us", async () => {
-  // Not there; up; gone; up again — the second start is the one being watched.
-  const { run } = probe([1, 0, 1, 0]);
-  let starts = 0;
-  const startHost: HostStart = async (command) => {
-    starts += 1;
-    const generation = starts;
-    return {
-      name: command[command.indexOf("--name") + 1] ?? "",
-      // The first container dies under us; its replacement lives.
-      alive: () => generation > 1,
-      stop: async () => {},
-    };
-  };
-  await ensureContainer(spec("env-died"), { runHost: run, startHost, pollMs: 1 });
-  expect(starts).toBe(1);
-  await ensureContainer(spec("env-died"), { runHost: run, startHost, pollMs: 1 });
-  expect(starts).toBe(2);
-  await stopContainer("env-died");
+it("hands back nothing when the name was taken while we were starting", async () => {
+  // Not there, then it answers — but our client is already gone, so what
+  // answers is somebody else's container.
+  const { run } = probe([1, 0]);
+  await expect(
+    startContainer(spec("env-raced"), {
+      runHost: run,
+      startHost: startFrom([], () => false),
+      pollMs: 1,
+    }),
+  ).rejects.toThrow(/container env-raced came up without us/);
 });
 
-it("takes down a container we are not holding", async () => {
+it("takes down a container by name, whether or not we hold it", async () => {
   const { run, commands } = probe([0]);
-  await removeContainer(spec("env-stale"), run);
-  expect(commands).toEqual([containerRemoveCommand(spec("env-stale"))]);
+  await removeContainer(spec("env-stale"), { runHost: run });
+  expect(commands).toEqual([containerRemoveCommand("env-stale")]);
 });

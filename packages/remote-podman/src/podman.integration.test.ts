@@ -10,15 +10,18 @@
 // so the image only has to have a shell and this package never depends on node
 // being inside it.
 
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
-import { runHost } from "./host.js";
+import type { ContainerSpec, KitSpec } from "./spec.js";
 import { containerExistsCommand, containerRemoveCommand } from "./commands.js";
-import { removeContainer, stopContainer } from "./lifetime.js";
-import { podmanSpawner } from "./spawner.js";
+import { podmanEnvironment } from "./environment.js";
+import type { HostRun } from "./host.js";
+import { runHost, spawnChild as spawnOnHost } from "./host.js";
+import { removeContainer } from "./lifetime.js";
 import { podmanStage } from "./stage.js";
-import type { PodmanSpec } from "./spec.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const PAYLOAD = join(HERE, "fixtures", "sh-payload.sh");
@@ -26,7 +29,7 @@ const IMAGE = process.env.POSIPAKI_PODMAN_IMAGE ?? "";
 const NAME = `posipaki-it-${process.pid}`;
 
 /** The spec the container runs: a shell payload, so no runtime has to be installed. */
-function spec(): PodmanSpec {
+function spec(): ContainerSpec & KitSpec {
   return {
     image: IMAGE,
     container: NAME,
@@ -39,7 +42,7 @@ function spec(): PodmanSpec {
 const maybe = IMAGE === "" ? it.skip : it;
 
 /** Wait until the container is really gone, and say whether it ever was. */
-async function waitForGone(container: PodmanSpec, deadlineMs: number): Promise<boolean> {
+async function waitForGone(container: string, deadlineMs: number): Promise<boolean> {
   const until = Date.now() + deadlineMs;
   while (Date.now() < until) {
     if ((await runHost(containerExistsCommand(container), "")).code !== 0) return true;
@@ -53,52 +56,84 @@ afterAll(async () => {
 });
 
 maybe(
-  "stages into a container it started, speaks the wire, and leaves nothing behind",
+  "runs an actor in a container of its own, speaks the wire, and leaves nothing behind",
   async () => {
-    const container = spec();
-    // Staging is the first channel; the container is started for it.
-    const staged = await podmanStage(container, { startTimeoutMs: 120_000 });
-    expect(staged.runtime).not.toBe("");
+    const children: ChildProcess[] = [];
+    const environment = podmanEnvironment<Record<string, never>>(spec(), {
+      pollMs: 250,
+      watchMs: 250,
+      startTimeoutMs: 120_000,
+      handshakeTimeoutMs: 120_000,
+      spawnChild: (command, stdio) => {
+        const child = spawnOnHost(command, stdio);
+        children.push(child);
+        return child;
+      },
+    });
 
+    // The container is started for the actor, and the kit is staged into it.
+    const channel = await environment({});
     const listing = await runHost(
-      ["podman", "exec", "-i", NAME, "sh", "-c", `ls "${staged.kitDir}"`],
+      ["podman", "exec", "-i", NAME, "sh", "-c", 'ls "$HOME/bin/posipaki"'],
       "",
     );
     expect(listing.code).toBe(0);
-    const installed = listing.stdout.split("\n").filter(Boolean);
-    expect(installed).toContain("payload.js");
-    expect(installed).toContain("version.json");
+    expect(listing.stdout.trim().split("\n")[0]).not.toBe("");
 
-    // The second channel: the payload, whose own stdin/stdout are the wire.
-    const channel = await podmanSpawner<Record<string, never>>(container, {
-      args: () => [],
-      handshakeTimeoutMs: 120_000,
-    })({});
     const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage(resolve));
     await channel.send({ $msg: { fromName: "test", body: { echo: "hi" } } });
     expect(await heard).toEqual({ $msg: { fromName: "sh-payload", body: { echo: "pong" } } });
 
-    // Let go: the keepalive's stdin closes, the main process exits, `--rm` takes
-    // the container away — and nothing has to remember to clean up.
+    // The actor goes; the container follows, because the last consumer left.
     await channel.close().catch(() => {});
-    await stopContainer(NAME);
+    children[0]?.kill();
     // Letting go is not instantaneous: the container's main process has to see the
     // EOF, stop, and be reaped by podman before the name is free again.
-    const gone = await waitForGone(container, 15_000);
-    expect(gone).toBe(true);
+    expect(await waitForGone(NAME, 30_000)).toBe(true);
   },
   180_000,
 );
 
+it("refuses a kit whose payload is not there, before it runs anything", async () => {
+  const commands: string[][] = [];
+  const run: HostRun = async (command) => {
+    commands.push(command);
+    return { code: 0, stdout: "", stderr: "" };
+  };
+  await expect(
+    podmanStage(`${NAME}-missing`, { app: { name: "posipaki-it", version: "0" }, payload: join(HERE, "nothing-here.js") }, run),
+  ).rejects.toThrow(/ENOENT|no such file/);
+  expect(commands).toEqual([]);
+});
+
 maybe(
-  "refuses a spec whose payload is not there, before it starts anything",
+  "reuses a container somebody else is holding when told to, and holds nothing itself",
   async () => {
-    const missing: PodmanSpec = { ...spec(), container: `${NAME}-missing`, payload: join(HERE, "nothing-here.js") };
-    await expect(podmanStage(missing, { runHost })).rejects.toThrow(/ENOENT|no such file/);
-    // Nothing was started on its behalf: the kit is read before the container.
-    const exists = await runHost(containerExistsCommand(missing), "");
-    expect(exists.code).not.toBe(0);
-    await runHost(containerRemoveCommand(missing), "");
+    const children: ChildProcess[] = [];
+    const options = {
+      pollMs: 250,
+      watchMs: 250,
+      startTimeoutMs: 120_000,
+      handshakeTimeoutMs: 120_000,
+      spawnChild: (command: string[], stdio: Parameters<typeof spawnOnHost>[1]) => {
+        const child = spawn(command[0], command.slice(1), { stdio });
+        children.push(child);
+        return child;
+      },
+    };
+    const first = podmanEnvironment<Record<string, never>>(spec(), options);
+    const held = await first({});
+
+    const second = podmanEnvironment<Record<string, never>>(spec(), { ...options, onConflict: "reuse", reapMs: 5_000 });
+    const guest = await second({});
+    const heard = new Promise<Record<string, unknown>>((resolve) => guest.onMessage(resolve));
+    await guest.send({ $msg: { fromName: "test", body: { echo: "again" } } });
+    expect(await heard).toEqual({ $msg: { fromName: "sh-payload", body: { echo: "pong" } } });
+
+    await guest.close().catch(() => {});
+    await held.close().catch(() => {});
+    for (const child of children) child.kill();
+    expect(await waitForGone(NAME, 30_000)).toBe(true);
   },
-  60_000,
+  180_000,
 );

@@ -10,13 +10,13 @@ import { DEFAULT_KIT_PARENT, DEFAULT_RUNTIMES, makeKit } from "posipaki/remote/n
 import type { Kit } from "posipaki/remote/node";
 import { GATEWAY_ARTIFACT, PAYLOAD_ARTIFACT } from "./commands.js";
 import { PodmanSpecError } from "./spec.js";
-import type { PodmanSpec } from "./spec.js";
+import type { KitSpec } from "./spec.js";
 
 /**
  * The kit this spec ships: the payload always, the gateway when the shape relays
  * — a gateway without one has nothing to relay to.
  */
-export async function podmanKit(spec: PodmanSpec): Promise<Kit> {
+export async function podmanKit(spec: KitSpec): Promise<Kit> {
   const files = [{ name: PAYLOAD_ARTIFACT, content: await readFile(spec.payload) }];
   if (spec.relay) {
     if (!spec.gateway) {

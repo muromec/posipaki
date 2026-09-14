@@ -1,44 +1,55 @@
-// ── The way in as a spawner ────────────────────────────────────────────────
+// ── Running an actor in a container that is already there ──────────────────
 //
-// A spawner is what the remote seam asks for: hand it the args the client was
-// spawned with, and it returns a channel.  Here that is: the container is there
-// (or started and held), the kit goes in over one `exec`, and the actor speaks
-// over a second one — while the container's own output stays out of the protocol.
+// The connector knows one thing: how to open a channel into a named container
+// and run something in it.  It does not start containers, hold them, or care who
+// else is in there — no container, no channel, and what podman says is the reason.
+//
+// Two knobs, and they are the whole way in:
+//
+//   prepare   optional — runs once before the actor, in the container, for an
+//             actor that has to be put there first (see stage.ts for the copy);
+//   command   what to run, as an argv, given what prepare left behind.
 
 import type { ChildProcess, StdioOptions } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
 import { clientChannel, stderrSink } from "posipaki/remote/node";
 import type { LineStreams, OutputFd, OutputSink } from "posipaki/remote/node";
 import type { Channel, ClientSpawner } from "posipaki/remote";
-import { podmanRunCommand } from "./commands.js";
+import { podmanEntry } from "./commands.js";
+import { runHost } from "./host.js";
+import type { HostResult, HostRun, SpawnChild } from "./host.js";
 import { spawnChild as startOnHost } from "./host.js";
-import type { SpawnChild } from "./host.js";
-import type { PodmanLifetimeOptions } from "./lifetime.js";
 import { PodmanSpecError } from "./spec.js";
-import type { PodmanSpec, PodmanStaged } from "./spec.js";
-import { podmanStage } from "./stage.js";
+
+/** What a prepare step is handed: the container, and a way to run something in it. */
+export interface PodmanPrepare {
+  container: string;
+  /** Run a command inside the container and wait for what it said. */
+  run(command: string[], stdin?: string): Promise<HostResult>;
+}
+
+/** A way into a container that somebody else keeps alive. */
+export interface PodmanConnectSpec<Args, Prepared = void> {
+  /** The container to enter.  Required: this runs actors in containers, it does not find them. */
+  container: string;
+  /** Runs once before the actor.  Optional: what is already in the image needs nothing. */
+  prepare?: (ctx: PodmanPrepare) => Promise<Prepared>;
+  /** The actor's argv inside the container, given what prepare left behind. */
+  command: (args: Args, prepared: Prepared) => string[];
+}
 
 /** How the container's process is started and watched — everything but what runs in it. */
-export interface PodmanWireOptions {
+export interface PodmanConnectOptions {
   /** Where the container's own output goes.  Defaults to our stderr, tagged with its name. */
   onOutput?: OutputSink;
   /** How long to wait for the container's first protocol frame. */
   handshakeTimeoutMs?: number;
   /** Called when the container's process is gone, whichever way it went. */
   onGone?: () => void;
+  /** How host commands run.  Injectable. */
+  runHost?: HostRun;
   /** How the container's process is started.  Injectable, so a test can hold the process. */
   spawnChild?: SpawnChild;
-}
-
-export interface PodmanSpawnerOptions<Args>
-  extends PodmanLifetimeOptions,
-    PodmanWireOptions {
-  /**
-   * The payload's own arguments, built from the args the client was spawned with.
-   * This package knows where the payload is and how it is started, not what it
-   * wants to be told.
-   */
-  args?: (args: Args, staged: PodmanStaged) => string[];
 }
 
 /** How much of what a failed container said we quote as the reason. */
@@ -54,12 +65,11 @@ function errorText(err: unknown): string {
  * channel that never answers.
  */
 async function openChannel(
-  spec: PodmanSpec,
+  container: string,
   command: string[],
-  options: PodmanWireOptions,
+  options: PodmanConnectOptions,
 ): Promise<Channel> {
-  const name = spec.container;
-  const sink = options.onOutput ?? stderrSink(name);
+  const sink = options.onOutput ?? stderrSink(container);
   let tail = "";
   const output: OutputSink = (fd: OutputFd, data: string) => {
     if (fd === 2) tail = (tail + data).slice(-REASON_TAIL);
@@ -105,11 +115,11 @@ async function openChannel(
     ]);
   } catch (err) {
     child.kill();
-    throw new PodmanSpecError(`container ${name} is not available: ${errorText(err)}`);
+    throw new PodmanSpecError(`container ${container} is not available: ${errorText(err)}`);
   }
 
-  // The container's own exit is the channel's close: whichever side goes first,
-  // the other stops waiting — and the caller is told, because its slot must stop
+  // The run's own exit is the channel's close: whichever side goes first, the
+  // other stops waiting — and the caller is told, because its slot must stop
   // pointing at a process that is gone.
   child.once("exit", () => {
     options.onGone?.();
@@ -119,17 +129,22 @@ async function openChannel(
 }
 
 /**
- * The podman way in: the container is there or started, the kit is staged into it
- * over one `exec`, and the actor runs over a second one.  Every spawn stages — the
- * far side probes first, so a kit that is already there is not written again.
+ * The connector: the container is there, the actor is prepared if it has to be,
+ * and it runs on the exec's own stdin/stdout.  Nothing here starts or stops a
+ * container — a name with no container behind it fails, and says so.
  */
-export function podmanSpawner<Args>(
-  spec: PodmanSpec,
-  options: PodmanSpawnerOptions<Args> = {},
+export function podmanConnector<Args, Prepared = void>(
+  spec: PodmanConnectSpec<Args, Prepared>,
+  options: PodmanConnectOptions = {},
 ): ClientSpawner<Args> {
+  const run = options.runHost ?? runHost;
   return async (args: Args): Promise<Channel> => {
-    const staged = await podmanStage(spec, options);
-    const argv = podmanRunCommand(spec, staged, options.args?.(args, staged) ?? []);
-    return openChannel(spec, argv, options);
+    const prepared = spec.prepare
+      ? await spec.prepare({
+          container: spec.container,
+          run: (command, stdin = "") => run(command, stdin),
+        })
+      : (undefined as Prepared);
+    return openChannel(spec.container, podmanEntry(spec.container, spec.command(args, prepared)), options);
   };
 }

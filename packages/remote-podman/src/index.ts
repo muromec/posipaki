@@ -1,9 +1,16 @@
 // ── posipaki-remote-podman ─────────────────────────────────────────────────
 //
-// Run a posipaki actor inside a podman container.  This package is the way in: it
-// keeps the container alive for as long as the caller is, stages a kit into it over
-// one `exec` and runs the actor over a second one, whose own stdin/stdout are the
-// wire.  The wire, the kit vocabulary and the gateway are posipaki's
+// Run a posipaki actor in a podman container.  Three pieces, deliberately
+// separate, because a container's life and a way into it are two things:
+//
+//   containerActor   a container, as an actor: it starts one, holds it, counts
+//                    the consumers that retain it, and lets it go at the end
+//   podmanConnector  the way in by name: a prepare step (optional) and a command,
+//                    on the exec's own stdin/stdout.  No container, no channel
+//   podmanCopy       the connector with the actor's bundle staged into it first
+//   podmanEnvironment  both together: a container of its own per actor
+//
+// The wire, the kit vocabulary and the gateway are posipaki's
 // (`posipaki/remote/node`); what lives here is the container half.
 
 export {
@@ -13,22 +20,34 @@ export {
   containerKeepaliveCommand,
   containerRemoveCommand,
   podmanEntry,
-  podmanRunCommand,
   podmanStageCommand,
 } from "./commands.js";
 export { runHost, spawnChild } from "./host.js";
 export type { HostResult, HostRun, SpawnChild } from "./host.js";
 export { podmanKit } from "./kit.js";
 export {
+  CONTAINER_REAP_MS,
   CONTAINER_START_MS,
-  ensureContainer,
+  containerExists,
   removeContainer,
+  startContainer,
   startHost,
   stopContainer,
 } from "./lifetime.js";
-export type { ContainerHandle, HostStart, PodmanLifetimeOptions } from "./lifetime.js";
-export { podmanSpawner } from "./spawner.js";
-export type { PodmanSpawnerOptions, PodmanWireOptions } from "./spawner.js";
+export type {
+  ConflictPolicy,
+  ContainerHandle,
+  ContainerLifeOptions,
+  ContainerStartResult,
+  HostStart,
+} from "./lifetime.js";
+export { containerActor, holdContainer } from "./container.js";
+export type { ContainerActorArgs, ContainerIn, ContainerOut } from "./container.js";
+export { podmanConnector } from "./connect.js";
+export type { PodmanConnectOptions, PodmanConnectSpec, PodmanPrepare } from "./connect.js";
+export { podmanCopy } from "./copy.js";
+export { podmanEnvironment } from "./environment.js";
+export type { PodmanEnvironmentOptions } from "./environment.js";
 export { PodmanSpecError } from "./spec.js";
-export type { PodmanSpec, PodmanStaged } from "./spec.js";
+export type { ContainerSpec, KitSpec, PodmanStaged } from "./spec.js";
 export { podmanStage } from "./stage.js";

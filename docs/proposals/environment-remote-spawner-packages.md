@@ -64,7 +64,7 @@ One package per way in. ssh and podman first, `bwrap` later in the same shape:
 | Package | Way in | Exports |
 | --- | --- | --- |
 | `posipaki-remote-ssh` | `ssh [user@]host <cmd>` | `sshSpawner(spec)` → `ClientSpawner<Args>`, and the commands it builds |
-| `posipaki-remote-podman` | `podman exec -i <container> <cmd>`, plus `run` / `rm` for the container's life | `podmanSpawner(spec)` → `ClientSpawner<Args>`, and the commands it builds |
+| `posipaki-remote-podman` | `podman exec -i <container> <cmd>`, plus `run` / `rm` for the container's life | `containerActor` (a container, held and counted), `podmanConnector` / `podmanCopy` (the way in by name) and `podmanEnvironment` (both together) |
 
 A package is a wrapper over `exec` and nothing else: it builds the argv for the stage
 command, feeds that command the bootstrap script on stdin, checks the report, then builds
@@ -122,7 +122,9 @@ posipaki becomes a workspace monorepo; the root stays the core package:
 2. the stdio wire, the relay and the kit vocabulary into `posipaki/remote/node`, with the
    consumer's tests ported;
 3. `posipaki-remote-ssh`, with its tests;
-4. `posipaki-remote-podman`, with its tests;
+4. `posipaki-remote-podman`, with its tests — since reshaped into three pieces (a
+   container's actor, the way in by name, and both together): see
+   [container-lifetime.md](./container-lifetime.md);
 5. the consumer switches its `ssh` and `container` kinds onto the packages and deletes
    what moved;
 6. a page in posipaki-docs for running an actor somewhere else, and this document's status

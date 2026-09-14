@@ -9,8 +9,9 @@
 //   we like; when we go, by any route, the write end closes, the reader sees EOF,
 //   the main process exits, and `--rm` takes the container with it.
 //
-// So nothing has to remember to clean up — and a container that is already there
-// (another persona's, or one we are re-entering) is left exactly as it is.
+// So nothing has to remember to clean up.  What is left is what to do when the
+// name is already taken by a container this process is not holding: kill it,
+// replace it, reuse it, or refuse.
 
 import { spawn } from "node:child_process";
 import {
@@ -21,7 +22,7 @@ import {
 import { runHost } from "./host.js";
 import type { HostRun } from "./host.js";
 import { PodmanSpecError } from "./spec.js";
-import type { PodmanSpec } from "./spec.js";
+import type { ContainerSpec } from "./spec.js";
 
 /** How long a container may take to appear before we call it failed. */
 export const CONTAINER_START_MS = 30_000;
@@ -31,6 +32,12 @@ const CONTAINER_POLL_MS = 50;
 
 /** How long a stopped container's client gets to reap it before we kill it. */
 const STOP_GRACE_MS = 5_000;
+
+/**
+ * How long a name that is still taken gets to be freed before a *reuse* gives up
+ * on it: a container goes a moment after its holder does, not in the same instant.
+ */
+export const CONTAINER_REAP_MS = 2_000;
 
 /** A container we started, held by the process that keeps it up. */
 export interface ContainerHandle {
@@ -76,80 +83,136 @@ export const startHost: HostStart = (command) =>
     };
   });
 
-/** Containers we started in this process, by name. */
-const started = new Map<string, ContainerHandle>();
+/**
+ * What to do when the name is already taken by a container we are not holding.
+ *
+ * - `reuse` — somebody else (another process of ours, most likely) is holding it:
+ *   run in theirs and let them keep the life.  Their death takes the container,
+ *   and our channels with it, which is the deal for a name we did not start.
+ * - `replace` — take the name: remove whatever is there and start our own.  For
+ *   containers we assume we manage.
+ * - `fail` — do not touch it.  The default, because it is the only one that never
+ *   costs somebody else their container: a name is the consumer's to give, so a
+ *   name that is taken is a question for the consumer, not a guess for us.
+ */
+export type ConflictPolicy = "fail" | "reuse" | "replace";
 
-/** Let go of one container, whether or not we started it. */
-export async function stopContainer(name: string): Promise<void> {
-  const handle = started.get(name);
-  if (!handle) return;
-  started.delete(name);
-  await handle.stop();
-}
-
-/** Take down a container we are not holding — a stale one from an older process. */
-export async function removeContainer(spec: PodmanSpec, run: HostRun = runHost): Promise<void> {
-  await stopContainer(spec.container);
-  await run(containerRemoveCommand(spec), "");
-}
-
-/** Everything about the container's life that a caller may want to control. */
-export interface PodmanLifetimeOptions {
-  /** How host commands run — the probe and the removal.  Injectable. */
+/** What a start may ask for: three policies and three clocks. */
+export interface ContainerLifeOptions {
+  /** How host commands run — the probes and the removal.  Injectable. */
   runHost?: HostRun;
   /** How the container's own process is started.  Injectable. */
   startHost?: HostStart;
+  /** What to do when the name is taken.  Defaults to `fail`. */
+  onConflict?: ConflictPolicy;
   /** How long a container may take to appear.  Defaults to 30s. */
   startTimeoutMs?: number;
   /** How often to ask whether it is there yet.  Defaults to 50ms. */
   pollMs?: number;
+  /** How long a reuse waits for a taken name to be freed.  Defaults to 2s. */
+  reapMs?: number;
+}
+
+/** What a start did: a handle when we are holding it, and nothing when we are a guest. */
+export interface ContainerStartResult {
+  handle: ContainerHandle | null;
+  /** How the name was taken when we arrived. */
+  conflict: ConflictPolicy | null;
+}
+
+/** Is there a container by that name — whoever started it. */
+export async function containerExists(container: string, run: HostRun = runHost): Promise<boolean> {
+  return (await run(containerExistsCommand(container), "")).code === 0;
+}
+
+/** Wait for a name to be freed, or say it never was. */
+async function waitGone(
+  container: string,
+  run: HostRun,
+  timeoutMs: number,
+  pollMs: number,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if (!(await containerExists(container, run))) return true;
+    await new Promise((settle) => setTimeout(settle, pollMs));
+  }
+  return !(await containerExists(container, run));
 }
 
 /** Wait until the container answers, or say why it never did. */
 async function waitForContainer(
-  spec: PodmanSpec,
+  container: string,
   run: HostRun,
   timeoutMs: number,
   pollMs: number,
 ): Promise<void> {
   const deadline = Date.now() + timeoutMs;
   while (Date.now() < deadline) {
-    if ((await run(containerExistsCommand(spec), "")).code === 0) return;
+    if (await containerExists(container, run)) return;
     await new Promise((settle) => setTimeout(settle, pollMs));
   }
-  throw new PodmanSpecError(`container ${spec.container} did not come up within ${timeoutMs}ms`);
+  throw new PodmanSpecError(`container ${container} did not come up within ${timeoutMs}ms`);
 }
 
 /**
- * The container is there, or we start it — once per process, held by its stdin.
- * Returns the handle when this process holds it, and null when the container was
- * already there: this does not own what it did not start.
+ * The container is there, or we start it and hold it.  A name that is taken is
+ * handled by the policy — reused, replaced, or refused — and a container we do
+ * not hold is not ours to stop, so the caller gets no handle for it.
  */
-export async function ensureContainer(
-  spec: PodmanSpec,
-  options: PodmanLifetimeOptions = {},
-): Promise<ContainerHandle | null> {
+export async function startContainer(
+  spec: ContainerSpec,
+  options: ContainerLifeOptions = {},
+): Promise<ContainerStartResult> {
   const run = options.runHost ?? runHost;
-  const name = spec.container;
-  const held = started.get(name);
-  if (held) {
-    if (held.alive()) return held;
-    // The container died under us — killed from outside, or the host restarted.
-    // Let the handle go and start a fresh one: `podman exec` into a name that is
-    // gone fails, and failing is not what "it is there, or we start it" means.
-    started.delete(name);
+  const start = options.startHost ?? startHost;
+  const pollMs = options.pollMs ?? CONTAINER_POLL_MS;
+  const policy = options.onConflict ?? "fail";
+
+  if (await containerExists(spec.container, run)) {
+    if (policy === "fail") {
+      throw new PodmanSpecError(
+        `container ${spec.container} is already running, and is not ours to hold`,
+      );
+    }
+    if (policy === "reuse") {
+      // A container goes a moment after its holder, so give the name that moment
+      // before deciding that somebody is really in there.
+      if (!(await waitGone(spec.container, run, options.reapMs ?? CONTAINER_REAP_MS, pollMs))) {
+        return { handle: null, conflict: "reuse" };
+      }
+    } else {
+      await run(containerRemoveCommand(spec.container), "");
+      await waitGone(spec.container, run, options.reapMs ?? CONTAINER_REAP_MS, pollMs);
+    }
   }
 
-  if ((await run(containerExistsCommand(spec), "")).code === 0) return null;
-
-  const handle = await (options.startHost ?? startHost)(containerKeepaliveCommand(spec));
-  started.set(name, handle);
-  const timeoutMs = options.startTimeoutMs ?? CONTAINER_START_MS;
+  const handle = await start(containerKeepaliveCommand(spec));
   try {
-    await waitForContainer(spec, run, timeoutMs, options.pollMs ?? CONTAINER_POLL_MS);
+    await waitForContainer(spec.container, run, options.startTimeoutMs ?? CONTAINER_START_MS, pollMs);
   } catch (err) {
-    await stopContainer(name);
+    await handle.stop();
     throw err;
   }
-  return handle;
+  // The container answers, but our client is gone: the name was taken between the
+  // probe and the start, so what answers is somebody else's container.
+  if (!handle.alive()) {
+    throw new PodmanSpecError(
+      `container ${spec.container} came up without us: the name was taken while we started`,
+    );
+  }
+  return { handle, conflict: null };
+}
+
+/** Let go of a container we hold. */
+export async function stopContainer(handle: ContainerHandle): Promise<void> {
+  await handle.stop();
+}
+
+/** Take down a container by name, whether or not we are holding it. */
+export async function removeContainer(
+  spec: ContainerSpec,
+  options: ContainerLifeOptions = {},
+): Promise<void> {
+  await (options.runHost ?? runHost)(containerRemoveCommand(spec.container), "");
 }
