@@ -4,7 +4,7 @@
 // onMessage() throws if a handler is already set; call removeHandler() first.
 
 import { open, type FileHandle } from "node:fs/promises";
-import { createReadStream, createWriteStream, type ReadStream, type WriteStream } from "node:fs";
+import type { ReadStream, WriteStream } from "node:fs";
 import * as readline from "node:readline";
 import type { StringTransport } from "../channel.js";
 
@@ -19,18 +19,13 @@ export class FifoUtf8NlineTransport implements StringTransport {
   private closed = false;
   private closingPromise: Promise<void> | null = null;
   private pvtError: Error | null = null;
-  private pvtWriter: FifoUtf8NlineTransport | null = null;
 
   private constructor(opts: { readFd?: FileHandle; writeFd?: FileHandle }) {
     this.readFd = opts.readFd ?? null;
     this.writeFd = opts.writeFd ?? null;
 
     if (this.readFd) {
-      this.rs = createReadStream("", {
-        fd: this.readFd.fd,
-        encoding: "utf-8",
-        autoClose: false,
-      });
+      this.rs = this.readFd.createReadStream({ encoding: "utf-8" });
       this.rl = readline.createInterface({ input: this.rs });
 
       this.rl.on("line", (line) => {
@@ -52,11 +47,7 @@ export class FifoUtf8NlineTransport implements StringTransport {
     }
 
     if (this.writeFd) {
-      this.ws = createWriteStream("", {
-        fd: this.writeFd.fd,
-        encoding: "utf-8",
-        autoClose: false,
-      });
+      this.ws = this.writeFd.createWriteStream({ encoding: "utf-8" });
       this.ws.on("error", (err: Error) => {
         this.pvtError = err;
         this.close();
@@ -67,16 +58,6 @@ export class FifoUtf8NlineTransport implements StringTransport {
   }
 
   // ── factories ──────────────────────────────────────────────────────────
-
-  private static async openReader(path: string): Promise<FifoUtf8NlineTransport> {
-    const readFd = await open(path, "r");
-    return new FifoUtf8NlineTransport({ readFd });
-  }
-
-  private static async openWriter(path: string): Promise<FifoUtf8NlineTransport> {
-    const writeFd = await open(path, "w");
-    return new FifoUtf8NlineTransport({ writeFd });
-  }
 
   static openReaderFd(readFd: FileHandle): FifoUtf8NlineTransport {
     return new FifoUtf8NlineTransport({ readFd });
@@ -92,28 +73,26 @@ export class FifoUtf8NlineTransport implements StringTransport {
 
   // ── bidirectional connection ───────────────────────────────────────────
 
-  private attachWriter(w: FifoUtf8NlineTransport): void {
-    this.pvtWriter = w;
-  }
-
   /**
    * Start opening a bidirectional connection.  Opens readPath for reading
    * in the background, returns a promise.  The caller should do whatever
    * setup is needed to unblock the read (e.g. spawn a process that opens
    * readPath for writing), then await the returned transport.
    *
-   * Once the read completes, writePath is opened for writing automatically.
+   * The transport itself is built only once both directions are open.  A read
+   * stream created while no writer exists on its fifo is handed an immediate
+   * end-of-stream by some runtimes (bun), which closes a channel that has not
+   * carried a byte yet — so the writes side is opened before the reader exists.
    */
   static beginConnect(
     readPath: string,
     writePath: string,
   ): { transport: Promise<FifoUtf8NlineTransport> } {
-    const readerPromise = FifoUtf8NlineTransport.openReader(readPath);
+    const readFdPromise = open(readPath, "r");
 
-    const transport = readerPromise.then(async (reader) => {
-      const writer = await FifoUtf8NlineTransport.openWriter(writePath);
-      reader.attachWriter(writer);
-      return reader;
+    const transport = readFdPromise.then(async (readFd) => {
+      const writeFd = await open(writePath, "w");
+      return FifoUtf8NlineTransport.fromFds(readFd, writeFd);
     });
 
     return { transport };
@@ -126,20 +105,19 @@ export class FifoUtf8NlineTransport implements StringTransport {
    *
    * Use this when you are the side that responds to the peer's beginConnect
    * (i.e. you don't need to interleave any setup between the read and write
-   * opens).
+   * opens).  Built like `beginConnect`: the transport exists only after both
+   * directions do.
    */
   static async connect(readPath: string, writePath: string): Promise<FifoUtf8NlineTransport> {
-    const readerPromise = FifoUtf8NlineTransport.openReader(readPath);
-    const writer = await FifoUtf8NlineTransport.openWriter(writePath);
-    const reader = await readerPromise;
-    reader.attachWriter(writer);
-    return reader;
+    const readFdPromise = open(readPath, "r");
+    const writeFd = await open(writePath, "w");
+    const readFd = await readFdPromise;
+    return FifoUtf8NlineTransport.fromFds(readFd, writeFd);
   }
 
   // ── public API ─────────────────────────────────────────────────────────
 
   get canSend(): boolean {
-    if (this.pvtWriter) return this.pvtWriter.canSend;
     return this.writeFd !== null && !this.closed;
   }
 
@@ -171,7 +149,6 @@ export class FifoUtf8NlineTransport implements StringTransport {
   }
 
   async send(line: string): Promise<void> {
-    if (this.pvtWriter) return this.pvtWriter.send(line);
     if (this.closed) throw new Error("FifoUtf8NlineTransport: closed");
     if (this.writeFd === null) throw new Error("FifoUtf8NlineTransport: not a writer");
     if (!line.endsWith("\n")) line += "\n";
@@ -220,9 +197,6 @@ export class FifoUtf8NlineTransport implements StringTransport {
         await this.writeFd.close();
       } catch {}
       this.writeFd = null;
-    }
-    if (this.pvtWriter) {
-      await this.pvtWriter.close();
     }
   }
 }
