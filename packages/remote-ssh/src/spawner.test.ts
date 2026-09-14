@@ -1,0 +1,179 @@
+// ── The way in, end to end ─────────────────────────────────────────────────
+//
+// The host is handed in, but the process on the far side is real: the fixture
+// speaks the wire itself, so these tests exercise what a consumer gets — two ssh
+// commands into one host, and a channel that answers.  A host that is not there
+// is a real process that dies the way a refused connection does.
+
+import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { afterEach, expect, it } from "vitest";
+import type { Channel } from "posipaki/remote";
+import type { HostRun, SpawnChild } from "./host.js";
+import { sshSpawner } from "./spawner.js";
+import type { SshSpawnerOptions } from "./spawner.js";
+import type { SshSpec } from "./spec.js";
+
+const FAR_END = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "staged-payload.js");
+const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.32.1-abcdef12";
+const REPORT = `staged\nkit ${KIT_DIR}\nruntime /usr/bin/node\n`;
+
+const children: ChildProcess[] = [];
+const scratchDirs: string[] = [];
+
+afterEach(async () => {
+  for (const child of children.splice(0)) {
+    if (child.exitCode !== null || child.signalCode !== null) continue;
+    child.kill();
+    await new Promise<void>((settle) => child.once("exit", () => settle()));
+  }
+  for (const dir of scratchDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
+});
+
+/** A payload bundle on a throwaway path, and the spec that stages it. */
+function spec(extra: Partial<SshSpec> = {}): SshSpec {
+  const dir = mkdtempSync(join(tmpdir(), "posipaki-ssh-"));
+  scratchDirs.push(dir);
+  const payload = join(dir, "payload.js");
+  writeFileSync(payload, "// the payload\n");
+  return { host: "env.invalid", app: { name: "email-agent", version: "0.13.0" }, payload, ...extra };
+}
+
+/** What a refused connection looks like: a process that dies without a word on the wire. */
+const refused: SpawnChild = (_command, stdio) =>
+  spawn("sh", ["-c", "echo 'ssh: connect to host env.invalid: Connection refused' >&2; exit 255"], {
+    stdio,
+  });
+
+/** Wait for something the far end does on its own clock. */
+async function waitFor(what: () => boolean, deadlineMs = 5_000): Promise<void> {
+  const until = Date.now() + deadlineMs;
+  while (Date.now() < until) {
+    if (what()) return;
+    await new Promise((settle) => setTimeout(settle, 20));
+  }
+  throw new Error("the far end never did it");
+}
+
+/** A host runner that records its command and answers with the report. */
+function stageOver(report: string): { run: HostRun; commands: string[][]; fed: string[] } {
+  const commands: string[][] = [];
+  const fed: string[] = [];
+  const run: HostRun = async (command, stdin) => {
+    commands.push(command);
+    fed.push(stdin);
+    return { code: 0, stdout: report, stderr: "" };
+  };
+  return { run, commands, fed };
+}
+
+/** A spawner whose commands are recorded and whose run command the fixture plays. */
+function harness(ssh: SshSpec, options: Partial<SshSpawnerOptions<{ env: string }>> = {}) {
+  const staged = stageOver(REPORT);
+  const commands: string[][] = [];
+  const output: Array<[number, string]> = [];
+  const gone: number[] = [];
+
+  const spawner = sshSpawner<{ env: string }>(ssh, {
+    runHost: staged.run,
+    spawnChild: (command, stdio) => {
+      commands.push(command);
+      const child = spawn(process.execPath, [FAR_END], { stdio });
+      children.push(child);
+      return child;
+    },
+    args: (args) => [`--env=${args.env}`],
+    onOutput: (fd, data) => output.push([fd, data]),
+    onGone: () => gone.push(1),
+    ...options,
+  });
+  return { spawner, commands, stageCommands: staged.commands, fed: staged.fed, output, gone };
+}
+
+/** Let a session go, whatever state it is in. */
+async function stop(channel: Channel, child: ChildProcess): Promise<void> {
+  await channel.close().catch(() => {});
+  if (child.exitCode === null && child.signalCode === null) child.kill();
+  await new Promise<void>((settle) => (child.exitCode !== null ? settle() : child.once("exit", () => settle())));
+}
+
+it("stages over one ssh and runs the actor over a second", async () => {
+  const ssh = spec();
+  const live = harness(ssh);
+  const channel = await live.spawner({ env: "agent" });
+
+  expect(live.stageCommands).toEqual([["ssh", "env.invalid", "sh", "-s"]]);
+  expect(live.fed[0]).toContain('kit_dir="$HOME/');
+  expect(live.commands).toEqual([
+    ["ssh", "env.invalid", "/usr/bin/node", `${KIT_DIR}/payload.js`, "--env=agent"],
+  ]);
+
+  const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage(resolve));
+  await channel.send({ $msg: { fromName: "client", body: { echo: "hi" } } });
+  expect(await heard).toEqual({ $msg: { fromName: "staged-payload", body: { echo: "hi" } } });
+  // What the far end prints is output, never protocol.
+  expect(live.output).toContainEqual([2, "the far end is ready\n"]);
+
+  await stop(channel, children[0]);
+});
+
+it("runs the gateway with the payload as its worker when the spec relays", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "posipaki-ssh-"));
+  scratchDirs.push(dir);
+  const gateway = join(dir, "gateway.js");
+  writeFileSync(gateway, "// the gateway\n");
+  const live = harness(spec({ relay: true, gateway }));
+  const channel = await live.spawner({ env: "agent" });
+
+  expect(live.commands).toEqual([
+    [
+      "ssh",
+      "env.invalid",
+      "/usr/bin/node",
+      `${KIT_DIR}/gateway.js`,
+      "--env=agent",
+      `--worker=${KIT_DIR}/payload.js`,
+    ],
+  ]);
+  await stop(channel, children[0]);
+});
+
+it("fails the spawn with what a host that never speaks said", async () => {
+  const spawner = sshSpawner<{ env: string }>(spec(), {
+    runHost: (await stageOver(REPORT)).run,
+    spawnChild: refused,
+    args: () => [],
+  });
+  await expect(spawner({ env: "agent" })).rejects.toThrow(
+    /ssh env\.invalid is not available:.*Connection refused/,
+  );
+});
+
+it("fails before anything runs when the host has no runtime", async () => {
+  const commands: string[][] = [];
+  const spawnChild: SpawnChild = (command, stdio) => {
+    commands.push(command);
+    throw new Error("nothing should have been started");
+  };
+  const spawner = sshSpawner<{ env: string }>(spec(), {
+    runHost: async () => ({ code: 75, stdout: "error no runtime among: node nodejs bun\n", stderr: "" }),
+    spawnChild,
+  });
+  await expect(spawner({ env: "agent" })).rejects.toThrow(/no runtime among: node nodejs bun/);
+  expect(commands).toEqual([]);
+});
+
+it("tells the caller when the host's process is gone", async () => {
+  const live = harness(spec());
+  const channel = await live.spawner({ env: "agent" });
+  expect(live.gone).toEqual([]);
+
+  children[0].kill();
+  await waitFor(() => live.gone.length > 0);
+  expect(live.gone).toEqual([1]);
+  await channel.close().catch(() => {});
+});

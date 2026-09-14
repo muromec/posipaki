@@ -4,7 +4,7 @@
 // in: it stages a kit through one `ssh` channel and runs the actor through a
 // second one, whose own stdin/stdout are the wire.  The wire, the kit
 // vocabulary and the gateway are posipaki's (`posipaki/remote/node`); what
-// lives here is the ssh half — the commands, the kit, and how a spawn is made.
+// lives here is the ssh half — the commands, the kit, the staging, the spawn.
 
 export {
   GATEWAY_ARTIFACT,
@@ -13,6 +13,11 @@ export {
   sshRunCommand,
   sshStageCommand,
 } from "./commands.js";
+export { runHost, spawnChild } from "./host.js";
+export type { HostResult, HostRun, SpawnChild } from "./host.js";
 export { sshKit } from "./kit.js";
+export { sshSpawner } from "./spawner.js";
+export type { SshHostOptions, SshSpawnerOptions } from "./spawner.js";
 export { SshSpecError } from "./spec.js";
 export type { SshSpec, SshStaged } from "./spec.js";
+export { sshStage } from "./stage.js";
