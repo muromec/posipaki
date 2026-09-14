@@ -77,7 +77,9 @@ async function openChannel(
   child.stderr?.on("data", (chunk: string) => output(2, chunk));
 
   const exited = new Promise<never>((_, reject) => {
-    child.once("exit", (code, signal) => {
+    // `close`, not `exit`: the process being gone is not the same as everything it
+    // said having arrived, and the tail of its stderr is the whole reason here.
+    child.once("close", (code, signal) => {
       const how = signal === null ? `code ${code}` : `signal ${signal}`;
       const why = tail.trim();
       reject(new Error(`the host exited with ${how}${why ? `: ${why}` : ""}`));
