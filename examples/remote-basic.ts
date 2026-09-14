@@ -1,13 +1,16 @@
-// ── Remote Actor POC — stable, no hangs, no EBADF ─────────────────────────
+// ── Remote Actor — one module, both ends of the wire ───────────────────────
 //
-// Demonstrates defineRemoteActor — one import, both ends of the wire.
-// Uses spawnAsync with a toParent callback to collect emitted PONGs.
+// Demonstrates defineSubprocessActor: the actor is wrapped so that spawning it runs
+// it in a child process over a fifo pair, and this same file is the child's entry
+// point.  The path is ours to name (`import.meta.url`), and which end we are is
+// decided by an argv marker — never by asking a module where it sits, which is the
+// question a bundler makes unanswerable.
 //
 // Run:
 //   bun run examples/remote-basic.ts
 
 import { defineActor, defineMessages, spawnAsync } from "../src/index.js";
-import { defineRemoteActor } from "../src/remote/define.js";
+import { defineSubprocessActor } from "../src/remote/define-subprocess.js";
 
 const echoActor = defineActor({
   name: "echo",
@@ -22,20 +25,15 @@ const echoActor = defineActor({
   },
 });
 
-const { actor: remoteEcho, isRemoteRoot } = defineRemoteActor(echoActor, import.meta.url);
+const { actor: remoteEcho, isRemoteRoot } = defineSubprocessActor(echoActor, import.meta.url);
 
 if (!isRemoteRoot) {
   console.log("Host: spawning child...");
 
   const pongs: Array<{ type: "PONG"; count: number }> = [];
-  const proc = spawnAsync(
-    // echoActor.fn,
-    remoteEcho.fn,
-    "echo",
-    (msg) => {
-      if (msg.type === "PONG") pongs.push(msg);
-    },
-  )({});
+  const proc = spawnAsync(remoteEcho.fn, "echo", (msg) => {
+    if (msg.type === "PONG") pongs.push(msg);
+  })({});
 
   await proc.ready();
 
