@@ -6,7 +6,7 @@
 import { describe, it, expect } from "vitest";
 import { PassThrough } from "node:stream";
 import { execSync } from "node:child_process";
-import { closeSync, constants, openSync } from "node:fs";
+import { constants, openSync } from "node:fs";
 import { unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -203,16 +203,11 @@ describe("fd streams", () => {
       await left.send("over real fds");
       expect(await arrived).toBe("over real fds");
 
+      // The transports own these fds: they were handed to the streams, and a
+      // runtime closes them on teardown even with `autoClose: false`.  Closing
+      // them here as well races that, so the test lets go.
       await left.close();
       await right.close();
-      for (const fd of [leftRead, leftWrite, rightRead, rightWrite]) {
-        // A stream that closed its fd on teardown is not a failure here.
-        try {
-          closeSync(fd);
-        } catch {
-          /* already closed */
-        }
-      }
     } finally {
       await unlink(toLeft).catch(() => {});
       await unlink(toRight).catch(() => {});
