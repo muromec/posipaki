@@ -15,7 +15,7 @@ import { afterEach, expect, it } from "vitest";
 import type { Channel } from "posipaki/remote";
 import { sshConnector } from "./connect.js";
 import type { SshConnectOptions } from "./connect.js";
-import { sshCopy } from "./copy.js";
+import { sshBootstrap } from "./bootstrap.js";
 import type { HostRun, SpawnChild } from "./host.js";
 import type { SshSpec } from "./spec.js";
 
@@ -69,7 +69,7 @@ function harness(
   const output: Array<[number, string]> = [];
   const gone: number[] = [];
 
-  const spawner = sshCopy<{ env: string }>(spec, {
+  const spawner = sshBootstrap<{ env: string }>(spec, {
     runHost: staged.run,
     spawnChild: (command, stdio) => {
       commands.push(command);
@@ -183,7 +183,7 @@ it("fails the spawn with what a host that never speaks said", async () => {
 
 it("fails before anything runs when the host has no runtime", async () => {
   const commands: string[][] = [];
-  const spawner = sshCopy<{ env: string }>(kit(), {
+  const spawner = sshBootstrap<{ env: string }>(kit(), {
     runHost: async () => ({ code: 75, stdout: "error no runtime among: node nodejs bun\n", stderr: "" }),
     spawnChild: (command) => {
       commands.push(command);

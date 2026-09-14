@@ -15,7 +15,7 @@ import { afterEach, expect, it } from "vitest";
 import type { Channel } from "posipaki/remote";
 import { podmanConnector } from "./connect.js";
 import type { PodmanConnectOptions } from "./connect.js";
-import { podmanCopy } from "./copy.js";
+import { podmanBootstrap } from "./bootstrap.js";
 import type { HostRun, SpawnChild } from "./host.js";
 import type { ContainerSpec, KitSpec } from "./spec.js";
 
@@ -75,7 +75,7 @@ function harness(
   const output: Array<[number, string]> = [];
   const gone: number[] = [];
 
-  const spawner = podmanCopy<{ env: string }>(spec, {
+  const spawner = podmanBootstrap<{ env: string }>(spec, {
     runHost: staged.run,
     spawnChild: (command, stdio) => {
       commands.push(command);
@@ -196,7 +196,7 @@ it("fails the spawn with what a container that never speaks said", async () => {
 
 it("fails before anything runs when the container has no runtime", async () => {
   const commands: string[][] = [];
-  const spawner = podmanCopy<{ env: string }>(kit(), {
+  const spawner = podmanBootstrap<{ env: string }>(kit(), {
     runHost: async () => ({ code: 75, stdout: "error no runtime among: node nodejs bun\n", stderr: "" }),
     spawnChild: (command) => {
       commands.push(command);

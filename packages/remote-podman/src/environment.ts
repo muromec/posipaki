@@ -12,14 +12,14 @@
 import type { Channel, ClientSpawner } from "posipaki/remote";
 import { containerActor } from "./container.js";
 import type { ContainerOut } from "./container.js";
-import { podmanCopy } from "./copy.js";
-import type { PodmanCopyOptions } from "./copy.js";
+import { podmanBootstrap } from "./bootstrap.js";
+import type { PodmanBootstrapOptions } from "./bootstrap.js";
 import type { ContainerLifeOptions } from "./lifetime.js";
 import { PodmanSpecError } from "./spec.js";
 import type { ContainerSpec, KitSpec } from "./spec.js";
 
 /** Everything an environment takes: the container's life, the way in, and how closely the actor watches. */
-export type PodmanEnvironmentOptions<Args> = PodmanCopyOptions<Args> &
+export type PodmanEnvironmentOptions<Args> = PodmanBootstrapOptions<Args> &
   ContainerLifeOptions & {
     /** How often the container actor looks at whether the container is still there. */
     watchMs?: number;
@@ -81,7 +81,7 @@ export function podmanEnvironment<Args>(
   const { onConflict = "replace" } = options;
   return async (args: Args): Promise<Channel> => {
     const holder = await holdContainer(spec, { ...options, onConflict });
-    const connect = podmanCopy<Args>(spec, {
+    const connect = podmanBootstrap<Args>(spec, {
       ...options,
       onGone: () => {
         options.onGone?.();

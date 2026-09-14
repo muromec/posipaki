@@ -7,7 +7,7 @@
 // Two knobs, and they are the whole way in:
 //
 //   prepare   optional — runs once before the actor, in the container, for an
-//             actor that has to be put there first (see stage.ts for the copy);
+//             actor that has to be put there first (see stage.ts for the staging);
 //   command   what to run, as an argv, given what prepare left behind.
 
 import type { ChildProcess, StdioOptions } from "node:child_process";

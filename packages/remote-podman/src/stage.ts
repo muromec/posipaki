@@ -4,7 +4,7 @@
 // line per step comes back.  Nothing of the payload runs yet — that is the run
 // channel — so a failure here is a readable reason instead of a dead channel.
 //
-// This is what a prepare step is for the copy shape, and it is the only prepare
+// This is what a prepare step is for the bootstrap shape, and it is the only prepare
 // this package ships: an actor already in the image needs none.
 
 import { bootstrapScript, parseBootstrapReport } from "posipaki/remote/node";

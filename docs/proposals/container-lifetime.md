@@ -1,7 +1,7 @@
 # A container and a way into it
 
-**Status:** design settled, and built: the container actor, the connector by name, the copy
-shape and the environment composite are in `posipaki-remote-podman`.  What this note keeps is
+**Status:** design settled, and built: the container actor, the connector by name, the
+bootstrap shape and the environment composite are in `posipaki-remote-podman`.  What this note keeps is
 the shape of the thing and the list of what we deliberately did not build.
 **Follows:** [environment-remote-spawner-packages.md](./environment-remote-spawner-packages.md)
 
@@ -18,7 +18,7 @@ other.
 | Piece | What it owns | What it does not |
 | --- | --- | --- |
 | `containerActor` | the container's life: it starts one, holds it, counts the consumers that retain it, lets it go at the end, and says when the container disappears | it does not adopt a container somebody else holds, and it knows nothing about what runs inside |
-| `podmanConnector` / `podmanCopy` | the way in by name: an optional prepare step and a command, on the exec's own stdin/stdout | it does not start, hold or remove a container — no container, and podman's own words are the reason |
+| `podmanConnector` / `podmanBootstrap` | the way in by name: an optional prepare step and a command, on the exec's own stdin/stdout | it does not start, hold or remove a container — no container, and podman's own words are the reason |
 | `podmanEnvironment` | both together, for one actor | it is not a way to share: two actors that want one container ask the container actor for it |
 
 The composite is there because "run this actor in a container of its own, and stop it when the
@@ -50,7 +50,7 @@ whose life another one owns, which is exactly the bug the question was about.
 Everything about *what runs* is two knobs, which is also what the ssh package will adopt when it
 settles:
 
-- `prepare?` — runs once before the actor, in the container.  `podmanCopy` fills it in with the
+- `prepare?` — runs once before the actor, in the container.  `podmanBootstrap` fills it in with the
   kit staging; an actor already in the image needs none;
 - `command(args, prepared)` — the argv inside the container, given what prepare left behind.
 

@@ -3,7 +3,7 @@
 // The preparing channel is asserted exactly: an ssh, the host as it was given,
 // and the shell behind it.  There is no host in this file by design — a command
 // is data, and what it says is the whole contract with ssh.  The run's own argv
-// is not built here (see copy.ts), so it is asserted where it is built.
+// is not built here (see bootstrap.ts), so it is asserted where it is built.
 
 import { describe, expect, it } from "vitest";
 import { sshEntry, sshStageCommand } from "./commands.js";

@@ -2,8 +2,8 @@
 //
 // Run a posipaki actor on another machine, over ssh.  This package is the way
 // in, in two pieces: the *connector*, which opens a channel to a host that is
-// already there and runs a command on it, and the *copy*, which stages the kit
-// onto that host first and then runs it.  The wire, the kit vocabulary and the
+// already there and runs a command on it, and the *bootstrap*, which stages the
+// kit onto that host first and then runs it.  The wire, the kit vocabulary and the
 // gateway are posipaki's (`posipaki/remote/node`); what lives here is the ssh
 // half — the commands, the kit, the staging, the channel.
 //
@@ -20,8 +20,8 @@ export {
 } from "./commands.js";
 export { sshConnector } from "./connect.js";
 export type { SshConnectOptions, SshConnectSpec, SshPrepare } from "./connect.js";
-export { sshCopy } from "./copy.js";
-export type { SshCopyOptions } from "./copy.js";
+export { sshBootstrap } from "./bootstrap.js";
+export type { SshBootstrapOptions } from "./bootstrap.js";
 export { runHost, spawnChild } from "./host.js";
 export type { HostResult, HostRun, SpawnChild } from "./host.js";
 export { sshKit } from "./kit.js";

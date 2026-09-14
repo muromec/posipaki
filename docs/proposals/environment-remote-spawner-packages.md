@@ -63,8 +63,8 @@ One package per way in. ssh and podman first, `bwrap` later in the same shape:
 
 | Package | Way in | Exports |
 | --- | --- | --- |
-| `posipaki-remote-ssh` | `ssh [user@]host <cmd>` | `sshSpawner(spec)` → `ClientSpawner<Args>`, and the commands it builds |
-| `posipaki-remote-podman` | `podman exec -i <container> <cmd>`, plus `run` / `rm` for the container's life | `containerActor` (a container, held and counted), `podmanConnector` / `podmanCopy` (the way in by name) and `podmanEnvironment` (both together) |
+| `posipaki-remote-ssh` | `ssh [user@]host <cmd>` | `sshConnector` (the way in by host) / `sshBootstrap` (staged onto it first) — the same two pieces podman has, minus the container |
+| `posipaki-remote-podman` | `podman exec -i <container> <cmd>`, plus `run` / `rm` for the container's life | `containerActor` (a container, held and counted), `podmanConnector` / `podmanBootstrap` (the way in by name) and `podmanEnvironment` (both together) |
 
 A package is a wrapper over `exec` and nothing else: it builds the argv for the stage
 command, feeds that command the bootstrap script on stdin, checks the report, then builds

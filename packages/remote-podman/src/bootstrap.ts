@@ -1,9 +1,9 @@
 // ── The actor that copies itself in ────────────────────────────────────────
 //
 // The other half of the run seam: an actor that is not in the image yet is
-// staged first — the kit is written, the runtime that will run it is found — and
-// then run by that runtime.  It is a prepare plus a command, so it is built on
-// the connector and nothing else.
+// staged first — the kit is written by the bootstrap script, the runtime that
+// will run it is found — and then run by that runtime.  It is a prepare plus a
+// command, so it is built on the connector and nothing else.
 
 import type { ClientSpawner } from "posipaki/remote";
 import { GATEWAY_ARTIFACT, PAYLOAD_ARTIFACT } from "./commands.js";
@@ -12,8 +12,8 @@ import type { PodmanConnectOptions } from "./connect.js";
 import type { ContainerSpec, KitSpec, PodmanStaged } from "./spec.js";
 import { podmanStage } from "./stage.js";
 
-/** What the copy shape adds to the connector: the actor's own arguments. */
-export interface PodmanCopyOptions<Args> extends PodmanConnectOptions {
+/** What the bootstrap shape adds to the connector: the actor's own arguments. */
+export interface PodmanBootstrapOptions<Args> extends PodmanConnectOptions {
   /**
    * The payload's own arguments, built from the args the actor was spawned with.
    * This package knows where the payload is and how it is started, not what it
@@ -28,9 +28,9 @@ export interface PodmanCopyOptions<Args> extends PodmanConnectOptions {
  * again.  The container is somebody else's to keep alive — see container.ts for
  * the actor that holds one, and environment.ts for both together.
  */
-export function podmanCopy<Args>(
+export function podmanBootstrap<Args>(
   spec: ContainerSpec & KitSpec,
-  options: PodmanCopyOptions<Args> = {},
+  options: PodmanBootstrapOptions<Args> = {},
 ): ClientSpawner<Args> {
   return podmanConnector<Args, PodmanStaged>(
     {

@@ -1,13 +1,13 @@
 // ── posipaki-remote-podman ─────────────────────────────────────────────────
 //
-// Run a posipaki actor in a podman container.  Three pieces, deliberately
+// Run a posipaki actor in a podman container.  The pieces are deliberately
 // separate, because a container's life and a way into it are two things:
 //
 //   containerActor   a container, as an actor: it starts one, holds it, counts
 //                    the consumers that retain it, and lets it go at the end
 //   podmanConnector  the way in by name: a prepare step (optional) and a command,
 //                    on the exec's own stdin/stdout.  No container, no channel
-//   podmanCopy       the connector with the actor's bundle staged into it first
+//   podmanBootstrap  the connector with the actor's bundle staged into it first
 //   podmanEnvironment  both together: a container of its own per actor
 //
 // The wire, the kit vocabulary and the gateway are posipaki's
@@ -45,7 +45,7 @@ export { containerActor, holdContainer } from "./container.js";
 export type { ContainerActorArgs, ContainerIn, ContainerOut } from "./container.js";
 export { podmanConnector } from "./connect.js";
 export type { PodmanConnectOptions, PodmanConnectSpec, PodmanPrepare } from "./connect.js";
-export { podmanCopy } from "./copy.js";
+export { podmanBootstrap } from "./bootstrap.js";
 export { podmanEnvironment } from "./environment.js";
 export type { PodmanEnvironmentOptions } from "./environment.js";
 export { PodmanSpecError } from "./spec.js";

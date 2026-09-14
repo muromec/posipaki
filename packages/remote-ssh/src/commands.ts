@@ -8,7 +8,7 @@
 // A kit cannot be staged and run on one channel: while the script is on stdin the
 // wire cannot be, so the actor gets a second connection into the same home.  The
 // run's own argv is not built here — it is what a connector's `command` returns,
-// which is the one thing that turns one way in into another (see copy.ts).
+// which is the one thing that turns one way in into another (see bootstrap.ts).
 //
 // Every command is built here and asserted as data: nothing in this file talks to
 // a host, so a shape is testable without ssh.

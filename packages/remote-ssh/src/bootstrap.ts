@@ -1,9 +1,9 @@
 // ── The actor that copies itself in ────────────────────────────────────────
 //
 // The other half of the run seam: an actor that is not on the host yet is staged
-// first — the kit is written, the runtime that will run it is found — and then
-// run by that runtime.  It is a prepare plus a command, so it is built on the
-// connector and nothing else.
+// first — the kit is written by the bootstrap script, the runtime that will run
+// it is found — and then run by that runtime.  It is a prepare plus a command, so
+// it is built on the connector and nothing else.
 
 import type { ClientSpawner } from "posipaki/remote";
 import { GATEWAY_ARTIFACT, PAYLOAD_ARTIFACT } from "./commands.js";
@@ -12,8 +12,8 @@ import type { SshConnectOptions } from "./connect.js";
 import type { SshSpec, SshStaged } from "./spec.js";
 import { sshStage } from "./stage.js";
 
-/** What the copy shape adds to the connector: the actor's own arguments. */
-export interface SshCopyOptions<Args> extends SshConnectOptions {
+/** What the bootstrap shape adds to the connector: the actor's own arguments. */
+export interface SshBootstrapOptions<Args> extends SshConnectOptions {
   /**
    * The payload's own arguments, built from the args the actor was spawned with.
    * This package knows where the payload is and how it is started, not what it
@@ -28,7 +28,7 @@ export interface SshCopyOptions<Args> extends SshConnectOptions {
  * is nothing to hold here — the ssh process *is* the lifetime, which is why this
  * package has no environment of its own.
  */
-export function sshCopy<Args>(spec: SshSpec, options: SshCopyOptions<Args> = {}): ClientSpawner<Args> {
+export function sshBootstrap<Args>(spec: SshSpec, options: SshBootstrapOptions<Args> = {}): ClientSpawner<Args> {
   return sshConnector<Args, SshStaged>(
     {
       host: spec.host,
