@@ -34,3 +34,19 @@ export type {
   OutputFrame,
   OutputSink,
 } from "./stdio.js";
+
+// the kit: how a payload is delivered to a host we know nothing about
+export {
+  DEFAULT_KIT_PARENT,
+  DEFAULT_RUNTIMES,
+  KIT_LAYOUT,
+  bootstrapScript,
+  kitName,
+  kitVersion,
+  makeKit,
+  parseBootstrapReport,
+  sha256Hex,
+  versionLine,
+} from "./kit.js";
+export type { ArtifactRole, BootstrapReport, Kit, KitApp, KitFile, MakeKitOptions } from "./kit.js";
+
