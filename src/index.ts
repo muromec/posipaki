@@ -49,3 +49,4 @@ export type {
   ActorReflection,
   PluginTransform,
 } from "./hooks.js";
+export { LIB_VERSION } from "./version.js";
