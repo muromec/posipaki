@@ -11,6 +11,12 @@
 // program — a payload would find a gateway booting on its wire.  So the decision is
 // in the layout instead: importing a module never starts anything, and running this
 // one always does.
+//
+// The client names it either way: `posipaki/remote/gateway-cli.js` is a published
+// specifier, so `import.meta.resolve` answers with the built file, and a consumer
+// with a program of its own stages that instead.  Nothing here works out its own
+// location — a path derived from `import.meta.url` is a guess about a layout the
+// bundler owns, and the guess is wrong the moment the module moves into a chunk.
 
 import { GATEWAY_FAILED, runGateway } from "./gateway.js";
 

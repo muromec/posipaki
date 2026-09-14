@@ -52,6 +52,6 @@ export type { ArtifactRole, BootstrapReport, Kit, KitApp, KitFile, MakeKitOption
 
 // the gateway: the first-stage command that relays to a payload inside an
 // environment, over the one channel every way in gives us
-export { GATEWAY_FAILED, GATEWAY_SCRIPT, gatewayArgs, gatewayBoot, runGateway } from "./gateway.js";
+export { GATEWAY_FAILED, gatewayArgs, gatewayBoot, runGateway } from "./gateway.js";
 export type { GatewayBoot } from "./gateway.js";
 

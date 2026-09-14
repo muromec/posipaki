@@ -6,10 +6,10 @@
 
 import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
-import { dirname, join } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { GATEWAY_FAILED, GATEWAY_SCRIPT, gatewayArgs, gatewayBoot } from "./gateway.js";
+import { GATEWAY_FAILED, gatewayArgs, gatewayBoot } from "./gateway.js";
 import type { GatewayBoot } from "./gateway.js";
 import { versionLine } from "./kit.js";
 import { VERSION } from "./protocols/json1.js";
@@ -18,6 +18,8 @@ import { clientChannel } from "./stdio.js";
 import type { LineStreams } from "./stdio.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
+/** The program under test: this file's sibling, under our own extension. */
+const GATEWAY = join(HERE, `gateway-cli${extname(fileURLToPath(import.meta.url)) || ".js"}`);
 const PAYLOAD = join(HERE, "fixtures", "echo-payload.js");
 const GIVES_UP = join(HERE, "fixtures", "give-up.js");
 const APP = { name: "test-app", version: "1.2.3" };
@@ -32,7 +34,7 @@ interface Session {
 /** Start the gateway the way a client does, and speak the wire to it. */
 async function session(boot: Partial<GatewayBoot> = {}): Promise<Session> {
   const args = gatewayArgs({ app: APP, env: "test", worker: PAYLOAD, ...boot });
-  const child = spawn(process.execPath, [GATEWAY_SCRIPT, ...args], {
+  const child = spawn(process.execPath, [GATEWAY, ...args], {
     stdio: ["pipe", "pipe", "pipe"],
   });
   const output: Array<[number, string]> = [];
@@ -54,7 +56,7 @@ async function stop(session: Session): Promise<void> {
 
 /** Run the entry point and collect what it printed. */
 async function printed(args: string[]): Promise<{ code: number | null; stdout: string }> {
-  const child = spawn(process.execPath, [GATEWAY_SCRIPT, ...args], { stdio: ["ignore", "pipe", "pipe"] });
+  const child = spawn(process.execPath, [GATEWAY, ...args], { stdio: ["ignore", "pipe", "pipe"] });
   const chunks: string[] = [];
   child.stdout.setEncoding("utf-8");
   child.stdout.on("data", (chunk: string) => chunks.push(chunk));
@@ -133,7 +135,7 @@ describe("gateway", () => {
 
   it("turns a payload that dies before its channel into a reason", async () => {
     const args = gatewayArgs({ app: APP, env: "test", worker: GIVES_UP });
-    const child = spawn(process.execPath, [GATEWAY_SCRIPT, ...args], {
+    const child = spawn(process.execPath, [GATEWAY, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
     });
     const exit = new Promise<number | null>((settle) => child.once("exit", (code) => settle(code)));

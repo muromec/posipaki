@@ -25,8 +25,7 @@ import { execFile, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, extname, join } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 import { promisify } from "node:util";
 import type { KitApp } from "./kit.js";
 import { versionLine } from "./kit.js";
@@ -40,16 +39,6 @@ const run = promisify(execFile);
 
 /** Exit code for "this environment could not be set up". */
 export const GATEWAY_FAILED = 1;
-
-/**
- * Absolute path to the gateway's entry point — the file a client runs as a
- * program.  It is this module's sibling, under whatever name this module has:
- * `gateway-cli.ts` from source, `gateway-cli.js` in a build.
- */
-export const GATEWAY_SCRIPT = join(
-  dirname(fileURLToPath(import.meta.url)),
-  `gateway-cli${extname(fileURLToPath(import.meta.url)) || ".js"}`,
-);
 
 export interface GatewayBoot {
   /** Who staged this payload.  Names the artifact in its `--version` line. */

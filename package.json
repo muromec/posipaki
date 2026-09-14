@@ -1,6 +1,6 @@
 {
   "name": "posipaki",
-  "version": "0.33.1",
+  "version": "0.33.2",
   "homepage": "https://posipaki-docs.muromec.nl/",
   "repository": {
     "type": "git",
@@ -43,6 +43,7 @@
       "types": "./dist/remote/node.d.ts",
       "default": "./dist/remote/node.js"
     },
+    "./remote/gateway-cli.js": "./dist/remote/gateway-cli.js",
     "./testing": {
       "types": "./dist/testing/index.d.ts",
       "default": "./dist/testing/index.js"

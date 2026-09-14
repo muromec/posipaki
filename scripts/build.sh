@@ -6,7 +6,8 @@
 # generation (esbuild emits no types).
 #
 # The whole tree builds from here: the core, then every package in packages/*,
-# each with its own tsdown.config.ts.  One command for one release.
+# each with its own tsdown.config.ts.  One command for one release, and it ends
+# by checking what it produced against package.json (scripts/check-dist.sh).
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
@@ -41,10 +42,7 @@ build_packages() {
 if tool_works "$ROOT/node_modules/.bin/tsdown" && rolldown_ok; then
   "$ROOT/node_modules/.bin/tsdown" "$@"
   build_packages
-  exit 0
-fi
-
-if tool_works "$ROOT/node_modules/.bin/esbuild"; then
+elif tool_works "$ROOT/node_modules/.bin/esbuild"; then
   echo "build: rolldown unavailable — falling back to esbuild (no .d.ts)" >&2
   rm -rf "$ROOT/dist"
   "$ROOT/node_modules/.bin/esbuild" \
@@ -52,8 +50,10 @@ if tool_works "$ROOT/node_modules/.bin/esbuild"; then
     --bundle --format=esm --platform=node --target=node18 \
     --outdir=dist --outbase=src --sourcemap "$@"
   build_packages
-  exit 0
+else
+  echo "build: no usable bundler found" >&2
+  exit 2
 fi
 
-echo "build: no usable bundler found" >&2
-exit 2
+# What was built is what the package promises.
+bash "$ROOT/scripts/check-dist.sh"
