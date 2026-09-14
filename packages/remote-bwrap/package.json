@@ -1,0 +1,28 @@
+{
+  "name": "posipaki-remote-bwrap",
+  "version": "0.32.1",
+  "description": "Run a posipaki actor in a bubblewrap sandbox",
+  "homepage": "https://posipaki-docs.muromec.nl/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muromec/posipaki.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "test": "bash ../../scripts/test.sh"
+  },
+  "dependencies": {
+    "posipaki": "^0.32.1"
+  }
+}

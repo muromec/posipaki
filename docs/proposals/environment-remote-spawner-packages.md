@@ -59,11 +59,12 @@ These are the wire's node half, not a framework. Nothing in them knows what a "t
 
 ### The packages (`packages/*`)
 
-One package per way in. ssh and podman first, `bwrap` later in the same shape:
+One package per way in. All three exist now, in the same shape:
 
 | Package | Way in | Exports |
 | --- | --- | --- |
 | `posipaki-remote-ssh` | `ssh [user@]host <cmd>` | `sshConnector` (the way in by host) / `sshBootstrap` (staged onto it first) — the same two pieces podman has, minus the container |
+| `posipaki-remote-bwrap` | `bwrap <policy> <cmd>` — the same machine, with less of it in reach | `bwrapConnector` / `bwrapBootstrap`, plus `sandboxArgs` (the policy it suggests). No container actor: bwrap makes the sandbox for as long as the command runs, so there is no life to hand over |
 | `posipaki-remote-podman` | `podman exec -i <container> <cmd>`, plus `run` / `rm` for the container's life | `containerActor` (a container, held and counted), `podmanConnector` / `podmanBootstrap` (the way in by name) and `podmanEnvironment` (both together) |
 
 A package is a wrapper over `exec` and nothing else: it builds the argv for the stage
