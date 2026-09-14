@@ -13,7 +13,7 @@ import type { HostResult, HostRun } from "./host.js";
 import type { KitSpec } from "./spec.js";
 import { podmanStage } from "./stage.js";
 
-const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.33.0-abcdef12";
+const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.34.0-abcdef12";
 const READY = `staged\nkit ${KIT_DIR}\nruntime /usr/bin/node\n`;
 
 const scratchDirs: string[] = [];

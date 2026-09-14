@@ -16,7 +16,7 @@ import { sshStage } from "./stage.js";
 import type { SshSpec } from "./spec.js";
 
 const scratchDirs: string[] = [];
-const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.33.0-abcdef12";
+const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.34.0-abcdef12";
 
 afterEach(() => {
   for (const dir of scratchDirs.splice(0)) rmSync(dir, { recursive: true, force: true });

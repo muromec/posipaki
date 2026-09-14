@@ -12,18 +12,25 @@
         "vitest": "^4.1.11",
       },
     },
+    "packages/remote-bwrap": {
+      "name": "posipaki-remote-bwrap",
+      "version": "0.34.0",
+      "dependencies": {
+        "posipaki": "^0.34.0",
+      },
+    },
     "packages/remote-podman": {
       "name": "posipaki-remote-podman",
-      "version": "0.32.1",
+      "version": "0.34.0",
       "dependencies": {
-        "posipaki": "^0.32.1",
+        "posipaki": "^0.34.0",
       },
     },
     "packages/remote-ssh": {
       "name": "posipaki-remote-ssh",
-      "version": "0.32.1",
+      "version": "0.34.0",
       "dependencies": {
-        "posipaki": "^0.32.1",
+        "posipaki": "^0.34.0",
       },
     },
   },
@@ -307,6 +314,8 @@
 
     "posipaki": ["posipaki@root:", {}],
 
+    "posipaki-remote-bwrap": ["posipaki-remote-bwrap@workspace:packages/remote-bwrap"],
+
     "posipaki-remote-podman": ["posipaki-remote-podman@workspace:packages/remote-podman"],
 
     "posipaki-remote-ssh": ["posipaki-remote-ssh@workspace:packages/remote-ssh"],
@@ -362,8 +371,6 @@
     "yuku-codegen": ["yuku-codegen@0.8.7", "", { "dependencies": { "@yuku-toolchain/types": "^0.8.7" }, "optionalDependencies": { "@yuku-codegen/binding-android-arm64": "0.8.7", "@yuku-codegen/binding-darwin-arm64": "0.8.7", "@yuku-codegen/binding-darwin-x64": "0.8.7", "@yuku-codegen/binding-freebsd-x64": "0.8.7", "@yuku-codegen/binding-linux-arm-gnu": "0.8.7", "@yuku-codegen/binding-linux-arm-musl": "0.8.7", "@yuku-codegen/binding-linux-arm64-gnu": "0.8.7", "@yuku-codegen/binding-linux-arm64-musl": "0.8.7", "@yuku-codegen/binding-linux-x64-gnu": "0.8.7", "@yuku-codegen/binding-linux-x64-musl": "0.8.7", "@yuku-codegen/binding-win32-arm64": "0.8.7", "@yuku-codegen/binding-win32-x64": "0.8.7" } }, "sha512-adwDZSh8oVDzhE6Du9PwVWxcOxeV0e2EVhUuMKWfhSY4wkrDq9eqixlxFF3l/XGUV1E7UFzhpz9393MUumkyNw=="],
 
     "yuku-parser": ["yuku-parser@0.8.7", "", { "dependencies": { "@yuku-toolchain/types": "^0.8.7", "yuku-ast": "^0.8.7" }, "optionalDependencies": { "@yuku-parser/binding-android-arm64": "0.8.7", "@yuku-parser/binding-darwin-arm64": "0.8.7", "@yuku-parser/binding-darwin-x64": "0.8.7", "@yuku-parser/binding-freebsd-x64": "0.8.7", "@yuku-parser/binding-linux-arm-gnu": "0.8.7", "@yuku-parser/binding-linux-arm-musl": "0.8.7", "@yuku-parser/binding-linux-arm64-gnu": "0.8.7", "@yuku-parser/binding-linux-arm64-musl": "0.8.7", "@yuku-parser/binding-linux-x64-gnu": "0.8.7", "@yuku-parser/binding-linux-x64-musl": "0.8.7", "@yuku-parser/binding-win32-arm64": "0.8.7", "@yuku-parser/binding-win32-x64": "0.8.7" } }, "sha512-vRD9nwt4L3aYpxNqeSC4WqLv58xrXef0Ong1Mc45CTXTIpvLafx7JO05sczmQZwdLEZvywrLOGdNC5+Rp5N1BQ=="],
-
-    "posipaki-remote-ssh/posipaki": ["posipaki@root:", {}],
 
     "vite/picomatch": ["picomatch@4.0.4", "", {}, "sha512-QP88BAKvMam/3NxH6vj2o21R6MjxZUAd6nlwAS/pnGvN9IVLocLHxGYIzFhg6fUQ+5th6P4dv4eW9jX3DSIj7A=="],
 

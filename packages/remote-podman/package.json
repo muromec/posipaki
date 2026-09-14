@@ -1,6 +1,6 @@
 {
   "name": "posipaki-remote-podman",
-  "version": "0.33.0",
+  "version": "0.34.0",
   "description": "Run a posipaki actor in a podman container",
   "homepage": "https://posipaki-docs.muromec.nl/",
   "repository": {
@@ -25,6 +25,6 @@
     "test": "bash ../../scripts/test.sh"
   },
   "dependencies": {
-    "posipaki": "^0.33.0"
+    "posipaki": "^0.34.0"
   }
 }
