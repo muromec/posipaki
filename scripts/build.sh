@@ -23,6 +23,7 @@ ENTRY=(
   src/plugins/tree-introspection.ts
   src/remote/index.ts
   src/remote/node.ts
+  src/remote/gateway-cli.ts
   src/testing/index.ts
 )
 

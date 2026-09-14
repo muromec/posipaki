@@ -25,7 +25,7 @@ import { execFile, spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 import type { KitApp } from "./kit.js";
@@ -41,8 +41,15 @@ const run = promisify(execFile);
 /** Exit code for "this environment could not be set up". */
 export const GATEWAY_FAILED = 1;
 
-/** Absolute path to this entry point, for whoever runs it as a script. */
-export const GATEWAY_SCRIPT = fileURLToPath(import.meta.url);
+/**
+ * Absolute path to the gateway's entry point — the file a client runs as a
+ * program.  It is this module's sibling, under whatever name this module has:
+ * `gateway-cli.ts` from source, `gateway-cli.js` in a build.
+ */
+export const GATEWAY_SCRIPT = join(
+  dirname(fileURLToPath(import.meta.url)),
+  `gateway-cli${extname(fileURLToPath(import.meta.url)) || ".js"}`,
+);
 
 export interface GatewayBoot {
   /** Who staged this payload.  Names the artifact in its `--version` line. */
@@ -249,19 +256,4 @@ export async function runGateway(argv: string[] = process.argv): Promise<number>
   await teardown();
   await wire.close();
   return code;
-}
-
-// ── entry point ────────────────────────────────────────────────────────────
-
-// Only when this file is the program being run, not when it is imported.
-const entry = process.argv[1];
-if (entry && resolve(entry) === fileURLToPath(import.meta.url)) {
-  void (async () => {
-    try {
-      process.exitCode = await runGateway();
-    } catch (err) {
-      process.stderr.write(`gateway: ${errorText(err)}\n`);
-      process.exitCode = GATEWAY_FAILED;
-    }
-  })();
 }
