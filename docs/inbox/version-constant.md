@@ -2,6 +2,8 @@
 
 **Parked:** 2026-09-13 (from email-agent's environment-kit work)
 
+**Implemented:** 2026-09-14, `6a21335` — `LIB_VERSION` in `src/version.ts`, exported from the package entry point and pinned to package.json by `src/version.test.ts`.  Inlined as a literal, so it survives bundling; the build derives nothing, the suite fails on drift.
+
 ## What
 
 Export posipaki's own release version as a constant, so a consumer can tell which
