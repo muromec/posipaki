@@ -29,6 +29,6 @@ export {
 export type { ContainerHandle, HostStart, PodmanLifetimeOptions } from "./lifetime.js";
 export { podmanSpawner } from "./spawner.js";
 export type { PodmanSpawnerOptions, PodmanWireOptions } from "./spawner.js";
-export { PodmanSpecError, containerName } from "./spec.js";
+export { PodmanSpecError } from "./spec.js";
 export type { PodmanSpec, PodmanStaged } from "./spec.js";
 export { podmanStage } from "./stage.js";

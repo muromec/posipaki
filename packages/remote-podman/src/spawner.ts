@@ -14,7 +14,7 @@ import { podmanRunCommand } from "./commands.js";
 import { spawnChild as startOnHost } from "./host.js";
 import type { SpawnChild } from "./host.js";
 import type { PodmanLifetimeOptions } from "./lifetime.js";
-import { containerName, PodmanSpecError } from "./spec.js";
+import { PodmanSpecError } from "./spec.js";
 import type { PodmanSpec, PodmanStaged } from "./spec.js";
 import { podmanStage } from "./stage.js";
 
@@ -58,7 +58,7 @@ async function openChannel(
   command: string[],
   options: PodmanWireOptions,
 ): Promise<Channel> {
-  const name = containerName(spec);
+  const name = spec.container;
   const sink = options.onOutput ?? stderrSink(name);
   let tail = "";
   const output: OutputSink = (fd: OutputFd, data: string) => {

@@ -15,11 +15,11 @@ import {
   podmanRunCommand,
   podmanStageCommand,
 } from "./commands.js";
-import { containerName } from "./spec.js";
 import type { PodmanSpec, PodmanStaged } from "./spec.js";
 
 const SPEC: PodmanSpec = {
   image: "registry.example.org/team/toolbox:1.2",
+  container: "env-agent",
   app: { name: "email-agent", version: "0.13.0" },
   payload: "build/env-payload.js",
 };
@@ -27,14 +27,13 @@ const SPEC: PodmanSpec = {
 const STAGED: PodmanStaged = { kitDir: "/home/u/bin/posipaki/kit-1", runtime: "/usr/bin/node" };
 
 describe("the commands into a container", () => {
-  it("takes its name from the image unless the caller names it", () => {
-    expect(containerName(SPEC)).toBe("posipaki-toolbox");
-    expect(containerName({ ...SPEC, container: "env-agent" })).toBe("env-agent");
-    expect(containerName({ ...SPEC, image: "localhost:5000/app_v2:edge" })).toBe("posipaki-app_v2");
+  it("uses the name the consumer gave, and takes nothing from the image", () => {
+    const elsewhere = { ...SPEC, image: "localhost:5000/app_v2:edge" };
+    expect(podmanStageCommand(elsewhere)).toEqual(["podman", "exec", "-i", "env-agent", "sh", "-s"]);
   });
 
   it("stages with one exec and a shell, the script on stdin", () => {
-    expect(podmanStageCommand(SPEC)).toEqual(["podman", "exec", "-i", "posipaki-toolbox", "sh", "-s"]);
+    expect(podmanStageCommand(SPEC)).toEqual(["podman", "exec", "-i", "env-agent", "sh", "-s"]);
   });
 
   it("runs the staged payload on the run's own stdin/stdout", () => {
@@ -42,7 +41,7 @@ describe("the commands into a container", () => {
       "podman",
       "exec",
       "-i",
-      "posipaki-toolbox",
+      "env-agent",
       "/usr/bin/node",
       `${STAGED.kitDir}/${PAYLOAD_ARTIFACT}`,
       "--env=agent",
@@ -54,7 +53,7 @@ describe("the commands into a container", () => {
       "podman",
       "exec",
       "-i",
-      "posipaki-toolbox",
+      "env-agent",
       "/usr/bin/node",
       `${STAGED.kitDir}/${GATEWAY_ARTIFACT}`,
       "--env=agent",
@@ -79,7 +78,7 @@ describe("the commands into a container", () => {
       "--rm",
       "-i",
       "--name",
-      "posipaki-toolbox",
+      "env-agent",
       "registry.example.org/team/toolbox:1.2",
       "sh",
       "-c",
@@ -89,8 +88,8 @@ describe("the commands into a container", () => {
       "podman",
       "container",
       "exists",
-      "posipaki-toolbox",
+      "env-agent",
     ]);
-    expect(containerRemoveCommand(SPEC)).toEqual(["podman", "rm", "-f", "posipaki-toolbox"]);
+    expect(containerRemoveCommand(SPEC)).toEqual(["podman", "rm", "-f", "env-agent"]);
   });
 });

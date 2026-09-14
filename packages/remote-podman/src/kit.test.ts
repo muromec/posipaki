@@ -32,6 +32,7 @@ function bundle(name: string, body: string): string {
 function spec(payload: string, extra: Partial<PodmanSpec> = {}): PodmanSpec {
   return {
     image: "toolbox:1",
+    container: "env-agent",
     app: { name: "email-agent", version: "0.13.0" },
     payload,
     ...extra,

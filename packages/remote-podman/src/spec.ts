@@ -12,11 +12,11 @@ export interface PodmanSpec {
   /** The image the container is started from. */
   image: string;
   /**
-   * The container to use.  Defaults to a name taken from the image, so one image
-   * is one container unless the caller says otherwise — two environments from the
-   * same image must name themselves.
+   * The container to use, named by the consumer.  There is no default: a name
+   * taken from the image would be a guess, and the name decides who else can be
+   * in there, so guessing it is worse than not having one.
    */
-  container?: string;
+  container: string;
   /** The kit's owner: the app name and its build version.  Names the kit directory. */
   app: KitApp;
   /** The payload bundle on this machine, as the consumer built it. */
@@ -47,15 +47,4 @@ export class PodmanSpecError extends Error {
     super(message);
     this.name = "PodmanSpecError";
   }
-}
-
-/** `registry.example.org/team/app:1.2` → `app`: a name podman will accept. */
-function imageName(image: string): string {
-  const last = image.slice(image.lastIndexOf("/") + 1);
-  return last.split(":")[0].replace(/[^a-zA-Z0-9_.-]/g, "-");
-}
-
-/** The container this spec runs in: named in the spec, or taken from the image. */
-export function containerName(spec: PodmanSpec): string {
-  return spec.container ?? `posipaki-${imageName(spec.image)}`;
 }

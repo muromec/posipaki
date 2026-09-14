@@ -10,7 +10,6 @@
 // already up.  The container's own life is three more commands — see lifetime.ts.
 
 import type { PodmanSpec, PodmanStaged } from "./spec.js";
-import { containerName } from "./spec.js";
 
 /** The names a staged kit's artifacts get inside the kit directory. */
 export const PAYLOAD_ARTIFACT = "payload.js";
@@ -18,7 +17,7 @@ export const GATEWAY_ARTIFACT = "gateway.js";
 
 /** One channel into the container.  `-i` because the wire is on stdin. */
 export function podmanEntry(spec: PodmanSpec, argv: string[]): string[] {
-  return ["podman", "exec", "-i", containerName(spec), ...argv];
+  return ["podman", "exec", "-i", spec.container, ...argv];
 }
 
 /** The bootstrap channel.  The script is fed to it; nothing else may be. */
@@ -61,7 +60,7 @@ export function containerKeepaliveCommand(spec: PodmanSpec): string[] {
     "--rm",
     "-i",
     "--name",
-    containerName(spec),
+    spec.container,
     spec.image,
     "sh",
     "-c",
@@ -71,10 +70,10 @@ export function containerKeepaliveCommand(spec: PodmanSpec): string[] {
 
 /** Is the container there?  (Its own exit code is the answer.) */
 export function containerExistsCommand(spec: PodmanSpec): string[] {
-  return ["podman", "container", "exists", containerName(spec)];
+  return ["podman", "container", "exists", spec.container];
 }
 
 /** Take down a container we are not holding — a stale one from an older process. */
 export function containerRemoveCommand(spec: PodmanSpec): string[] {
-  return ["podman", "rm", "-f", containerName(spec)];
+  return ["podman", "rm", "-f", spec.container];
 }

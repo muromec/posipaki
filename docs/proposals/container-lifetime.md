@@ -1,7 +1,9 @@
 # The container's life when there is more than one consumer
 
-**Status:** design. One shape is built (`attached`, `collision: fail`); the rest is written
-down here and not implemented, deliberately.
+**Status:** design. `attached` is built, and the name rule is now in the code: the container's
+name comes from the consumer and is required. Everything else — the collision verdicts, the
+labels, membership, `managed`, the guest role — is written down here and not implemented,
+deliberately.
 **Follows:** [environment-remote-spawner-packages.md](./environment-remote-spawner-packages.md)
 
 ## The question
@@ -28,6 +30,7 @@ do not know each other, and nothing in the package may assume they cooperate.
 
 | Word | Values | State |
 | --- | --- | --- |
+| name | given by the consumer | built, and required: nothing is derived |
 | lifetime | `attached` | built |
 | | `managed` | acknowledged, not built |
 | collision | `fail` | built (the default) |
@@ -58,25 +61,34 @@ question disappears, and so does the free cleanup — removal is explicit, or a 
 into. It is a different lifetime model rather than a flag on the first one, and the seam is one
 field: asking for `managed` before it exists throws.
 
-### collision — what "it is already there" means (policy settled, first half built)
+### collision — what "it is already there" means (settled, not built)
 
-A derived name is scoped to the consumer, so two applications do not collide by construction;
-an explicit `container:` name is the caller asserting a name it owns, and there a collision is
-always a failure unless the caller opted into joining. Meeting an existing container then has
-three verdicts:
+The container's name is given by the consumer and is required; nothing is derived from the
+image, because a name decides who else ends up in that container — its mounts, its user, its
+network — and a package that guesses it is deciding that for the application. So a collision is
+always between two names that somebody asserted: another app using the same one deliberately,
+or a leftover container from an earlier configuration.
 
-- labelled, fingerprint matches — ours, built as we expect: join (or, with membership, hold);
+Meeting an existing container therefore has three verdicts:
+
+- labelled, fingerprint matches — ours, built as we expect: join, if the caller asked to;
 - labelled, fingerprint differs — a conflict, and it fails: a container built to another spec
   has no stage dir, maybe another runtime and user, so `exec` misbehaves subtly;
-- unlabelled — foreign: fail. We do not stage into it, exec into it, or remove it.
+- unlabelled — not ours: fail. We do not stage into it, exec into it, or remove it.
 
+Failing is the default and the only sound one; joining is an explicit opt-in, and it is what a
+consumer asks for when it deliberately gives a container the same name another consumer uses.
+
+None of this is in the code yet: today a container that is already there is borrowed whatever it
+is, which is the opposite of failing, and the labels that would tell us whose it is do not
+exist.
 `removeContainer` follows from this and should refuse an unlabelled container unless forced:
-`podman rm -f` on a stranger is the sharp end of getting this wrong.
+`podman rm -f` on somebody else's container is the sharp end of getting this wrong.
 
 Two starts racing is the same family. Both probes see nothing, both start; the loser gets
 "name already in use", its `waitForContainer` then succeeds on the winner's container, and it
-returns a handle it does not own. It self-corrects on the next probe, and labels are what let
-the loser know whose container it just found.
+returns a handle it does not own. Labels are what let the loser know whose container it found;
+until they exist, the mismatch is only visible in what the container does not have.
 
 ### roles — who holds it up
 
@@ -94,9 +106,11 @@ What exists today is the owner and an unnamed borrower: the second consumer join
 nothing and cannot remove — and it differs from the guest below only in that it will start a
 container when there is none.
 
-Since the kit directory is written per consumer, joining also implies agreeing on what is
-staged inside. That is the strongest argument for scoped names over sharing: a shared container
-has a shared kit directory, and the last stager wins.
+A kit needs no such care: it is named after the build that made it
+(`<app>-<version>-posipaki-<core>-<manifest8>`), so two consumers can stage into one container
+without landing on each other's files. What sharing gives away is the container itself — its
+mounts, its user, its network — which is why a name worth sharing has to be chosen, not
+guessed.
 
 ## Invariants
 
@@ -110,7 +124,8 @@ has a shared kit directory, and the last stager wins.
 
 Small, and additive to what is there:
 
-- app-scoped derived names, so a second application does not land on the first one's name;
+- the guess is gone: `container` is required in the spec, and the derived name
+  (`posipaki-<image>`) with it;
 - the labels, with the fingerprint and its version;
 - `collision: fail` as the default, with an error that names the container and says what it
   looks like — unlabelled, or labelled with a different fingerprint;
@@ -119,9 +134,9 @@ Small, and additive to what is there:
 
 ## Open questions
 
-- **Is cross-consumer sharing real?** If the honest answer for a second consumer is "it gets its
-  own name", membership never has to be built, and the FIFO stays what it is today: a
-  transport.
+- **Is cross-consumer sharing real?** Since nobody shares a name by accident any more, it now
+  happens only when a consumer asks for it by reusing a name and opting into joining. If that
+  never happens, membership is never built and the FIFO stays what it is today: a transport.
 - **Membership: writer count or lease?** A FIFO held open by each member counts holders in the
   kernel and self-cleans on a crash; a lease file needs liveness checks and a reaper. If
   membership is built, the FIFO is the shape to beat.

@@ -22,7 +22,6 @@ import { runHost } from "./host.js";
 import type { HostRun } from "./host.js";
 import { PodmanSpecError } from "./spec.js";
 import type { PodmanSpec } from "./spec.js";
-import { containerName } from "./spec.js";
 
 /** How long a container may take to appear before we call it failed. */
 export const CONTAINER_START_MS = 30_000;
@@ -90,7 +89,7 @@ export async function stopContainer(name: string): Promise<void> {
 
 /** Take down a container we are not holding — a stale one from an older process. */
 export async function removeContainer(spec: PodmanSpec, run: HostRun = runHost): Promise<void> {
-  await stopContainer(containerName(spec));
+  await stopContainer(spec.container);
   await run(containerRemoveCommand(spec), "");
 }
 
@@ -118,7 +117,7 @@ async function waitForContainer(
     if ((await run(containerExistsCommand(spec), "")).code === 0) return;
     await new Promise((settle) => setTimeout(settle, pollMs));
   }
-  throw new PodmanSpecError(`container ${containerName(spec)} did not come up within ${timeoutMs}ms`);
+  throw new PodmanSpecError(`container ${spec.container} did not come up within ${timeoutMs}ms`);
 }
 
 /**
@@ -131,7 +130,7 @@ export async function ensureContainer(
   options: PodmanLifetimeOptions = {},
 ): Promise<ContainerHandle | null> {
   const run = options.runHost ?? runHost;
-  const name = containerName(spec);
+  const name = spec.container;
   const held = started.get(name);
   if (held) {
     if (held.alive()) return held;

@@ -12,7 +12,7 @@ import type { HostResult } from "./host.js";
 import { podmanKit } from "./kit.js";
 import { ensureContainer } from "./lifetime.js";
 import type { PodmanLifetimeOptions } from "./lifetime.js";
-import { containerName, PodmanSpecError } from "./spec.js";
+import { PodmanSpecError } from "./spec.js";
 import type { PodmanSpec, PodmanStaged } from "./spec.js";
 
 /** How much of what a failed command said we quote back. */
@@ -45,7 +45,7 @@ export async function podmanStage(
     const incomplete =
       report.reason.startsWith("incomplete") || report.reason.startsWith("no report");
     throw new PodmanSpecError(
-      `staging into container ${containerName(spec)} failed: ${report.reason}${
+      `staging into container ${spec.container} failed: ${report.reason}${
         incomplete ? ` (${said(result)})` : ""
       }`,
     );
