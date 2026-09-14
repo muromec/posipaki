@@ -26,29 +26,20 @@ ENTRY=(
   src/testing/index.ts
 )
 
-# A package is built by the same producer, from its own config.  esbuild cannot
-# read that config, so the fallback builds the single entry every package has and
-# keeps the core external — a package imports posipaki, it does not carry it.
+# Each package is built by the script it builds itself with, so the tree and a
+# single package publish from the same producer (and the same fallbacks):
+# scripts/package-build.sh.
 build_packages() {
   local dir
   for dir in "$ROOT"/packages/*/; do
     [ -f "${dir}tsdown.config.ts" ] || continue
-    echo "build: packages/$(basename "$dir")" >&2
-    if [ "$1" = "tsdown" ]; then
-      (cd "$dir" && "$ROOT/node_modules/.bin/tsdown")
-    else
-      rm -rf "${dir}dist"
-      (cd "$dir" && "$ROOT/node_modules/.bin/esbuild" src/index.ts \
-        --bundle --format=esm --platform=node --target=node18 \
-        --external:posipaki --external:'posipaki/*' \
-        --outdir=dist --outbase=src --sourcemap)
-    fi
+    bash "$ROOT/scripts/package-build.sh" "$dir"
   done
 }
 
 if tool_works "$ROOT/node_modules/.bin/tsdown" && rolldown_ok; then
   "$ROOT/node_modules/.bin/tsdown" "$@"
-  build_packages tsdown
+  build_packages
   exit 0
 fi
 
@@ -59,7 +50,7 @@ if tool_works "$ROOT/node_modules/.bin/esbuild"; then
     "${ENTRY[@]}" \
     --bundle --format=esm --platform=node --target=node18 \
     --outdir=dist --outbase=src --sourcemap "$@"
-  build_packages esbuild
+  build_packages
   exit 0
 fi
 

@@ -26,7 +26,7 @@ export interface SandboxPolicy {
   write?: string[];
   /** Extra paths that get a fresh, empty tmpfs.  `/tmp` always does. */
   tmpfs?: string[];
-  /** Keep the machine's network out of reach.  Defaults to false: a tool that cannot reach anything is a surprise, not a safety feature. */
+  /** Whether the payload reaches the machine's network.  Defaults to true: tools that talk to the outside keep working, and `network: false` adds `--unshare-net`. */
   network?: boolean;
 }
 

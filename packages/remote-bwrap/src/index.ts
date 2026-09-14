@@ -7,11 +7,11 @@
 // (`posipaki/remote/node`); what lives here is the bwrap half — the policy, the
 // commands, the kit, the staging, the channel.
 //
-// There is no environment of its own here, and nothing to start or hold: the
-// sandbox is made by bwrap for exactly as long as the command runs.  Compare
-// `posipaki-remote-podman`, where a container has a lifetime to hand over — four
-// pieces there, two here and in `posipaki-remote-ssh`, with the same two knobs in
-// all three.
+// The sandbox is made by bwrap for exactly as long as the command runs, which
+// leaves nothing to start, hold or clean up — two pieces here and in
+// `posipaki-remote-ssh`, four in `posipaki-remote-podman`, whose container has a
+// lifetime to hand over.  All three come down to the same two knobs: a `prepare`
+// and a `command`.
 
 export { GATEWAY_ARTIFACT, PAYLOAD_ARTIFACT, bwrapEntry, bwrapStageCommand } from "./commands.js";
 export { bwrapConnector } from "./connect.js";

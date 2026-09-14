@@ -3,8 +3,8 @@
 // Two things, kept apart on purpose: a sandbox that exists, and an actor that
 // runs inside one.  A sandbox is a name and a set of bwrap arguments — there is
 // no image to start from, because bwrap binds the machine we are already on —
-// and what the arguments are is a decision, not a default we can guess: they say
-// what the payload may see and touch.  What runs inside is a command: either one
+// and the arguments are the consumer's decision: they say what the payload may
+// see and touch.  What runs inside is a command: either one
 // that is already there, or one a prepare step puts there.
 
 import type { KitApp } from "posipaki/remote/node";

@@ -20,6 +20,8 @@
     }
   },
   "scripts": {
+    "build": "bash ../../scripts/package-build.sh",
+    "prepack": "bash ../../scripts/package-build.sh",
     "test": "bash ../../scripts/test.sh"
   },
   "dependencies": {

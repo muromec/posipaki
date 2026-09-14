@@ -1,7 +1,7 @@
 // ── The container's life ───────────────────────────────────────────────────
 //
-// A container environment is not a process we spawn per call: it has to exist,
-// stay up between calls, and be removable.  The policy is one sentence — the
+// A container outlives the call that wanted it: it has to exist, stay up between
+// calls, and be removable.  The policy is one sentence — the
 // environment is a process-tree child of whoever holds it:
 //
 //   we start an *attached* `podman run` whose main process only reads its stdin;
@@ -93,7 +93,7 @@ export const startHost: HostStart = (command) =>
  *   containers we assume we manage.
  * - `fail` — do not touch it.  The default, because it is the only one that never
  *   costs somebody else their container: a name is the consumer's to give, so a
- *   name that is taken is a question for the consumer, not a guess for us.
+ *   name that is taken is the consumer's question to answer.
  */
 export type ConflictPolicy = "fail" | "reuse" | "replace";
 

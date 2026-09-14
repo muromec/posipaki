@@ -7,10 +7,9 @@
 // gateway are posipaki's (`posipaki/remote/node`); what lives here is the ssh
 // half — the commands, the kit, the staging, the channel.
 //
-// There is no environment of its own here, and nothing is started or stopped:
-// the ssh process *is* the lifetime.  Compare `posipaki-remote-podman`, where a
-// container has one to hand over — four pieces there, two here, and the same
-// two knobs in both.
+// The ssh process *is* the lifetime: ssh starts nothing and holds nothing, which
+// is why this package has two pieces where `posipaki-remote-podman` has four.
+// Both come down to the same two knobs — a `prepare` and a `command`.
 
 export {
   GATEWAY_ARTIFACT,

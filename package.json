@@ -52,7 +52,8 @@
     "build": "bash scripts/build.sh",
     "test": "bash scripts/test.sh",
     "test:watch": "vitest",
-    "lint": "oxlint"
+    "lint": "oxlint",
+    "prepack": "bash scripts/build.sh"
   },
   "devDependencies": {
     "@types/node": "^25.9.1",
