@@ -1,6 +1,7 @@
 # Remote actors in foreign environments — ssh and podman as packages
 
-**Status:** draft
+**Status:** delivered, short of the consumer's switch (step 5): the core's half, both
+packages and the documentation page are in.  See the delivery list below.
 **Follows:** [actor-remote.md](./actor-remote.md)
 
 ## Motivation
@@ -129,10 +130,11 @@ posipaki becomes a workspace monorepo; the root stays the core package:
 
 ## Open questions
 
-- **Kit vocabulary: core or package?** It is the contract between a payload and whoever
-  delivers it, so this draft puts it in the core. If in practice only the packages use it,
-  it moves into them and is duplicated like the rest.
+- **Kit vocabulary: core or package?** Settled in the core: a package stages the kit and
+  runs it, but the manifest, the script and the report belong to whoever delivers a
+  payload, and both packages use them unchanged.
 - **`local` and `sudo` later?** They stay in the consumer for now. If a second consumer
   wants them, they are a package like any other.
-- **Versioning.** Lockstep is assumed above. Independent versions would need the wire
-  version to be the only compatibility claim — which it already is.
+- **Versioning.** Lockstep, as assumed: a package declares `posipaki` as a dependency and
+  ships with the core it builds against, because the wire version is the only
+  compatibility claim a payload makes.

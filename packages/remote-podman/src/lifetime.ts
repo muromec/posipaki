@@ -30,6 +30,9 @@ export const CONTAINER_START_MS = 30_000;
 /** How often to ask whether it is there yet. */
 const CONTAINER_POLL_MS = 50;
 
+/** How long a stopped container's client gets to reap it before we kill it. */
+const STOP_GRACE_MS = 5_000;
+
 /** A container we started, held by the process that keeps it up. */
 export interface ContainerHandle {
   name: string;
@@ -55,9 +58,21 @@ export const startHost: HostStart = (command) =>
       alive: () => child.exitCode === null && child.signalCode === null,
       stop: () =>
         new Promise<void>((settle) => {
-          child.once("close", () => settle());
+          if (child.exitCode !== null || child.signalCode !== null) {
+            settle();
+            return;
+          }
+          // Let the main process see EOF first: `cat >/dev/null` returns, the
+          // container stops, and the `podman run` client reaps it.  That is the
+          // mechanism this policy is built on, so the kill is only a fallback, for a
+          // client that will not die on its own — and the container goes a moment
+          // after we do, not in the same instant.
+          const grace = setTimeout(() => child.kill(), STOP_GRACE_MS);
+          child.once("close", () => {
+            clearTimeout(grace);
+            settle();
+          });
           child.stdin.end();
-          child.kill();
         }),
     };
   });
