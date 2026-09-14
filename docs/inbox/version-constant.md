@@ -9,7 +9,7 @@
 Export posipaki's own release version as a constant, so a consumer can tell which
 posipaki a build speaks without reading a file or hardcoding a number:
 
-    import { LIB_VERSION } from "posipaki";   // "0.32.1"
+    import { LIB_VERSION } from "posipaki";   // "0.33.0"
 
 The name has to not collide: `VERSION` in `posipaki/remote` is already the
 *protocol* version (`json.v1`) and it does not move between releases. Both are

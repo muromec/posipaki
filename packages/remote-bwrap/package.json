@@ -1,6 +1,6 @@
 {
   "name": "posipaki-remote-bwrap",
-  "version": "0.32.1",
+  "version": "0.33.0",
   "description": "Run a posipaki actor in a bubblewrap sandbox",
   "homepage": "https://posipaki-docs.muromec.nl/",
   "repository": {
@@ -23,6 +23,6 @@
     "test": "bash ../../scripts/test.sh"
   },
   "dependencies": {
-    "posipaki": "^0.32.1"
+    "posipaki": "^0.33.0"
   }
 }

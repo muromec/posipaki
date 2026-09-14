@@ -20,7 +20,7 @@ import type { HostRun, SpawnChild } from "./host.js";
 import type { ContainerSpec, KitSpec } from "./spec.js";
 
 const FAR_END = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "staged-payload.js");
-const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.32.1-abcdef12";
+const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.33.0-abcdef12";
 const REPORT = `staged\nkit ${KIT_DIR}\nruntime /usr/bin/node\n`;
 
 const children: ChildProcess[] = [];
