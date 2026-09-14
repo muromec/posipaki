@@ -133,6 +133,10 @@ posipaki becomes a workspace monorepo; the root stays the core package:
 - **Kit vocabulary: core or package?** Settled in the core: a package stages the kit and
   runs it, but the manifest, the script and the report belong to whoever delivers a
   payload, and both packages use them unchanged.
+- **A container's life with more than one consumer.** Written down separately in
+  [container-lifetime.md](./container-lifetime.md): what happens when one consumer starts the
+  container and another joins, what an application-scoped name and a label buy, and which
+  shapes are acknowledged but not built.
 - **`local` and `sudo` later?** They stay in the consumer for now. If a second consumer
   wants them, they are a package like any other.
 - **Versioning.** Lockstep, as assumed: a package declares `posipaki` as a dependency and
