@@ -17,6 +17,8 @@ import {
   makeKit,
   parseBootstrapReport,
   sha256Hex,
+  hostVersion,
+  parseHostVersion,
   versionLine,
 } from "./kit.js";
 
@@ -268,6 +270,24 @@ describe("kit description", () => {
   it("names an artifact in one line a client can judge", () => {
     const line = versionLine(APP, "gateway", "json.v1");
     expect(line).toBe(`${APP.name}-gateway ${APP.version} posipaki ${LIB_VERSION} proto json.v1 layout ${KIT_LAYOUT}`);
+  });
+
+  it("names whose payload it is in one value, and reads that value back", () => {
+    // What a consumer hands a way in, and the way in hands the gateway: one string,
+    // because the app name and the build are one fact about the bytes.
+    expect(hostVersion({ name: "email-agent", version: "1.0.0+d52ee13" })).toBe(
+      "email-agent@1.0.0+d52ee13",
+    );
+    expect(parseHostVersion("email-agent@1.0.0+d52ee13")).toEqual({
+      name: "email-agent",
+      version: "1.0.0+d52ee13",
+    });
+  });
+
+  it("refuses a value that names nothing, rather than guessing at its halves", () => {
+    for (const text of ["", "email-agent", "@1.0.0", "email-agent@", "@"]) {
+      expect(parseHostVersion(text)).toBeUndefined();
+    }
   });
 });
 

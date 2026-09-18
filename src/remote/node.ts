@@ -41,10 +41,12 @@ export {
   DEFAULT_RUNTIMES,
   KIT_LAYOUT,
   bootstrapScript,
+  hostVersion,
   kitName,
   kitVersion,
   makeKit,
   parseBootstrapReport,
+  parseHostVersion,
   sha256Hex,
   versionLine,
 } from "./kit.js";

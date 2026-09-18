@@ -93,6 +93,25 @@ export function versionLine(app: KitApp, role: ArtifactRole, proto: string): str
   return `${app.name}-${role} ${app.version} posipaki ${LIB_VERSION} proto ${proto} layout ${KIT_LAYOUT}`;
 }
 
+/**
+ * The one value that says whose payload this is: the app name and the build its bytes
+ * came from — `email-agent@1.0.0+d52ee13`.
+ *
+ * One string rather than two flags because it is one fact.  A consumer hands it to a way
+ * in, the way in hands it to the gateway, and the gateway is the only thing left that could
+ * get the pair out of step with itself.  `@` separates; a version never contains one.
+ */
+export function hostVersion(app: KitApp): string {
+  return `${app.name}@${app.version}`;
+}
+
+/** What a {@link hostVersion} string names, or undefined when it names nothing. */
+export function parseHostVersion(text: string): KitApp | undefined {
+  const at = text.indexOf("@");
+  if (at <= 0 || at === text.length - 1) return undefined;
+  return { name: text.slice(0, at), version: text.slice(at + 1) };
+}
+
 /** Wrap base64 at a comfortable width; `base64 -d` ignores the newlines. */
 function wrapped(base64: string, width = 76): string {
   const lines: string[] = [];

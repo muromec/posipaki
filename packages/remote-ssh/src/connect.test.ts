@@ -138,8 +138,9 @@ it("runs the gateway with the payload as its worker when the spec relays", async
       "env.invalid",
       "/usr/bin/node",
       `${KIT_DIR}/gateway.js`,
+      `${KIT_DIR}/payload.js`,
+      "--host-version=email-agent@0.13.0",
       "--env=agent",
-      `--worker=${KIT_DIR}/payload.js`,
     ],
   ]);
   await stop(channel, children[0]);

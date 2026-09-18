@@ -11,6 +11,7 @@ import { sshConnector } from "./connect.js";
 import type { SshConnectOptions } from "./connect.js";
 import type { SshSpec, SshStaged } from "./spec.js";
 import { sshStage } from "./stage.js";
+import { gatewayArgs } from "posipaki/remote/node";
 
 /** What the bootstrap shape adds to the connector: the actor's own arguments. */
 export interface SshBootstrapOptions<Args> extends SshConnectOptions {
@@ -37,11 +38,13 @@ export function sshBootstrap<Args>(spec: SshSpec, options: SshBootstrapOptions<A
         const payload = `${staged.kitDir}/${PAYLOAD_ARTIFACT}`;
         const own = options.args?.(args, staged) ?? [];
         if (spec.relay) {
+          // The gateway's argv is posipaki's: one way to start a gateway, whatever way in
+          // it is reached through, and the payload is its first argument.
           return [
             staged.runtime,
             `${staged.kitDir}/${GATEWAY_ARTIFACT}`,
+            ...gatewayArgs({ app: spec.app, worker: payload }),
             ...own,
-            `--worker=${payload}`,
           ];
         }
         return [staged.runtime, payload, ...own];

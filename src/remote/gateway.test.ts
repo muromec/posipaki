@@ -67,7 +67,7 @@ async function printed(args: string[]): Promise<{ code: number | null; stdout: s
 describe("gateway boot", () => {
   it("reads back the argv it builds", () => {
     const boot: GatewayBoot = { app: APP, env: "prod", poolSize: 3, worker: "/k/payload.js" };
-    expect(gatewayBoot(["gateway.ts", ...gatewayArgs(boot)])).toEqual(boot);
+    expect(gatewayBoot(gatewayArgs(boot))).toEqual(boot);
   });
 
   it("leaves out what was never given", () => {
@@ -75,11 +75,18 @@ describe("gateway boot", () => {
     const read = gatewayBoot(gatewayArgs(boot));
     expect(read.poolSize).toBeUndefined();
     expect(read.env).toBe("test");
+    // A way in that says nothing about the environment is not made to say `unnamed`
+    // in an argv it built; the gateway fills that in for itself.
+    expect(gatewayArgs({ app: APP, worker: "w" })).toEqual([
+      "w",
+      "--host-version=test-app@1.2.3",
+    ]);
   });
 
   it("refuses to start without a payload, or without knowing whose it is", () => {
-    expect(() => gatewayBoot(["--env=test"])).toThrow(/no --worker/);
-    expect(() => gatewayBoot(["--worker=w"])).toThrow(/no --app-name/);
+    expect(() => gatewayBoot(["--env=test"])).toThrow(/no <payload>/);
+    expect(() => gatewayBoot(["w"])).toThrow(/no --host-version/);
+    expect(() => gatewayBoot(["w", "--host-version=nobody"])).toThrow(/no --host-version/);
   });
 
   it("names itself in one line, without starting anything", async () => {

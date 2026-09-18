@@ -11,6 +11,7 @@ import { podmanConnector } from "./connect.js";
 import type { PodmanConnectOptions } from "./connect.js";
 import type { ContainerSpec, KitSpec, PodmanStaged } from "./spec.js";
 import { podmanStage } from "./stage.js";
+import { gatewayArgs } from "posipaki/remote/node";
 
 /** What the bootstrap shape adds to the connector: the actor's own arguments. */
 export interface PodmanBootstrapOptions<Args> extends PodmanConnectOptions {
@@ -40,7 +41,14 @@ export function podmanBootstrap<Args>(
         const payload = `${staged.kitDir}/${PAYLOAD_ARTIFACT}`;
         const own = options.args?.(args, staged) ?? [];
         if (spec.relay) {
-          return [staged.runtime, `${staged.kitDir}/${GATEWAY_ARTIFACT}`, ...own, `--worker=${payload}`];
+          // The gateway's argv is posipaki's: one way to start a gateway, whatever way in
+          // it is reached through, and the payload is its first argument.
+          return [
+            staged.runtime,
+            `${staged.kitDir}/${GATEWAY_ARTIFACT}`,
+            ...gatewayArgs({ app: spec.app, worker: payload }),
+            ...own,
+          ];
         }
         return [staged.runtime, payload, ...own];
       },

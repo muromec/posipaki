@@ -5,7 +5,7 @@
 //
 //   1. creates the channel to the payload (fifo paths it makes itself, in a
 //      private temp dir, so they belong to the uid that will open them),
-//   2. starts the payload (`--worker=<script>`, required) and relays frames
+//   2. starts the payload — the first argument, required — and relays frames
 //      between stdin/stdout,
 //   3. carries whatever the payload prints to the client as output frames
 //      (`$fd`), so the payload's own stdout can never be mistaken for protocol.
@@ -28,7 +28,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
 import type { KitApp } from "./kit.js";
-import { versionLine } from "./kit.js";
+import { hostVersion, parseHostVersion, versionLine } from "./kit.js";
 import { VERSION } from "./protocols/json1.js";
 import { errorFrame, outputFrame } from "./stdio.js";
 import type { LineTransport, OutputFd } from "./stdio.js";
@@ -43,11 +43,11 @@ export const GATEWAY_FAILED = 1;
 export interface GatewayBoot {
   /** Who staged this payload.  Names the artifact in its `--version` line. */
   app: KitApp;
-  /** A label for logs and the tree name; the payload may have its own default. */
-  env: string;
+  /** A label for logs, the tree name and the payload's own `--env`; `unnamed` when nobody said. */
+  env?: string;
   /** Forwarded to the payload when given. */
   poolSize?: number;
-  /** The payload to relay to.  Required — the gateway has no opinion of its own. */
+  /** The payload to relay to.  Required, and first — the gateway has no opinion of its own. */
   worker: string;
 }
 
@@ -69,29 +69,36 @@ function positiveInt(value: string | undefined): number | undefined {
 /**
  * The argv that boots this gateway — built by the client, read by
  * {@link gatewayBoot}, so the two halves cannot drift apart.
+ *
+ * The payload comes first and the flags after it: what the consumer's own `args` add
+ * follows, so a positional argument of the payload's own can never be mistaken for the
+ * payload.
  */
 export function gatewayArgs(boot: GatewayBoot): string[] {
   return [
-    `--worker=${boot.worker}`,
-    `--env=${boot.env}`,
-    `--app-name=${boot.app.name}`,
-    `--app-version=${boot.app.version}`,
+    boot.worker,
+    `--host-version=${hostVersion(boot.app)}`,
+    ...(boot.env === undefined ? [] : [`--env=${boot.env}`]),
     ...(boot.poolSize === undefined ? [] : [`--pool-size=${boot.poolSize}`]),
   ];
 }
 
 /** The boot a gateway was started with, or the reason it cannot start. */
 export function gatewayBoot(argv: string[]): GatewayBoot {
-  const worker = flagValue(argv, "worker");
-  if (!worker) throw new Error("no --worker=<script>: the gateway needs a payload to relay to");
-  const name = flagValue(argv, "app-name");
-  const version = flagValue(argv, "app-version");
-  if (!name || !version) {
-    throw new Error("no --app-name=<name> and --app-version=<version>: the gateway names its artifact");
+  const worker = argv[0];
+  if (worker === undefined || worker.startsWith("--")) {
+    throw new Error("no <payload>: the gateway relays to a payload, named as its first argument");
+  }
+  const host = flagValue(argv, "host-version");
+  const app = host === undefined ? undefined : parseHostVersion(host);
+  if (app === undefined) {
+    throw new Error(
+      "no --host-version=<app>@<version>: the gateway says whose payload it relays",
+    );
   }
   return {
-    app: { name, version },
-    env: flagValue(argv, "env") ?? "unnamed",
+    app,
+    ...(flagValue(argv, "env") === undefined ? {} : { env: flagValue(argv, "env")! }),
     poolSize: positiveInt(flagValue(argv, "pool-size")),
     worker,
   };
@@ -131,11 +138,14 @@ function forwardOutput(stream: NodeJS.ReadableStream, wire: LineTransport, fd: O
  * Serve one environment over stdin/stdout.  Returns the exit code; the caller
  * turns it into `process.exitCode`.
  */
-export async function runGateway(argv: string[] = process.argv): Promise<number> {
+export async function runGateway(argv: string[] = process.argv.slice(2)): Promise<number> {
   if (argv.includes("--version")) {
-    const name = flagValue(argv, "app-name") ?? "posipaki";
-    const version = flagValue(argv, "app-version") ?? "-";
-    process.stdout.write(`${versionLine({ name, version }, "gateway", VERSION)}\n`);
+    const host = flagValue(argv, "host-version");
+    const app = (host === undefined ? undefined : parseHostVersion(host)) ?? {
+      name: "posipaki",
+      version: "-",
+    };
+    process.stdout.write(`${versionLine(app, "gateway", VERSION)}\n`);
     return 0;
   }
   const wire = new Lines({ read: process.stdin, write: process.stdout });
@@ -151,7 +161,7 @@ export async function runGateway(argv: string[] = process.argv): Promise<number>
     await fail(wire, errorText(err));
     abandon();
   }
-  const { env, poolSize, worker } = booted;
+  const { env = "unnamed", poolSize, worker } = booted;
 
   const dir = await mkdtemp(join(tmpdir(), `posipaki-${env.replace(/\//g, "-")}-`));
   const fifoIn = join(dir, "in"); // the payload writes, we read
