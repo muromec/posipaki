@@ -9,6 +9,8 @@ import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";
 import type { Message } from "../types.js";
 import type { ActorDefinition, HandlerOptions, MethodOptions, ReflectionOptions } from "../actor-types.js";
+import type { KitApp } from "./kit.js";
+import { hostVersion } from "./kit.js";
 import { remoteClient } from "./client.js";
 import { serveRemoteActor } from "./server.js";
 import { commandSpawner } from "./spawners/fifo-command.js";
@@ -16,6 +18,13 @@ import { fifoArgvSpawner } from "./spawners/fifo-argv.js";
 
 export interface SubprocessActorOptions {
   manual?: boolean;
+  /**
+   * Who this payload is: the app name and the build its bytes came from, as the consumer states
+   * them.  This is one switch for both halves of the seam — stated, every start passes
+   * `--host-version` and the payload refuses to serve anything else; unstated, neither happens,
+   * because there is no version to pass and none to check.
+   */
+  hostVersion?: KitApp;
 }
 
 export interface SubprocessActorBundle<
@@ -52,8 +61,12 @@ export function defineSubprocessActor<
   const scriptPath = fileURLToPath(url);
   const marker = `${MARKER_PREFIX}${pathHash(scriptPath)}`;
   const isRemoteRoot = !opts.manual && process.argv.includes(marker);
+  const own =
+    opts.hostVersion === undefined
+      ? undefined
+      : hostVersion(opts.hostVersion);
 
-  const serve = () => serveRemoteActor(actor, fifoArgvSpawner);
+  const serve = () => serveRemoteActor(actor, () => fifoArgvSpawner(own));
 
   if (isRemoteRoot) {
     void serve();
@@ -61,7 +74,12 @@ export function defineSubprocessActor<
 
   const isBun = typeof (globalThis as { Bun?: unknown }).Bun !== "undefined";
   const runner = isBun ? "bun" : "node";
-  const spawner = commandSpawner([runner, scriptPath, marker]);
+  const spawner = commandSpawner([
+    runner,
+    scriptPath,
+    marker,
+    ...(own === undefined ? [] : [`--host-version=${own}`]),
+  ]);
 
   const proxyDef = remoteClient<Args, State, InMsg, OutMsg, Methods, Handlers, R>(
     actor.name ?? "actor",

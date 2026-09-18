@@ -11,8 +11,12 @@
 // `wc -c`, `base64 -d`.  A broken environment therefore reaches the client as a
 // readable reason instead of a channel that just closes.
 //
-// A kit is named after the build that made it and the posipaki it speaks, so two
-// consumers, two builds or two releases cannot land on each other's files.
+// A kit is named after the *host version* it serves — the app, the build its bytes came from
+// and the posipaki release that speaks to it — so two consumers, two builds or two releases
+// cannot land on each other's files, and the directory a kit sits in cannot disagree with the
+// identity the client then states on the wire.  A payload that is started for a host version
+// other than its own refuses to serve (see `hostVersionAccepts`), so a name alone is never
+// mistaken for the build behind it.
 
 import { createHash } from "node:crypto";
 import { LIB_VERSION } from "../version.js";
@@ -48,10 +52,8 @@ export interface KitApp {
 }
 
 export interface Kit {
-  /** Directory name: `<app>-<app version>-posipaki-<posipaki version>-<manifest8>`. */
+  /** Directory name: the host version this kit serves, as {@link hostVersion} renders it. */
   name: string;
-  /** sha256 over the manifest of the kit's own files. */
-  manifestHash: string;
   /** Everything the kit installs, `version.json` last. */
   files: KitFile[];
   /** Runtime candidates, in order; the first one found wins. */
@@ -75,45 +77,97 @@ export type BootstrapReport =
   | { kind: "ready"; kitDir: string; runtime: string; staged: boolean }
   | { kind: "error"; reason: string };
 
-/** The part an artifact plays when it names itself. */
-export type ArtifactRole = "gateway" | "payload";
-
 /** Hex sha256 of some content. */
 export function sha256Hex(content: string | Uint8Array): string {
   return createHash("sha256").update(content).digest("hex");
 }
 
-/** The directory name a kit with these contents, this owner and this posipaki gets. */
-export function kitName(app: KitApp, manifestHash: string): string {
-  return `${app.name}-${app.version}-posipaki-${LIB_VERSION}-${manifestHash.slice(0, 8)}`;
+/** What may stand as one fact in a host version: no `@`, no whitespace, no `/`. */
+const FACT = /^[A-Za-z0-9][A-Za-z0-9.+_-]*$/;
+
+/** The label posipaki's own field carries, so nobody has to guess which field it is. */
+const POSIPAKI_FIELD = "posipaki-";
+
+/** A host version read back: what a consumer stated, and the posipaki that rendered it. */
+export interface HostVersion extends KitApp {
+  posipaki: string;
 }
 
-/**
- * One line naming a staged artifact: what it is, which posipaki it speaks, which
- * kit layout it was built for.  A client that staged it can judge compatibility
- * from this alone — nothing else is claimed.
- */
-export function versionLine(app: KitApp, role: ArtifactRole, proto: string): string {
-  return `${app.name}-${role} ${app.version} posipaki ${LIB_VERSION} proto ${proto} layout ${KIT_LAYOUT}`;
-}
+/** A name or version that could not stand as one fact in a host version. */
+export class HostVersionError extends Error {}
 
 /**
- * The one value that says whose payload this is: the app name and the build its bytes
- * came from — `email-agent@1.0.0+d52ee13`.
+ * The one value that says what a host is expected to run: whose payload it is, which build
+ * those bytes came from, and the posipaki release that speaks to it —
+ * `email-agent@1.0.0+d52ee13@posipaki-0.35.0`.
  *
- * One string rather than two flags because it is one fact.  A consumer hands it to a way
- * in, the way in hands it to the gateway, and the gateway is the only thing left that could
- * get the pair out of step with itself.  `@` separates; a version never contains one.
+ * One string rather than three flags because it is one fact: it names the kit directory, it
+ * travels with every way in, and the payload compares it with its own before it serves.  A
+ * consumer states the two facts only it knows; posipaki renders its own release, so that
+ * field cannot be got wrong.  `@` separates, and no name or version may contain one.
  */
 export function hostVersion(app: KitApp): string {
-  return `${app.name}@${app.version}`;
+  const facts: [string, string][] = [
+    ["name", app.name],
+    ["version", app.version],
+  ];
+  for (const [what, value] of facts) {
+    if (!FACT.test(value)) {
+      throw new HostVersionError(
+        `an app ${what} must match ${FACT.source}: ${JSON.stringify(value)}`,
+      );
+    }
+  }
+  return `${app.name}@${app.version}@${POSIPAKI_FIELD}${LIB_VERSION}`;
 }
 
 /** What a {@link hostVersion} string names, or undefined when it names nothing. */
-export function parseHostVersion(text: string): KitApp | undefined {
-  const at = text.indexOf("@");
-  if (at <= 0 || at === text.length - 1) return undefined;
-  return { name: text.slice(0, at), version: text.slice(at + 1) };
+export function parseHostVersion(text: string): HostVersion | undefined {
+  const fields = text.split("@");
+  if (fields.length !== 3) return undefined;
+  const [name, version, posipaki] = fields as [string, string, string];
+  if (!FACT.test(name) || !FACT.test(version)) return undefined;
+  if (!posipaki.startsWith(POSIPAKI_FIELD)) return undefined;
+  const release = posipaki.slice(POSIPAKI_FIELD.length);
+  if (!FACT.test(release)) return undefined;
+  return { name, version, posipaki: release };
+}
+
+/** Exit code a payload refuses a start with: it is not the build that was asked for. */
+export const PAYLOAD_REFUSED = 78;
+
+export type HostVersionVerdict = { ok: true } | { ok: false; reason: string };
+
+/**
+ * Whether a payload may serve what it was asked for.  `own` is what its bytes carry, `asked`
+ * is what the caller said — two independent facts, and one of the four combinations is the
+ * dangerous one: an artifact that knows what it is, started by a caller that never said which
+ * host version it is for, is exactly the stale caller we refuse.
+ *
+ * No baked version, nothing to compare: an artifact that does not know what it is cannot be
+ * wrong about it, and a caller that states a version for such a payload is only being helpful.
+ */
+export function hostVersionAccepts(
+  own: string | undefined,
+  asked: string | undefined,
+): HostVersionVerdict {
+  if (own === undefined) return { ok: true };
+  if (asked === undefined) {
+    return { ok: false, reason: `this artifact is ${own}, and no host version was asked for` };
+  }
+  if (!sameHostVersion(own, asked)) {
+    return { ok: false, reason: `asked to serve ${asked}, but this artifact is ${own}` };
+  }
+  return { ok: true };
+}
+
+/**
+ * Whether two host versions are the same build.  Equality for now: {@link hostVersionAccepts}
+ * is the rule, and this is the one function that decides what "the same" means — so a range, a
+ * compatibility table or a protocol-only comparison is a change here and nowhere else.
+ */
+export function sameHostVersion(own: string, asked: string): boolean {
+  return own === asked;
 }
 
 /** Wrap base64 at a comfortable width; `base64 -d` ignores the newlines. */
@@ -124,9 +178,9 @@ function wrapped(base64: string, width = 76): string {
 }
 
 /**
- * Describe a kit around its files.  The manifest hash covers the files only, so
- * `version.json` — which records that hash — can be one of them without chasing
- * its own tail.
+ * Describe a kit around its files.  Its name is the host version it serves, and `version.json`
+ * — which records that name and every file's hash — is written as one of them: it describes
+ * the payload and the gateway, never itself.
  */
 export function makeKit(
   files: { name: string; content: string | Uint8Array }[],
@@ -138,10 +192,8 @@ export function makeKit(
     sha256: sha256Hex(file.content),
     base64: Buffer.from(file.content).toString("base64"),
   }));
-  const manifestHash = sha256Hex(raw.map((f) => `${f.name} ${f.sha256} ${f.bytes}`).join("\n"));
   const kit: Kit = {
-    name: kitName(options.app, manifestHash),
-    manifestHash,
+    name: hostVersion(options.app),
     files: raw,
     runtimes: [...(options.runtimes ?? DEFAULT_RUNTIMES)],
     parent: options.parent ?? DEFAULT_KIT_PARENT,
@@ -162,14 +214,13 @@ export function makeKit(
   };
 }
 
-/** What `version.json` says: identity, versions, and the exact content hashes. */
+/** What `version.json` says: the identity, the facts it was rendered from, and the hashes. */
 export function kitVersion(kit: Kit): Record<string, unknown> {
   return {
-    kit: kit.name,
+    hostVersion: kit.name,
     app: kit.app,
     posipaki: LIB_VERSION,
     layout: KIT_LAYOUT,
-    manifestHash: kit.manifestHash,
     files: kit.files.map((file) => ({ name: file.name, sha256: file.sha256, bytes: file.bytes })),
   };
 }

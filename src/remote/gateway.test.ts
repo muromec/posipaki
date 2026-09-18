@@ -11,8 +11,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 import { GATEWAY_FAILED, gatewayArgs, gatewayBoot } from "./gateway.js";
 import type { GatewayBoot } from "./gateway.js";
-import { versionLine } from "./kit.js";
-import { VERSION } from "./protocols/json1.js";
+import { hostVersion } from "./kit.js";
 import type { Channel } from "./channel.js";
 import { clientChannel } from "./stdio.js";
 import type { LineStreams } from "./stdio.js";
@@ -23,6 +22,7 @@ const GATEWAY = join(HERE, `gateway-cli${extname(fileURLToPath(import.meta.url))
 const PAYLOAD = join(HERE, "fixtures", "echo-payload.js");
 const GIVES_UP = join(HERE, "fixtures", "give-up.js");
 const APP = { name: "test-app", version: "1.2.3" };
+const HOST = hostVersion(APP);
 
 interface Session {
   child: ChildProcess;
@@ -33,7 +33,7 @@ interface Session {
 
 /** Start the gateway the way a client does, and speak the wire to it. */
 async function session(boot: Partial<GatewayBoot> = {}): Promise<Session> {
-  const args = gatewayArgs({ app: APP, env: "test", worker: PAYLOAD, ...boot });
+  const args = gatewayArgs({ hostVersion: HOST, worker: PAYLOAD, ...boot });
   const child = spawn(process.execPath, [GATEWAY, ...args], {
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -54,46 +54,32 @@ async function stop(session: Session): Promise<void> {
   await session.exit;
 }
 
-/** Run the entry point and collect what it printed. */
-async function printed(args: string[]): Promise<{ code: number | null; stdout: string }> {
-  const child = spawn(process.execPath, [GATEWAY, ...args], { stdio: ["ignore", "pipe", "pipe"] });
-  const chunks: string[] = [];
-  child.stdout.setEncoding("utf-8");
-  child.stdout.on("data", (chunk: string) => chunks.push(chunk));
-  const code = await new Promise<number | null>((settle) => child.once("exit", (c) => settle(c)));
-  return { code, stdout: chunks.join("").trim() };
-}
-
 describe("gateway boot", () => {
   it("reads back the argv it builds", () => {
-    const boot: GatewayBoot = { app: APP, env: "prod", poolSize: 3, worker: "/k/payload.js" };
+    const boot: GatewayBoot = { hostVersion: HOST, worker: "/k/payload.js" };
     expect(gatewayBoot(gatewayArgs(boot))).toEqual(boot);
   });
 
-  it("leaves out what was never given", () => {
-    const boot: GatewayBoot = { app: APP, env: "test", worker: "w" };
-    const read = gatewayBoot(gatewayArgs(boot));
-    expect(read.poolSize).toBeUndefined();
-    expect(read.env).toBe("test");
-    // A way in that says nothing about the environment is not made to say `unnamed`
-    // in an argv it built; the gateway fills that in for itself.
-    expect(gatewayArgs({ app: APP, worker: "w" })).toEqual([
-      "w",
-      "--host-version=test-app@1.2.3",
-    ]);
+  it("carries the host version verbatim: it neither reads nor judges the string", () => {
+    const boot: GatewayBoot = { hostVersion: "not-a-host-version-at-all", worker: "w" };
+    expect(gatewayBoot(gatewayArgs(boot))).toEqual(boot);
+    expect(gatewayArgs(boot)).toEqual(["w", "--host-version=not-a-host-version-at-all"]);
   });
 
-  it("refuses to start without a payload, or without knowing whose it is", () => {
-    expect(() => gatewayBoot(["--env=test"])).toThrow(/no <payload>/);
-    expect(() => gatewayBoot(["w"])).toThrow(/no --host-version/);
-    expect(() => gatewayBoot(["w", "--host-version=nobody"])).toThrow(/no --host-version/);
+  it("passes nothing when it was given nothing", () => {
+    // A caller that states no host version — the only case where a payload has none of its
+    // own to check — builds an argv with no flag, and reads none back.  The gateway does not
+    // invent a placeholder: what nobody said is not its to fill in.
+    expect(gatewayArgs({ worker: "w" })).toEqual(["w"]);
+    expect(gatewayBoot(["w"])).toEqual({ worker: "w" });
   });
 
-  it("names itself in one line, without starting anything", async () => {
-    const args = gatewayArgs({ app: APP, env: "test", worker: PAYLOAD });
-    const { code, stdout } = await printed([...args, "--version"]);
-    expect(code).toBe(0);
-    expect(stdout).toBe(versionLine(APP, "gateway", VERSION));
+  it("refuses to start without a payload", () => {
+    expect(() => gatewayBoot(["--host-version=x"])).toThrow(/no <payload>/);
+  });
+
+  it("has no door of its own: `--version` is just an argument the payload may read", () => {
+    expect(gatewayBoot(["w", "--version"])).toEqual({ worker: "w" });
   });
 });
 
@@ -141,7 +127,7 @@ describe("gateway", () => {
   });
 
   it("turns a payload that dies before its channel into a reason", async () => {
-    const args = gatewayArgs({ app: APP, env: "test", worker: GIVES_UP });
+    const args = gatewayArgs({ hostVersion: HOST, worker: GIVES_UP });
     const child = spawn(process.execPath, [GATEWAY, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
     });

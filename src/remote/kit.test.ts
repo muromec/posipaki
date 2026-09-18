@@ -18,11 +18,13 @@ import {
   parseBootstrapReport,
   sha256Hex,
   hostVersion,
+  hostVersionAccepts,
   parseHostVersion,
-  versionLine,
+  HostVersionError,
 } from "./kit.js";
 
 const APP = { name: "test-app", version: "1.2.3" };
+const HOST = hostVersion(APP);
 
 const KIT_FILES = [
   { name: "payload.js", content: 'console.log("payload v1");\n' },
@@ -197,14 +199,14 @@ describe("kit bootstrap", () => {
 
       // Channel two: the staged payload runs with a stdin of its own.
       const run = await runInArgv(
-        `exec "${staged.runtime}" "${staged.kitDir}/payload.js" --env=probe --stdio`,
+        `exec "${staged.runtime}" "${staged.kitDir}/payload.js" --host-version=${HOST} --stdio`,
         env,
         "wire\n",
       );
       expect(run.code).toBe(0);
       expect(run.stdout).toContain("ran ");
       expect(run.stdout).toContain("stdin=wire");
-      expect(run.stdout).toContain("--env=probe --stdio");
+      expect(run.stdout).toContain(`--host-version=${HOST} --stdio`);
     } finally {
       cleanup();
     }
@@ -220,18 +222,19 @@ describe("kit bootstrap", () => {
 });
 
 describe("kit description", () => {
-  it("names a kit after its owner, its build and its contents", () => {
+  it("names a kit after the host version it serves, and nothing else", () => {
     const kit = makeKit(KIT_FILES, { app: APP });
-    expect(kit.name).toContain(APP.name);
-    expect(kit.name).toContain(APP.version);
-    expect(kit.name).toContain(LIB_VERSION);
-    expect(kit.name).toContain(kit.manifestHash.slice(0, 8));
+    expect(kit.name).toBe(HOST);
+    // Its own name is the one value the client will later state on the wire, so the
+    // directory a kit lands in cannot disagree with the identity it is started for.
+    expect(parseHostVersion(kit.name)).toEqual({ ...APP, posipaki: LIB_VERSION });
 
     expect(makeKit(KIT_FILES, { app: APP }).name).toBe(kit.name);
     expect(makeKit(KIT_FILES, { app: { name: APP.name, version: "2.0.0" } }).name).not.toBe(kit.name);
-    expect(
-      makeKit([{ name: "payload.js", content: "payload v2" }], { app: APP }).name,
-    ).not.toBe(kit.name);
+    // Same version, different bytes: the same directory, because the version is what names
+    // the build.  What catches that is not the path but the payload itself, which refuses a
+    // host version its own bytes do not carry.
+    expect(makeKit([{ name: "payload.js", content: "payload v2" }], { app: APP }).name).toBe(kit.name);
   });
 
   it("records who it is and what it holds in version.json", () => {
@@ -242,11 +245,10 @@ describe("kit description", () => {
     expect(sha256Hex(bytes)).toBe(file!.sha256);
 
     const version = JSON.parse(bytes.toString("utf-8")) as Record<string, unknown>;
-    expect(version.kit).toBe(kit.name);
+    expect(version.hostVersion).toBe(kit.name);
     expect(version.app).toEqual(APP);
     expect(version.posipaki).toBe(LIB_VERSION);
     expect(version.layout).toBe(KIT_LAYOUT);
-    expect(version.manifestHash).toBe(kit.manifestHash);
     // The manifest lists what the caller staged; version.json cannot list itself.
     expect(version.files).toEqual(
       KIT_FILES.map((f) => ({
@@ -257,37 +259,87 @@ describe("kit description", () => {
     );
   });
 
-  it("leaves the manifest hash out of its own tail: version.json is not in it", () => {
+  it("describes the payload and the gateway, and never itself", () => {
     const kit = makeKit(KIT_FILES, { app: APP });
-    const filesOnly = KIT_FILES.map(
-      (f) => `${f.name} ${sha256Hex(f.content)} ${Buffer.byteLength(f.content)}`,
-    ).join("\n");
-    expect(kit.manifestHash).toBe(sha256Hex(filesOnly));
     expect(kit.files.length).toBe(KIT_FILES.length + 1);
-    expect(kitVersion(kit).manifestHash).toBe(kit.manifestHash);
-  });
-
-  it("names an artifact in one line a client can judge", () => {
-    const line = versionLine(APP, "gateway", "json.v1");
-    expect(line).toBe(`${APP.name}-gateway ${APP.version} posipaki ${LIB_VERSION} proto json.v1 layout ${KIT_LAYOUT}`);
-  });
-
-  it("names whose payload it is in one value, and reads that value back", () => {
-    // What a consumer hands a way in, and the way in hands the gateway: one string,
-    // because the app name and the build are one fact about the bytes.
-    expect(hostVersion({ name: "email-agent", version: "1.0.0+d52ee13" })).toBe(
-      "email-agent@1.0.0+d52ee13",
+    // The record lists what the caller staged — not `version.json` itself, which would be
+    // chasing its own tail.  Read from the bytes it wrote, since the kit that comes back has
+    // that file among its own.
+    const recorded = JSON.parse(
+      Buffer.from(kit.files.find((f) => f.name === "version.json")!.base64, "base64").toString("utf-8"),
+    ) as { hostVersion: string; files: unknown };
+    expect(recorded.hostVersion).toBe(kit.name);
+    expect(recorded.files).toEqual(
+      KIT_FILES.map((f) => ({
+        name: f.name,
+        sha256: sha256Hex(f.content),
+        bytes: Buffer.byteLength(f.content),
+      })),
     );
-    expect(parseHostVersion("email-agent@1.0.0+d52ee13")).toEqual({
+  });
+
+  it("names whose payload it is, which build, and which posipaki", () => {
+    // What a consumer states, what every way in carries, and what the payload compares with
+    // its own: one value, because the three facts are one claim about the bytes.
+    expect(hostVersion({ name: "email-agent", version: "1.0.0+d52ee13" })).toBe(
+      `email-agent@1.0.0+d52ee13@posipaki-${LIB_VERSION}`,
+    );
+    expect(parseHostVersion(`email-agent@1.0.0+d52ee13@posipaki-${LIB_VERSION}`)).toEqual({
       name: "email-agent",
       version: "1.0.0+d52ee13",
+      posipaki: LIB_VERSION,
     });
   });
 
-  it("refuses a value that names nothing, rather than guessing at its halves", () => {
-    for (const text of ["", "email-agent", "@1.0.0", "email-agent@", "@"]) {
+  it("refuses a value that names nothing, rather than guessing at its fields", () => {
+    for (const text of [
+      "",
+      "email-agent",
+      "@1.0.0",
+      "email-agent@",
+      "@",
+      "email-agent@1.0.0", // no posipaki field at all
+      "email-agent@1.0.0@0.35.0", // a third field that is not labelled
+      `email-agent@1.0.0@posipaki-`,
+      `email-agent@1.0.0@posipaki-0.35.0@extra`,
+      `email agent@1.0.0@posipaki-0.35.0`,
+    ]) {
       expect(parseHostVersion(text)).toBeUndefined();
     }
+  });
+
+  it("refuses to render facts that could not be read back", () => {
+    expect(() => hostVersion({ name: "email agent", version: "1.0.0" })).toThrow(HostVersionError);
+    expect(() => hostVersion({ name: "email@agent", version: "1.0.0" })).toThrow(HostVersionError);
+    expect(() => hostVersion({ name: "email/agent", version: "1.0.0" })).toThrow(HostVersionError);
+    expect(() => hostVersion({ name: "email-agent", version: "1.0.0@x" })).toThrow(HostVersionError);
+  });
+});
+
+describe("the version a payload serves", () => {
+  it("checks nothing when the payload carries no version", () => {
+    expect(hostVersionAccepts(undefined, undefined)).toEqual({ ok: true });
+    // A caller that states one anyway is only being helpful: there is nothing to compare.
+    expect(hostVersionAccepts(undefined, HOST)).toEqual({ ok: true });
+  });
+
+  it("serves the host version it was asked for", () => {
+    expect(hostVersionAccepts(HOST, HOST)).toEqual({ ok: true });
+  });
+
+  it("refuses a start that names no host version, and says what it is", () => {
+    const verdict = hostVersionAccepts(HOST, undefined);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok ? "" : verdict.reason).toContain(HOST);
+    expect(verdict.ok ? "" : verdict.reason).toContain("no host version was asked for");
+  });
+
+  it("refuses another build, and names both", () => {
+    const asked = hostVersion({ name: APP.name, version: "1.2.4" });
+    const verdict = hostVersionAccepts(HOST, asked);
+    expect(verdict.ok).toBe(false);
+    expect(verdict.ok ? "" : verdict.reason).toContain(asked);
+    expect(verdict.ok ? "" : verdict.reason).toContain(HOST);
   });
 });
 

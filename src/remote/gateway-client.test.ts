@@ -13,6 +13,7 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { gatewayClient, hostRemote } from "./gateway-client.js";
+import { hostVersion } from "./kit.js";
 import type { HostRun } from "./host.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -86,7 +87,8 @@ describe("the client side of the gateway, over this machine", () => {
       // worked out for itself.
       const kits = stagedKits(home);
       expect(kits).toHaveLength(1);
-      expect(kits[0]).toContain("test-app-1.2.3-posipaki-");
+      // The directory *is* the host version the payload will be started for.
+      expect(kits[0]).toContain(hostVersion(APP));
       expect(readdirSync(kits[0]!).sort()).toEqual(["gateway.js", "payload.js", "version.json"]);
 
       const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage(resolve));

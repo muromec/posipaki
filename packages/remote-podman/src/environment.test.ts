@@ -14,12 +14,16 @@ import { afterEach, expect, it } from "vitest";
 import { containerExistsCommand, containerKeepaliveCommand, containerRemoveCommand } from "./commands.js";
 import { podmanEnvironment } from "./environment.js";
 import type { PodmanEnvironmentSpec } from "./environment.js";
+import { hostVersion } from "posipaki/remote/node";
 import type { HostRun, SpawnChild } from "posipaki/remote/node";
 import type { HostStart } from "./lifetime.js";
 import type { ContainerSpec, PodmanRemoteSpec } from "./spec.js";
 
 const FAR_END = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "staged-payload.js");
-const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.35.0-abcdef12";
+const APP = { name: "email-agent", version: "0.13.0" };
+/** The host version, rendered here so the kit's directory and the flag cannot go stale. */
+const HOST = hostVersion(APP);
+const KIT_DIR = `/home/agent/bin/posipaki/${HOST}`;
 const REPORT = `staged\nkit ${KIT_DIR}\nruntime /usr/bin/node\n`;
 
 const children: ChildProcess[] = [];
@@ -43,7 +47,7 @@ function spec(extra: Partial<PodmanRemoteSpec<{ env: string }>> = {}): PodmanRem
   return {
     image: "toolbox:1",
     container: "env-agent",
-    hostVersion: { name: "email-agent", version: "0.13.0" },
+    hostVersion: APP,
     payload,
     ...extra,
   };
@@ -211,7 +215,7 @@ it("hands the actor's own arguments to the staged payload", async () => {
       "/usr/bin/node",
       `${KIT_DIR}/gateway.js`,
       `${KIT_DIR}/payload.js`,
-      "--host-version=email-agent@0.13.0",
+      `--host-version=${HOST}`,
       "--env=live",
     ],
   ]);

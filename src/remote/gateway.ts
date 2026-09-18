@@ -5,8 +5,8 @@
 //
 //   1. creates the channel to the payload (fifo paths it makes itself, in a
 //      private temp dir, so they belong to the uid that will open them),
-//   2. starts the payload — the first argument, required — and relays frames
-//      between stdin/stdout,
+//   2. starts the payload — the first argument, required — hands it the host version it was
+//      asked for (`--host-version`), and relays frames between stdin/stdout,
 //   3. carries whatever the payload prints to the client as output frames
 //      (`$fd`), so the payload's own stdout can never be mistaken for protocol.
 //
@@ -14,6 +14,10 @@
 // payload runs as another uid (it cannot open it) or on another host (the path is
 // not there).  stdio is the one channel every way into an environment gives us, so
 // the wire is stdio and the fifo stays inside the environment.
+//
+// The gateway reads nothing out of what it carries: the payload's path and its host version go
+// through verbatim, and the payload is the one who refuses a version it is not.  A relay that
+// judged would be a second place for the same decision.
 //
 // Directories and processes are cleaned up on every exit path, which is also why
 // the client never sees a transport being closed twice.
@@ -27,9 +31,6 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { promisify } from "node:util";
-import type { KitApp } from "./kit.js";
-import { hostVersion, parseHostVersion, versionLine } from "./kit.js";
-import { VERSION } from "./protocols/json1.js";
 import { errorFrame, outputFrame } from "./stdio.js";
 import type { LineTransport, OutputFd } from "./stdio.js";
 import { LineTransport as Lines } from "./stdio.js";
@@ -41,14 +42,23 @@ const run = promisify(execFile);
 export const GATEWAY_FAILED = 1;
 
 export interface GatewayBoot {
-  /** Who staged this payload.  Names the artifact in its `--version` line. */
-  app: KitApp;
-  /** A label for logs, the tree name and the payload's own `--env`; `unnamed` when nobody said. */
-  env?: string;
-  /** Forwarded to the payload when given. */
-  poolSize?: number;
+  /**
+   * The host version this payload is being started for, carried **verbatim** to the payload and
+   * never read here: the gateway relays, and the artifact that can be stale is the payload.
+   * Absent when the caller states none — which is only right for a payload that knows no
+   * version of its own.
+   */
+  hostVersion?: string;
   /** The payload to relay to.  Required, and first — the gateway has no opinion of its own. */
   worker: string;
+}
+
+/**
+ * A label for the gateway's own temp directory: the host version, minus anything a path should
+ * not carry.  It is the gateway's business alone — the payload is not told which label it is.
+ */
+function label(hostVersion: string | undefined): string {
+  return (hostVersion ?? "unnamed").replace(/[^A-Za-z0-9.+@_-]/g, "-").slice(0, 80);
 }
 
 function errorText(err: unknown): string {
@@ -58,12 +68,6 @@ function errorText(err: unknown): string {
 function flagValue(argv: string[], name: string): string | undefined {
   const prefix = `--${name}=`;
   return argv.find((a) => a.startsWith(prefix))?.slice(prefix.length);
-}
-
-/** A `--flag=<positive integer>` argument, or undefined. */
-function positiveInt(value: string | undefined): number | undefined {
-  const n = Number(value);
-  return value !== undefined && Number.isFinite(n) && n >= 1 ? Math.floor(n) : undefined;
 }
 
 /**
@@ -77,9 +81,7 @@ function positiveInt(value: string | undefined): number | undefined {
 export function gatewayArgs(boot: GatewayBoot): string[] {
   return [
     boot.worker,
-    `--host-version=${hostVersion(boot.app)}`,
-    ...(boot.env === undefined ? [] : [`--env=${boot.env}`]),
-    ...(boot.poolSize === undefined ? [] : [`--pool-size=${boot.poolSize}`]),
+    ...(boot.hostVersion === undefined ? [] : [`--host-version=${boot.hostVersion}`]),
   ];
 }
 
@@ -89,19 +91,8 @@ export function gatewayBoot(argv: string[]): GatewayBoot {
   if (worker === undefined || worker.startsWith("--")) {
     throw new Error("no <payload>: the gateway relays to a payload, named as its first argument");
   }
-  const host = flagValue(argv, "host-version");
-  const app = host === undefined ? undefined : parseHostVersion(host);
-  if (app === undefined) {
-    throw new Error(
-      "no --host-version=<app>@<version>: the gateway says whose payload it relays",
-    );
-  }
-  return {
-    app,
-    ...(flagValue(argv, "env") === undefined ? {} : { env: flagValue(argv, "env")! }),
-    poolSize: positiveInt(flagValue(argv, "pool-size")),
-    worker,
-  };
+  const hostVersion = flagValue(argv, "host-version");
+  return { ...(hostVersion === undefined ? {} : { hostVersion }), worker };
 }
 
 /**
@@ -139,15 +130,6 @@ function forwardOutput(stream: NodeJS.ReadableStream, wire: LineTransport, fd: O
  * turns it into `process.exitCode`.
  */
 export async function runGateway(argv: string[] = process.argv.slice(2)): Promise<number> {
-  if (argv.includes("--version")) {
-    const host = flagValue(argv, "host-version");
-    const app = (host === undefined ? undefined : parseHostVersion(host)) ?? {
-      name: "posipaki",
-      version: "-",
-    };
-    process.stdout.write(`${versionLine(app, "gateway", VERSION)}\n`);
-    return 0;
-  }
   const wire = new Lines({ read: process.stdin, write: process.stdout });
 
   let booted: GatewayBoot;
@@ -161,9 +143,9 @@ export async function runGateway(argv: string[] = process.argv.slice(2)): Promis
     await fail(wire, errorText(err));
     abandon();
   }
-  const { env = "unnamed", poolSize, worker } = booted;
+  const { hostVersion, worker } = booted;
 
-  const dir = await mkdtemp(join(tmpdir(), `posipaki-${env.replace(/\//g, "-")}-`));
+  const dir = await mkdtemp(join(tmpdir(), `posipaki-${label(hostVersion)}-`));
   const fifoIn = join(dir, "in"); // the payload writes, we read
   const fifoOut = join(dir, "out"); // we write, the payload reads
 
@@ -206,8 +188,7 @@ export async function runGateway(argv: string[] = process.argv.slice(2)): Promis
   const connection = FifoUtf8NlineTransport.beginConnect(fifoIn, fifoOut);
   const workerArgs = [
     worker,
-    `--env=${env}`,
-    ...(poolSize === undefined ? [] : [`--pool-size=${poolSize}`]),
+    ...(hostVersion === undefined ? [] : [`--host-version=${hostVersion}`]),
     `--fifo-in=${fifoIn}`,
     `--fifo-out=${fifoOut}`,
   ];

@@ -42,17 +42,27 @@ export {
   GATEWAY_ARTIFACT,
   KIT_LAYOUT,
   PAYLOAD_ARTIFACT,
+  PAYLOAD_REFUSED,
+  HostVersionError,
   bootstrapScript,
   hostVersion,
-  kitName,
+  hostVersionAccepts,
   kitVersion,
   makeKit,
   parseBootstrapReport,
   parseHostVersion,
+  sameHostVersion,
   sha256Hex,
-  versionLine,
 } from "./kit.js";
-export type { ArtifactRole, BootstrapReport, Kit, KitApp, KitFile, MakeKitOptions } from "./kit.js";
+export type {
+  BootstrapReport,
+  HostVersion,
+  HostVersionVerdict,
+  Kit,
+  KitApp,
+  KitFile,
+  MakeKitOptions,
+} from "./kit.js";
 
 // the gateway: the first-stage command that relays to a payload inside an
 // environment, over the one channel every way in gives us

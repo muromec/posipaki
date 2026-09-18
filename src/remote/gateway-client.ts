@@ -7,16 +7,17 @@
 //   1. the gateway script is posipaki's own entry (`posipaki/remote/gateway-cli.js`, a
 //      published specifier, so it is resolved where the kit is staged from) — or the
 //      consumer's, for a program that carries its own;
-//   2. both bundles go into one kit, named after the app, the build and the posipaki it
-//      speaks (`kitName`), so a second run of the same build finds the kit already
-//      there and copies nothing;
+//   2. both bundles go into one kit, whose directory name *is* the host version it serves —
+//      the app, the build those bytes came from, the posipaki release that speaks to them —
+//      so a second run of the same build finds the kit already there and copies nothing;
 //   3. the kit is staged through the way in's own channel — the core's bootstrap script,
 //      one report line per step — which is also where the runtime that will run it is
 //      found, so a way in never has to know what a `node` is;
-//   4. `<runtime> <kit>/gateway.js <kit>/payload.js --host-version=<app>@<version>` runs
+//   4. `<runtime> <kit>/gateway.js <kit>/payload.js --host-version=<host version>` runs
 //      there, its stdin/stdout are the wire, and the gateway makes the fifos inside the
 //      environment.  The payload is run this way in *every* way in, which is why the
-//      payload is only ever a fifo worker.
+//      payload is only ever a fifo worker.  The host version travels verbatim: staged
+//      artifacts are ours and the payload checks itself against what it was asked for.
 //
 // What a way in supplies is `entry`: the argv that runs a command there.  It is the whole
 // difference between bwrap, ssh, a container and this machine, and it is one function.
@@ -36,6 +37,7 @@ import {
   GATEWAY_ARTIFACT,
   PAYLOAD_ARTIFACT,
   bootstrapScript,
+  hostVersion,
   makeKit,
   parseBootstrapReport,
 } from "./kit.js";
@@ -76,7 +78,8 @@ export interface RemoteWayIn {
 export interface RemoteSpec<Args> extends RemoteWayIn {
   /** The payload bundle on this machine, as the consumer built it. */
   payload: string;
-  /** Whose payload this is: the app name, and the build those bytes came from. */
+  /** Whose payload this is: the app name and the build those bytes came from.  The kit's
+   *  directory and the version the payload is started for are both rendered from it. */
   hostVersion: KitApp;
   /** The gateway bundle to stage; defaults to {@link GATEWAY_ENTRY}, resolved by us. */
   gateway?: string;
@@ -246,7 +249,10 @@ export function gatewayClient<Args>(spec: RemoteSpec<Args>): ClientSpawner<Args>
     const command = [
       staged.runtime,
       `${staged.kitDir}/${GATEWAY_ARTIFACT}`,
-      ...gatewayArgs({ app: spec.hostVersion, worker: `${staged.kitDir}/${PAYLOAD_ARTIFACT}` }),
+      ...gatewayArgs({
+        hostVersion: hostVersion(spec.hostVersion),
+        worker: `${staged.kitDir}/${PAYLOAD_ARTIFACT}`,
+      }),
       ...own,
     ];
     return openChannel(spec, spec.entry(command), spawn);

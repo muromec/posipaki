@@ -14,13 +14,17 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import type { Channel } from "posipaki/remote";
+import { hostVersion } from "posipaki/remote/node";
 import type { HostRun, SpawnChild } from "posipaki/remote/node";
 import { bwrapRemote } from "./remote.js";
 import { sandboxArgs } from "./sandbox.js";
 import type { BwrapRemoteSpec } from "./spec.js";
 
 const FAR_END = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "staged-payload.js");
-const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.35.0-abcdef12";
+const APP = { name: "email-agent", version: "0.13.0" };
+/** The host version, rendered here so the kit's directory and the flag cannot go stale. */
+const HOST = hostVersion(APP);
+const KIT_DIR = `/home/agent/bin/posipaki/${HOST}`;
 const REPORT = `staged\nkit ${KIT_DIR}\nruntime /usr/bin/node\n`;
 
 const children: ChildProcess[] = [];
@@ -58,7 +62,7 @@ function harness(extra: Partial<BwrapRemoteSpec<{ env: string }>> = {}) {
   const spawner = bwrapRemote<{ env: string }>({
     name: "tools",
     args,
-    hostVersion: { name: "email-agent", version: "0.13.0" },
+    hostVersion: APP,
     payload,
     payloadArgs: (spawnArgs) => [`--env=${spawnArgs.env}`],
     run,
@@ -113,7 +117,7 @@ it("stages through the sandbox, runs the gateway in it, and speaks the wire", as
       "/usr/bin/node",
       `${KIT_DIR}/gateway.js`,
       `${KIT_DIR}/payload.js`,
-      "--host-version=email-agent@0.13.0",
+      `--host-version=${HOST}`,
       "--env=agent",
     ],
   ]);
