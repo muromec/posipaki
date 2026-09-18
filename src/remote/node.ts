@@ -39,7 +39,9 @@ export type {
 export {
   DEFAULT_KIT_PARENT,
   DEFAULT_RUNTIMES,
+  GATEWAY_ARTIFACT,
   KIT_LAYOUT,
+  PAYLOAD_ARTIFACT,
   bootstrapScript,
   hostVersion,
   kitName,
@@ -56,4 +58,15 @@ export type { ArtifactRole, BootstrapReport, Kit, KitApp, KitFile, MakeKitOption
 // environment, over the one channel every way in gives us
 export { GATEWAY_FAILED, gatewayArgs, gatewayBoot, runGateway } from "./gateway.js";
 export type { GatewayBoot } from "./gateway.js";
+
+// the client side of that gateway: what every way in hands its two things to — where the
+// payload is, and which build it is — and gets a spawner back.  A way in supplies the
+// entry, the one function that says how a command runs there.
+export { GATEWAY_ENTRY, RemoteSpecError, gatewayClient, hostRemote } from "./gateway-client.js";
+export type { RemoteSpec, RemoteStaged, RemoteWayIn } from "./gateway-client.js";
+
+// running one command on this host: staging is a command, the actor is another, and both
+// are injectable so a test can do either without a sandbox, a host or a container
+export { runHost, spawnChild } from "./host.js";
+export type { HostResult, HostRun, SpawnChild } from "./host.js";
 

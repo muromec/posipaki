@@ -26,6 +26,10 @@ export const KIT_LAYOUT = 1;
 /** Where kits live on a host, relative to `$HOME`, unless the caller says otherwise. */
 export const DEFAULT_KIT_PARENT = "bin/posipaki";
 
+/** The names a kit's two bundles get: the payload, and the gateway that relays to it. */
+export const PAYLOAD_ARTIFACT = "payload.js";
+export const GATEWAY_ARTIFACT = "gateway.js";
+
 export interface KitFile {
   /** Name inside the kit directory, e.g. `payload.js`. */
   name: string;
