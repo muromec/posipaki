@@ -58,7 +58,7 @@ function harness(extra: Partial<SshRemoteSpec<{ env: string }>> = {}) {
   const spawner = sshRemote<{ env: string }>({
     host: "env.invalid",
     hostVersion: APP,
-    payload,
+    payload: { stage: payload },
     payloadArgs: (spawnArgs) => [`--env=${spawnArgs.env}`],
     run,
     spawn: (command, stdio) => {
@@ -98,14 +98,17 @@ it("stages over one connection, runs the gateway over the next, and speaks the w
   expect(live.stageCommands).toEqual([["ssh", "env.invalid", "sh", "-s"]]);
   expect(live.fed[0]).toContain('kit_dir="$HOME/');
   expect(live.fed[0]).toContain("gateway.js");
-  // The payload is the gateway's first argument, and what the consumer adds follows the
-  // gateway's own flags.
+  // What the gateway is handed is the command that starts the payload — a runtime and a script
+  // here — then the host version, then what the consumer adds: the order it was given in.
   expect(live.commands).toEqual([
     [
       "ssh",
       "env.invalid",
       "/usr/bin/node",
       `${KIT_DIR}/gateway.js`,
+      // The gateway is told what starts the payload instead of assuming a runtime: the same
+      // one here, but stated by the client rather than borrowed from whatever runs the relay.
+      "/usr/bin/node",
       `${KIT_DIR}/payload.js`,
       `--host-version=${HOST}`,
       "--env=agent",
@@ -119,6 +122,32 @@ it("stages over one connection, runs the gateway over the next, and speaks the w
   expect(live.output).toContainEqual([2, "the far end is ready\n"]);
 
   await stop(channel, child);
+});
+
+it("runs what is already installed there, and stages nothing", async () => {
+  const live = harness({
+    payload: { run: ["/usr/local/bin/agent-payload"] },
+    gateway: { run: ["/usr/local/bin/posipaki-gateway"] },
+  });
+  const channel = await live.spawner({ env: "agent" });
+  const child = children[0]!;
+  try {
+    // Both programs were deployed by somebody else: no bootstrap script is fed anywhere, so
+    // posipaki's only mark on the host is the one connection that starts the relay.
+    expect(live.stageCommands).toEqual([]);
+    expect(live.commands).toEqual([
+      [
+        "ssh",
+        "env.invalid",
+        "/usr/local/bin/posipaki-gateway",
+        "/usr/local/bin/agent-payload",
+        `--host-version=${HOST}`,
+        "--env=agent",
+      ],
+    ]);
+  } finally {
+    await stop(channel, child);
+  }
 });
 
 it("tells the caller when the host's process is gone", async () => {
@@ -149,7 +178,7 @@ it("turns a host that refuses the connection into a reason, not a channel that n
 it("reads the payload before it runs a command about it", async () => {
   let ran = false;
   const live = harness({
-    payload: join(dirname(fileURLToPath(import.meta.url)), "fixtures", "absent.js"),
+    payload: { stage: join(dirname(fileURLToPath(import.meta.url)), "fixtures", "absent.js") },
     run: async () => {
       ran = true;
       return { code: 0, stdout: REPORT, stderr: "" };

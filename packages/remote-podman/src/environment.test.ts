@@ -48,7 +48,7 @@ function spec(extra: Partial<PodmanRemoteSpec<{ env: string }>> = {}): PodmanRem
     image: "toolbox:1",
     container: "env-agent",
     hostVersion: APP,
-    payload,
+    payload: { stage: payload },
     ...extra,
   };
 }
@@ -214,6 +214,9 @@ it("hands the actor's own arguments to the staged payload", async () => {
       "env-agent",
       "/usr/bin/node",
       `${KIT_DIR}/gateway.js`,
+      // The gateway is told what starts the payload instead of assuming a runtime: the same
+      // one here, but stated by the client rather than borrowed from whatever runs the relay.
+      "/usr/bin/node",
       `${KIT_DIR}/payload.js`,
       `--host-version=${HOST}`,
       "--env=live",

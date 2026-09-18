@@ -1,8 +1,8 @@
 // ── The client side of the gateway ─────────────────────────────────────────
 //
-// A consumer has two things: a payload bundle on this machine, and the build its bytes
-// came from.  A way in has one: how to run a command somewhere else.  Everything else is
-// the same whatever the way in is, and this module is that everything else:
+// A consumer has two things: a payload, and the build its bytes came from.  A way in has
+// one: how to run a command somewhere else.  Everything else is the same whatever the way
+// in is, and this module is that everything else:
 //
 //   1. the gateway script is posipaki's own entry (`posipaki/remote/gateway-cli.js`, a
 //      published specifier, so it is resolved where the kit is staged from) — or the
@@ -10,14 +10,17 @@
 //   2. both bundles go into one kit, whose directory name *is* the host version it serves —
 //      the app, the build those bytes came from, the posipaki release that speaks to them —
 //      so a second run of the same build finds the kit already there and copies nothing;
-//   3. the kit is staged through the way in's own channel — the core's bootstrap script,
-//      one report line per step — which is also where the runtime that will run it is
-//      found, so a way in never has to know what a `node` is;
-//   4. `<runtime> <kit>/gateway.js <kit>/payload.js --host-version=<host version>` runs
-//      there, its stdin/stdout are the wire, and the gateway makes the fifos inside the
-//      environment.  The payload is run this way in *every* way in, which is why the
-//      payload is only ever a fifo worker.  The host version is the first of the arguments
-//      the gateway carries: staged artifacts are ours, and the payload checks itself
+//   3. whatever has to be *copied* there is staged through the way in's own channel — the
+//      core's bootstrap script, one report line per step — which is also where the runtime
+//      that will run it is found, so a way in never has to know what a `node` is.  A
+//      program the caller says is already installed is not staged at all, and then no
+//      command of ours runs in the environment beyond the two that matter;
+//   4. the gateway runs there — `<runtime> <kit>/gateway.js` when it was staged, the caller's
+//      own command when it was not — its stdin/stdout are the wire, and it makes the fifos
+//      inside the environment and starts the payload against them.  The payload is run this
+//      way in *every* way in, which is why the payload is only ever a fifo worker.  The
+//      payload's own command and the host version are arguments the gateway carries without
+//      knowing which is which: staged artifacts are ours, and the payload checks itself
 //      against what it was asked for.
 //
 // What a way in supplies is `entry`: the argv that runs a command there.  It is the whole
@@ -75,15 +78,28 @@ export interface RemoteWayIn {
   spawn?: SpawnChild;
 }
 
-/** Everything a client needs: where the payload is, whose it is, and the way in. */
+/**
+ * A program the way in starts there: a bundle of ours to copy into the environment, or a
+ * command that already runs there — an absolute path, a name on `$PATH`, a runtime and a
+ * script of its own.  Which of the two it is, is the caller's decision, and it is the only
+ * thing posipaki needs to know about where the far end comes from.
+ */
+export type HostProgram = { stage: string } | { run: string[] };
+
+/** Everything a client needs: where the two programs are, whose payload it is, and the way in. */
 export interface RemoteSpec<Args> extends RemoteWayIn {
-  /** The payload bundle on this machine, as the consumer built it. */
-  payload: string;
-  /** Whose payload this is: the app name and the build those bytes came from.  The kit's
-   *  directory and the version the payload is started for are both rendered from it. */
-  hostVersion: KitApp;
-  /** The gateway bundle to stage; defaults to {@link GATEWAY_ENTRY}, resolved by us. */
-  gateway?: string;
+  /** The payload: ours to stage there, or the one already installed there. */
+  payload: HostProgram;
+  /**
+   * Whose payload this is: the app name and the build those bytes came from.  Required
+   * whenever anything is staged — a kit's directory *is* the host version — and stated to the
+   * payload whenever it is given at all, which is the one fact a caller can hand an installed
+   * payload about the build it is expected to be.  Omitted, nothing is stated and nothing is
+   * checked, which is only right for a payload whose bytes carry no version of their own.
+   */
+  hostVersion?: KitApp;
+  /** The gateway: posipaki's own bundle, staged, unless the caller says otherwise. */
+  gateway?: HostProgram;
   /** Runtime candidates on the far side, best first.  Defaults to `DEFAULT_RUNTIMES`. */
   runtime?: string[];
   /** Where the kit lands there, relative to its `$HOME`.  Defaults to `DEFAULT_KIT_PARENT`. */
@@ -93,7 +109,7 @@ export interface RemoteSpec<Args> extends RemoteWayIn {
    * carries them to the payload untouched — it does not know what they mean, and does not need
    * to: what a consumer tells its own far end is the consumer's business.
    */
-  payloadArgs?: (args: Args, staged: RemoteStaged) => string[];
+  payloadArgs?: (args: Args) => string[];
   /** Where the far end's own output goes.  Defaults to our stderr, tagged with `name`. */
   onOutput?: OutputSink;
   /** How long to wait for the far end's first protocol frame. */
@@ -108,19 +124,25 @@ export interface RemoteSpec<Args> extends RemoteWayIn {
  */
 type Spec = Omit<RemoteSpec<unknown>, "payloadArgs">;
 
-/** What staging left behind: where the kit is, and what will run it. */
-export interface RemoteStaged {
-  kitDir: string;
-  runtime: string;
+/** The argv that starts each of the two programs there. */
+interface Programs {
+  gateway: string[];
+  payload: string[];
+}
+
+function isStage(program: HostProgram): program is { stage: string } {
+  return "stage" in program;
 }
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
 }
 
-/** The gateway program to stage: the consumer's, or posipaki's own published entry. */
-function gatewayProgram(spec: Spec): string {
-  if (spec.gateway !== undefined) return spec.gateway;
+/**
+ * posipaki's own gateway program, resolved where the consumer installed it — the default for
+ * a caller that has none of its own to deploy.
+ */
+function gatewayEntry(): string {
   try {
     return fileURLToPath(import.meta.resolve(GATEWAY_ENTRY));
   } catch (err) {
@@ -131,18 +153,59 @@ function gatewayProgram(spec: Spec): string {
   }
 }
 
-/** The kit this spec ships: the payload and the gateway, under the names the script writes. */
-async function kitFor(spec: Spec): Promise<Kit> {
-  const gateway = gatewayProgram(spec);
-  const files = [
-    { name: PAYLOAD_ARTIFACT, content: await readFile(spec.payload) },
-    { name: GATEWAY_ARTIFACT, content: await readFile(gateway) },
-  ];
-  return makeKit(files, {
+/** The kit's files: what has to be copied there, under the names the script writes them as. */
+async function kitFiles(
+  gateway: HostProgram,
+  payload: HostProgram,
+): Promise<{ name: string; content: Buffer }[]> {
+  const files: { name: string; content: Buffer }[] = [];
+  if (isStage(payload)) files.push({ name: PAYLOAD_ARTIFACT, content: await readFile(payload.stage) });
+  if (isStage(gateway)) files.push({ name: GATEWAY_ARTIFACT, content: await readFile(gateway.stage) });
+  return files;
+}
+
+/** A command with nothing to run is a spec that says nothing; refuse it before spawning it. */
+function programCommand(program: { run: string[] }, what: string, name: string): string[] {
+  if (program.run.length === 0 || program.run[0] === undefined || program.run[0] === "") {
+    throw new RemoteSpecError(`${name}: ${what} is a command with nothing to run`);
+  }
+  return program.run;
+}
+
+/**
+ * The two commands, staging whatever has to be copied there first.
+ *
+ * Nothing staged means no command of ours runs in the environment at all: the caller's own
+ * argv is handed through as it stands, which is the case for a program that is already
+ * installed.  Something staged needs a host version to name the kit with — and a kit's
+ * directory *is* the host version, so there is nothing to guess at.
+ */
+async function programsFor(spec: Spec, run: HostRun): Promise<Programs> {
+  const gateway: HostProgram = spec.gateway ?? { stage: gatewayEntry() };
+  const payload = spec.payload;
+  if (!isStage(gateway) && !isStage(payload)) {
+    return {
+      gateway: programCommand(gateway, "the gateway", spec.name),
+      payload: programCommand(payload, "the payload", spec.name),
+    };
+  }
+  if (spec.hostVersion === undefined) {
+    throw new RemoteSpecError(
+      `nothing names the kit to stage into ${spec.name}: state hostVersion — a kit's directory ` +
+        "is the host version, and a payload refuses to serve one its own bytes do not carry",
+    );
+  }
+  const kit = makeKit(await kitFiles(gateway, payload), {
     app: spec.hostVersion,
     runtimes: spec.runtime ?? DEFAULT_RUNTIMES,
     parent: spec.parent ?? DEFAULT_KIT_PARENT,
   });
+  const staged = await stageKit(spec, kit, run);
+  const at = (artifact: string) => [staged.runtime, `${staged.kitDir}/${artifact}`];
+  return {
+    gateway: isStage(gateway) ? at(GATEWAY_ARTIFACT) : gateway.run,
+    payload: isStage(payload) ? at(PAYLOAD_ARTIFACT) : payload.run,
+  };
 }
 
 /** The tail of what a command said, for a failure that has no better story. */
@@ -157,7 +220,7 @@ function said(result: HostResult): string {
  * the script probes, writes only what is missing and reports — so a spawn of a build
  * that is already staged costs one process and no writes.
  */
-async function stageKit(spec: Spec, kit: Kit, run: HostRun): Promise<RemoteStaged> {
+async function stageKit(spec: Spec, kit: Kit, run: HostRun): Promise<{ kitDir: string; runtime: string }> {
   const result = await run(spec.entry(["sh", "-s"]), bootstrapScript(kit));
   const report = parseBootstrapReport(result.stdout);
   if (report.kind === "error") {
@@ -239,8 +302,8 @@ async function openChannel(
 }
 
 /**
- * A spawner for an actor that lives behind a gateway in some environment: stage the
- * payload and posipaki's gateway there, run the gateway, speak the client side.
+ * A spawner for an actor that lives behind a gateway in some environment: put the payload and
+ * posipaki's gateway wherever they belong, run the gateway, speak the client side.
  */
 export function gatewayClient<Args>(spec: RemoteSpec<Args>): ClientSpawner<Args> {
   const run: HostRun = spec.run ?? runHost;
@@ -248,17 +311,22 @@ export function gatewayClient<Args>(spec: RemoteSpec<Args>): ClientSpawner<Args>
   return async (args: Args): Promise<Channel> => {
     // The spec is read before a command runs on its behalf: a payload that is not there
     // should fail here, not as an environment that cannot be reached.
-    const kit = await kitFor(spec);
-    const staged = await stageKit(spec, kit, run);
-    const own = spec.payloadArgs?.(args, staged) ?? [];
+    const programs = await programsFor(spec, run);
     const command = [
-      staged.runtime,
-      `${staged.kitDir}/${GATEWAY_ARTIFACT}`,
+      ...programs.gateway,
       ...gatewayArgs({
-        // The host version is an argument like any other: posipaki renders it and the client
-        // puts it first, and the gateway carries it without knowing what it is.
-        passthrough: [`--host-version=${hostVersion(spec.hostVersion)}`, ...own],
-        worker: `${staged.kitDir}/${PAYLOAD_ARTIFACT}`,
+        // What the payload is started as, then posipaki's own facts among the caller's
+        // arguments: the host version, and whatever the consumer adds for its own far end.
+        // Which of these is whose is not the gateway's business — it starts what it is handed
+        // and carries the rest.
+        passthrough: [
+          ...programs.payload.slice(1),
+          ...(spec.hostVersion === undefined
+            ? []
+            : [`--host-version=${hostVersion(spec.hostVersion)}`]),
+          ...(spec.payloadArgs?.(args) ?? []),
+        ],
+        worker: programs.payload[0]!,
       }),
     ];
     return openChannel(spec, spec.entry(command), spawn);

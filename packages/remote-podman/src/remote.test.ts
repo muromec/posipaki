@@ -57,7 +57,7 @@ function harness(extra: Partial<PodmanRemoteSpec<{ env: string }>> = {}) {
     image: "toolbox:1",
     container: "env-agent",
     hostVersion: APP,
-    payload,
+    payload: { stage: payload },
     payloadArgs: (spawnArgs) => [`--env=${spawnArgs.env}`],
     run,
     spawn: (command, stdio) => {
@@ -97,6 +97,9 @@ it("stages over one exec, runs the gateway over the next, and speaks the wire", 
       "env-agent",
       "/usr/bin/node",
       `${KIT_DIR}/gateway.js`,
+      // The gateway is told what starts the payload instead of assuming a runtime: the same
+      // one here, but stated by the client rather than borrowed from whatever runs the relay.
+      "/usr/bin/node",
       `${KIT_DIR}/payload.js`,
       `--host-version=${HOST}`,
       "--env=agent",

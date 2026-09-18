@@ -43,7 +43,9 @@ export const GATEWAY_FAILED = 1;
 
 export interface GatewayBoot {
   /**
-   * The payload to relay to.  Required, and first — the gateway has no opinion of its own.
+   * The program to start for the payload: the first word of the command the client composed —
+   * a runtime, or a program that runs itself.  Required, and first, and the gateway has no
+   * opinion of its own about which it is.
    */
   worker: string;
   /**
@@ -181,7 +183,12 @@ export async function runGateway(argv: string[] = process.argv.slice(2)): Promis
   // it — the order the fifo handshake requires.
   const connection = FifoUtf8NlineTransport.beginConnect(fifoIn, fifoOut);
   const workerArgs = [worker, ...passthrough, `--fifo-in=${fifoIn}`, `--fifo-out=${fifoOut}`];
-  const workerProc = spawn(process.execPath, workerArgs, { stdio: ["ignore", "pipe", "pipe"] });
+  // Whatever the client said starts the payload, run as it said: a runtime with a script of
+  // ours, or a program of the caller's own.  The gateway does not know which it is, and does
+  // not choose a runtime on the far end's behalf.
+  const workerProc = spawn(workerArgs[0]!, workerArgs.slice(1), {
+    stdio: ["ignore", "pipe", "pipe"],
+  });
   child = workerProc;
   forwardOutput(workerProc.stdout, wire, 1);
   forwardOutput(workerProc.stderr, wire, 2);

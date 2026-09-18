@@ -48,8 +48,8 @@ function spec(): BwrapRemoteSpec<Record<string, never>> {
     name: `it-${process.pid}`,
     args: sandboxArgs({ home: SCRATCH, tmpfs: [] }),
     hostVersion: { name: "posipaki-it", version: "0" },
-    payload: PAYLOAD,
-    gateway: builtGateway(),
+    payload: { stage: PAYLOAD },
+    gateway: { stage: builtGateway() },
     // `runtime` is left out on purpose: the far side probes for one (`node`, `nodejs`,
     // `bun`), and what it finds is what runs the gateway — and, through it, the payload.
     handshakeTimeoutMs: 60_000,

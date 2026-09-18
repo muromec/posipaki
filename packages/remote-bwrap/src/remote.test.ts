@@ -63,7 +63,7 @@ function harness(extra: Partial<BwrapRemoteSpec<{ env: string }>> = {}) {
     name: "tools",
     args,
     hostVersion: APP,
-    payload,
+    payload: { stage: payload },
     payloadArgs: (spawnArgs) => [`--env=${spawnArgs.env}`],
     run,
     spawn: (command, stdio) => {
@@ -107,15 +107,19 @@ it("stages through the sandbox, runs the gateway in it, and speaks the wire", as
   expect(live.stageCommands).toEqual([["bwrap", ...live.args, "sh", "-s"]]);
   expect(live.fed[0]).toContain('kit_dir="$HOME/');
   expect(live.fed[0]).toContain("gateway.js");
-  // The payload is the gateway's first argument, and what the consumer adds comes after
-  // the gateway's own flags — so a positional of the payload's own can never be read as
-  // the payload itself.
+  // What the gateway is handed is the command that starts the payload — a runtime and a script
+  // here — and then posipaki's own facts and the consumer's arguments in the order they were
+  // given: the relay reads none of them, so a positional of the payload's own can never be
+  // read as the payload itself.
   expect(live.commands).toEqual([
     [
       "bwrap",
       ...live.args,
       "/usr/bin/node",
       `${KIT_DIR}/gateway.js`,
+      // The gateway is told what starts the payload instead of assuming a runtime: the same
+      // one here, but stated by the client rather than borrowed from whatever runs the relay.
+      "/usr/bin/node",
       `${KIT_DIR}/payload.js`,
       `--host-version=${HOST}`,
       "--env=agent",
@@ -159,7 +163,7 @@ it("turns a sandbox that cannot be made into a reason, not a channel that never 
 it("reads the payload before it runs a command about it", async () => {
   let ran = false;
   const live = harness({
-    payload: join(dirname(fileURLToPath(import.meta.url)), "fixtures", "absent.js"),
+    payload: { stage: join(dirname(fileURLToPath(import.meta.url)), "fixtures", "absent.js") },
     run: async () => {
       ran = true;
       return { code: 0, stdout: REPORT, stderr: "" };

@@ -68,10 +68,14 @@ One package per way in. All three exist now, in the same shape:
 | `posipaki-remote-podman` | `podman exec -i <container> <cmd>`, plus `run` / `rm` for the container's life | `containerActor` (a container, held and counted), `podmanRemote` (an existing container, staged into) and `podmanEnvironment` (both together) |
 
 A package is a wrapper over `exec` and nothing else: it says how a command is reached
-there — `entry(command)` — and the core's `gatewayClient` does every step after that (read
-the payload and posipaki's gateway into one kit, stage it through the same channel, take
-the runtime from its report, run `<runtime> <kit>/gateway.js <kit>/payload.js
---host-version=<app>@<version>`, and speak the client channel over the child's stdio).
+there — `entry(command)` — and the core's `gatewayClient` does every step after that. A
+program is either staged (read into a kit, copied through the same channel, with the
+runtime taken from that script's report) or stated as a command that already runs there, in
+which case nothing is copied and no command of ours runs beyond the one that starts the
+relay — `<runtime> <kit>/gateway.js <runtime> <kit>/payload.js
+--host-version=<app>@<version>@posipaki-<version>`, for a staged pair. The host version is
+the first of the arguments the gateway carries to the payload without reading any of them,
+and the payload compares it with the one its own bytes carry before it serves.
 Podman carries more than ssh, because a container has to exist, stay alive between calls
 and be removable — that is the package's business, not the core's.
 

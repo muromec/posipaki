@@ -13,6 +13,7 @@ import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it } from "vitest";
 import { gatewayClient, hostRemote } from "./gateway-client.js";
+import type { RemoteSpec } from "./gateway-client.js";
 import { hostVersion } from "./kit.js";
 import type { HostRun } from "./host.js";
 
@@ -74,9 +75,9 @@ describe("the client side of the gateway, over this machine", () => {
   it("stages the payload and posipaki's own gateway, runs the gateway, and speaks the wire", async () => {
     const home = scratchDir("posipaki-client-");
     const spawner = hostRemote({
-      payload: PAYLOAD,
+      payload: { stage: PAYLOAD },
       hostVersion: APP,
-      gateway: builtGateway(),
+      gateway: { stage: builtGateway() },
       runtime: [process.execPath],
     });
 
@@ -102,9 +103,9 @@ describe("the client side of the gateway, over this machine", () => {
   it("does not write the kit again when the same build is already staged", async () => {
     const home = scratchDir("posipaki-client-");
     const spawner = hostRemote({
-      payload: PAYLOAD,
+      payload: { stage: PAYLOAD },
       hostVersion: APP,
-      gateway: builtGateway(),
+      gateway: { stage: builtGateway() },
       runtime: [process.execPath],
     });
 
@@ -149,9 +150,9 @@ describe("a way in that says no", () => {
     const spawner = gatewayClient<Record<string, never>>({
       name: "a way in that says no",
       entry: (command) => ["into", ...command],
-      payload,
+      payload: { stage: payload },
       hostVersion: APP,
-      gateway,
+      gateway: { stage: gateway },
       run,
       spawn: () => {
         throw new Error("nothing may be started after a failed staging");
@@ -173,9 +174,9 @@ describe("a way in that says no", () => {
     const spawner = gatewayClient<Record<string, never>>({
       name: "a way in that never spoke",
       entry: (command) => command,
-      payload,
+      payload: { stage: payload },
       hostVersion: APP,
-      gateway,
+      gateway: { stage: gateway },
       run,
     });
 
@@ -190,9 +191,9 @@ describe("a way in that says no", () => {
     const spawner = gatewayClient<Record<string, never>>({
       name: "a way in that is never reached",
       entry: (command) => command,
-      payload: join(scratchDir("posipaki-client-"), "absent.js"),
+      payload: { stage: join(scratchDir("posipaki-client-"), "absent.js") },
       hostVersion: APP,
-      gateway,
+      gateway: { stage: gateway },
       run: async () => {
         ran = true;
         return { code: 0, stdout: "", stderr: "" };
@@ -201,5 +202,84 @@ describe("a way in that says no", () => {
 
     await expect(spawner({})).rejects.toThrow(/absent\.js/);
     expect(ran).toBe(false);
+  });
+});
+
+describe("the two programs, wherever the caller says they are", () => {
+  /** A client that stops at the command it would run, and hands it back instead. */
+  async function commandFor(
+    spec: Omit<RemoteSpec<{ env: string }>, "entry" | "run" | "spawn">,
+  ): Promise<string[]> {
+    const commands: string[][] = [];
+    const spawner = gatewayClient<{ env: string }>({
+      ...spec,
+      entry: (command) => ["into", ...command],
+      run: async () => {
+        throw new Error("nothing may be staged: no program said it had to be copied");
+      },
+      spawn: (command) => {
+        commands.push(command);
+        throw new Error("stop here: the command is the whole assertion");
+      },
+    });
+    await expect(spawner({ env: "agent" })).rejects.toThrow(/stop here/);
+    return commands[0]!;
+  }
+
+  it("starts what is already installed, and stages nothing at all", async () => {
+    // Both programs are where the deployment put them: no bootstrap runs, no runtime is
+    // probed, and posipaki touches the environment only by starting the relay there.
+    expect(
+      await commandFor({
+        name: "a host with both installed",
+        payload: { run: ["/usr/local/bin/agent-payload"] },
+        gateway: { run: ["/usr/local/bin/posipaki-gateway"] },
+        hostVersion: APP,
+        payloadArgs: (args) => [`--env=${args.env}`],
+      }),
+    ).toEqual([
+      "into",
+      "/usr/local/bin/posipaki-gateway",
+      "/usr/local/bin/agent-payload",
+      `--host-version=${hostVersion(APP)}`,
+      "--env=agent",
+    ]);
+  });
+
+  it("says nothing about a version it was never given", async () => {
+    // A payload whose bytes carry no version of their own: there is nothing to check, so the
+    // client states nothing rather than passing a placeholder the far end would judge itself by.
+    expect(
+      await commandFor({
+        name: "a host with an unversioned payload",
+        payload: { run: ["bun", "/srv/agent/payload.js"] },
+        gateway: { run: ["bun", "/srv/agent/gateway.js"] },
+      }),
+    ).toEqual(["into", "bun", "/srv/agent/gateway.js", "bun", "/srv/agent/payload.js"]);
+  });
+
+  it("refuses to stage a kit that nothing names", async () => {
+    // A staged kit's directory *is* the host version, so a caller that stages without one is
+    // asking for a directory whose name is a guess — and the payload would refuse it anyway.
+    const spawner = gatewayClient<{ env: string }>({
+      name: "a host that wants a kit",
+      entry: (command) => command,
+      payload: { stage: join(scratchDir("posipaki-client-"), "payload.js") },
+    });
+    await expect(spawner({ env: "agent" })).rejects.toThrow(
+      /nothing names the kit to stage into a host that wants a kit: state hostVersion/,
+    );
+  });
+
+  it("refuses a command with nothing to run", async () => {
+    const spawner = gatewayClient<{ env: string }>({
+      name: "a host with an empty command",
+      entry: (command) => command,
+      payload: { run: [] },
+      gateway: { run: ["posipaki-gateway"] },
+    });
+    await expect(spawner({ env: "agent" })).rejects.toThrow(
+      /a host with an empty command: the payload is a command with nothing to run/,
+    );
   });
 });

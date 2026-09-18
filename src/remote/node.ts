@@ -73,7 +73,7 @@ export type { GatewayBoot } from "./gateway.js";
 // payload is, and which build it is — and gets a spawner back.  A way in supplies the
 // entry, the one function that says how a command runs there.
 export { GATEWAY_ENTRY, RemoteSpecError, gatewayClient, hostRemote } from "./gateway-client.js";
-export type { RemoteSpec, RemoteStaged, RemoteWayIn } from "./gateway-client.js";
+export type { HostProgram, RemoteSpec, RemoteWayIn } from "./gateway-client.js";
 
 // running one command on this host: staging is a command, the actor is another, and both
 // are injectable so a test can do either without a sandbox, a host or a container

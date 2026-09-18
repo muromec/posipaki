@@ -34,7 +34,13 @@ interface Session {
 
 /** Start the gateway the way a client does, and speak the wire to it. */
 async function session(boot: Partial<GatewayBoot> = {}): Promise<Session> {
-  const args = gatewayArgs({ passthrough: [`--host-version=${HOST}`], worker: PAYLOAD, ...boot });
+  // The first argument is the program to start: a runtime, with the payload it runs as the
+  // first of its arguments — which is what the client composes, staged or installed.
+  const args = gatewayArgs({
+    passthrough: [PAYLOAD, `--host-version=${HOST}`],
+    worker: process.execPath,
+    ...boot,
+  });
   const child = spawn(process.execPath, [GATEWAY, ...args], {
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -160,8 +166,14 @@ describe("gateway", () => {
 
   it("hands the payload the caller's own arguments, and the fifos last", async () => {
     const args = gatewayArgs({
-      passthrough: [`--host-version=${HOST}`, "--env=agent", "positional", "--host-version=theirs"],
-      worker: SAYS_ARGV,
+      passthrough: [
+        SAYS_ARGV,
+        `--host-version=${HOST}`,
+        "--env=agent",
+        "positional",
+        "--host-version=theirs",
+      ],
+      worker: process.execPath,
     });
     const child = spawn(process.execPath, [GATEWAY, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
@@ -177,9 +189,10 @@ describe("gateway", () => {
         }),
       ).rejects.toThrow(/exited with code 2 before it opened its channel/);
 
-      // What the payload was actually started with: the gateway's own flag, then the caller's
+      // What the payload was actually started with.  The runtime consumed the script, so what
+      // the payload sees is what the client put after it: the host version, then the caller's
       // arguments in the order and the spelling they were given, then the fifo pair the
-      // gateway made — appended last, because they are its own addition to the line.
+      // gateway made — appended last, because it is the gateway's own addition to the line.
       const argv = JSON.parse(said.join("")) as string[];
       expect(argv.slice(0, 4)).toEqual([
         `--host-version=${HOST}`,
@@ -195,7 +208,10 @@ describe("gateway", () => {
   });
 
   it("turns a payload that dies before its channel into a reason", async () => {
-    const args = gatewayArgs({ passthrough: [`--host-version=${HOST}`], worker: GIVES_UP });
+    const args = gatewayArgs({
+      passthrough: [GIVES_UP, `--host-version=${HOST}`],
+      worker: process.execPath,
+    });
     const child = spawn(process.execPath, [GATEWAY, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
     });

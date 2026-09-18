@@ -54,8 +54,8 @@ function spec(): PodmanRemoteSpec<Record<string, never>> {
     image: IMAGE,
     container: NAME,
     hostVersion: { name: "posipaki-it", version: "0" },
-    payload: PAYLOAD,
-    gateway: builtGateway(),
+    payload: { stage: PAYLOAD },
+    gateway: { stage: builtGateway() },
   };
 }
 
@@ -125,7 +125,7 @@ it("refuses a kit whose payload is not there, before it runs anything", async ()
   const missing = podmanRemote<Record<string, never>>({
     ...spec(),
     container: `${NAME}-missing`,
-    payload: join(HERE, "nothing-here.js"),
+    payload: { stage: join(HERE, "nothing-here.js") },
     run,
   });
   await expect(missing({})).rejects.toThrow(/ENOENT|no such file/);
