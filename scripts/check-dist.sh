@@ -52,7 +52,24 @@ if (missing.length > 0) {
   for (const line of missing) console.error(`  ${line}`);
   process.exit(1);
 }
-console.log(`check-dist: ${checked} exports resolve in dist`);
+// The gateway is the one file a consumer *copies*: a kit stages it into an environment where
+// nothing of ours is installed, and runs it there.  If a bundler split a chunk out of it, the
+// chunk stays behind and the copied gateway dies of a missing import on the far side — a failure
+// no test here can see, because everything else imports the package (and the sandbox tests build
+// their own gateway).  So it has to be one file, and the build makes it one.
+const gateway = join(root, "dist", "remote", "gateway-cli.js");
+if (existsSync(gateway)) {
+  // `from <quote>../…` in either quoting: the shell string this lives in takes no single quote,
+  // so the quote itself is left out and a relative specifier is what is matched.
+  const relative = /from\s+.[.][./]/.exec(readFileSync(gateway, "utf8"));
+  if (relative !== null) {
+    console.error("check-dist: dist/remote/gateway-cli.js is not one file:");
+    console.error(`  it carries ${JSON.stringify(relative[0])} — a chunk a kit would not stage`);
+    console.error("  see bundle_gateway in scripts/build.sh");
+    process.exit(1);
+  }
+}
+console.log(`check-dist: ${checked} exports resolve in dist, and the gateway is one file`);
 '
 
 for dir in "$ROOT"/packages/*/; do

@@ -76,6 +76,14 @@ relay — `<runtime> <kit>/gateway.js <runtime> <kit>/payload.js
 --host-version=<app>@<version>@posipaki-<version>`, for a staged pair. The host version is
 the first of the arguments the gateway carries to the payload without reading any of them,
 and the payload compares it with the one its own bytes carry before it serves.
+The gateway is the one staged file a consumer never has to build: it is posipaki's own relay, and
+it has to be a single self-contained module, because a kit stages it *alone* into an environment where
+nothing of ours is installed. That is a property of the build and not a hope — `bundle_gateway` in
+`scripts/build.sh` gives the entry its own pass whatever the main bundler did, and `check-dist.sh`
+refuses a dist whose gateway imports anything relative. It was not always so: 0.35.0 shipped a gateway
+that imported a shared chunk, so the file a kit copied died of a missing import on the far side, while
+every test here passed (they import the package, or build their own gateway).
+
 Podman carries more than ssh, because a container has to exist, stay alive between calls
 and be removable — that is the package's business, not the core's.
 
