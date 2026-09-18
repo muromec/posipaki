@@ -1,27 +1,36 @@
-// ── The commands into a host ───────────────────────────────────────────────
+// ── The command onto a host ────────────────────────────────────────────────
 //
-// The preparing channel is asserted exactly: an ssh, the host as it was given,
-// and the shell behind it.  There is no host in this file by design — a command
-// is data, and what it says is the whole contract with ssh.  The run's own argv
-// is not built here (see bootstrap.ts), so it is asserted where it is built.
+// Asserted exactly: ssh, the host as it was given, and the command behind it.  There is no
+// host in this file by design — a command is data, and what it says is the whole contract
+// with ssh.
 
 import { describe, expect, it } from "vitest";
-import { sshEntry, sshStageCommand } from "./commands.js";
-import type { SshSpec } from "./spec.js";
+import { sshEntry } from "./commands.js";
 
-const SPEC: SshSpec = {
-  host: "env.invalid",
-  app: { name: "email-agent", version: "0.13.0" },
-  payload: "build/env-payload.js",
-};
-
-describe("the commands into a host", () => {
-  it("stages with one ssh and a shell, the script on stdin", () => {
-    expect(sshStageCommand(SPEC)).toEqual(["ssh", "env.invalid", "sh", "-s"]);
+describe("the command onto a host", () => {
+  it("puts the host first, then the command exactly as given", () => {
+    expect(sshEntry("env.invalid", ["/usr/bin/node", "/home/u/payload.js"])).toEqual([
+      "ssh",
+      "env.invalid",
+      "/usr/bin/node",
+      "/home/u/payload.js",
+    ]);
   });
 
-  it("takes the host exactly as ssh takes it", () => {
-    expect(sshEntry("toolbox", ["true"])).toEqual(["ssh", "toolbox", "true"]);
-    expect(sshEntry("u@box:2222", ["true"])).toEqual(["ssh", "u@box:2222", "true"]);
+  it("wraps the staging command like any other command: the script is fed to `sh -s`", () => {
+    // The kit is written by a script, and the script arrives on stdin — so staging takes
+    // a connection of its own, and the gateway gets the next one.
+    expect(sshEntry("env.invalid", ["sh", "-s"])).toEqual(["ssh", "env.invalid", "sh", "-s"]);
+  });
+
+  it("takes whatever ssh takes, and passes it through untouched", () => {
+    // An alias from `~/.ssh/config`, a port, a user: ssh's own business, not this
+    // package's.
+    expect(sshEntry("user@box:2222", ["sh", "-s"])).toEqual([
+      "ssh",
+      "user@box:2222",
+      "sh",
+      "-s",
+    ]);
   });
 });
