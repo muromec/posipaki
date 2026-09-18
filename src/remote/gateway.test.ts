@@ -21,6 +21,7 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 const GATEWAY = join(HERE, `gateway-cli${extname(fileURLToPath(import.meta.url)) || ".js"}`);
 const PAYLOAD = join(HERE, "fixtures", "echo-payload.js");
 const GIVES_UP = join(HERE, "fixtures", "give-up.js");
+const SAYS_ARGV = join(HERE, "fixtures", "argv-payload.js");
 const APP = { name: "test-app", version: "1.2.3" };
 const HOST = hostVersion(APP);
 
@@ -33,7 +34,7 @@ interface Session {
 
 /** Start the gateway the way a client does, and speak the wire to it. */
 async function session(boot: Partial<GatewayBoot> = {}): Promise<Session> {
-  const args = gatewayArgs({ hostVersion: HOST, worker: PAYLOAD, ...boot });
+  const args = gatewayArgs({ passthrough: [`--host-version=${HOST}`], worker: PAYLOAD, ...boot });
   const child = spawn(process.execPath, [GATEWAY, ...args], {
     stdio: ["pipe", "pipe", "pipe"],
   });
@@ -56,30 +57,61 @@ async function stop(session: Session): Promise<void> {
 
 describe("gateway boot", () => {
   it("reads back the argv it builds", () => {
-    const boot: GatewayBoot = { hostVersion: HOST, worker: "/k/payload.js" };
+    const boot: GatewayBoot = {
+      passthrough: [`--host-version=${HOST}`, "--env=agent", "positional"],
+      worker: "/k/payload.js",
+    };
     expect(gatewayBoot(gatewayArgs(boot))).toEqual(boot);
   });
 
-  it("carries the host version verbatim: it neither reads nor judges the string", () => {
-    const boot: GatewayBoot = { hostVersion: "not-a-host-version-at-all", worker: "w" };
-    expect(gatewayBoot(gatewayArgs(boot))).toEqual(boot);
-    expect(gatewayArgs(boot)).toEqual(["w", "--host-version=not-a-host-version-at-all"]);
+  it("owns no flag: it passes everything after the payload through, itself included", () => {
+    // The host version is the client's argument like any other.  The gateway neither reads it
+    // nor knows there is anything to read — which is why a caller's argument that looks like
+    // one of ours cannot be eaten, re-ordered or re-spelled on the way to the payload.
+    const args = gatewayArgs({
+      passthrough: [
+        "--host-version=not-a-host-version-at-all",
+        "--env=agent",
+        "positional",
+        "--nonsense",
+        "-x",
+        "positional",
+      ],
+      worker: "w",
+    });
+    expect(args).toEqual([
+      "w",
+      "--host-version=not-a-host-version-at-all",
+      "--env=agent",
+      "positional",
+      "--nonsense",
+      "-x",
+      "positional",
+    ]);
+    expect(gatewayBoot(args).passthrough).toEqual([
+      "--host-version=not-a-host-version-at-all",
+      "--env=agent",
+      "positional",
+      "--nonsense",
+      "-x",
+      "positional",
+    ]);
   });
 
   it("passes nothing when it was given nothing", () => {
-    // A caller that states no host version — the only case where a payload has none of its
-    // own to check — builds an argv with no flag, and reads none back.  The gateway does not
-    // invent a placeholder: what nobody said is not its to fill in.
-    expect(gatewayArgs({ worker: "w" })).toEqual(["w"]);
-    expect(gatewayBoot(["w"])).toEqual({ worker: "w" });
+    // A caller that states no host version — the one case where the payload has none to check
+    // its own bytes against — builds a line with no flag, and reads none back.  The gateway
+    // does not invent a placeholder: what nobody said is not its to fill in.
+    expect(gatewayArgs({ passthrough: [], worker: "w" })).toEqual(["w"]);
+    expect(gatewayBoot(["w"])).toEqual({ passthrough: [], worker: "w" });
   });
 
   it("refuses to start without a payload", () => {
     expect(() => gatewayBoot(["--host-version=x"])).toThrow(/no <payload>/);
   });
 
-  it("has no door of its own: `--version` is just an argument the payload may read", () => {
-    expect(gatewayBoot(["w", "--version"])).toEqual({ worker: "w" });
+  it("has no door of its own: a `--version` is just an argument the payload ends up with", () => {
+    expect(gatewayBoot(["w", "--version"])).toEqual({ passthrough: ["--version"], worker: "w" });
   });
 });
 
@@ -126,8 +158,44 @@ describe("gateway", () => {
     }
   });
 
+  it("hands the payload the caller's own arguments, and the fifos last", async () => {
+    const args = gatewayArgs({
+      passthrough: [`--host-version=${HOST}`, "--env=agent", "positional", "--host-version=theirs"],
+      worker: SAYS_ARGV,
+    });
+    const child = spawn(process.execPath, [GATEWAY, ...args], {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    const exit = new Promise<number | null>((settle) => child.once("exit", (code) => settle(code)));
+    const said: string[] = [];
+    try {
+      const streams = { read: child.stdout!, write: child.stdin! } as LineStreams;
+      await expect(
+        clientChannel(streams, {
+          onOutput: (_fd, chunk) => said.push(chunk),
+          timeoutMs: 20_000,
+        }),
+      ).rejects.toThrow(/exited with code 2 before it opened its channel/);
+
+      // What the payload was actually started with: the gateway's own flag, then the caller's
+      // arguments in the order and the spelling they were given, then the fifo pair the
+      // gateway made — appended last, because they are its own addition to the line.
+      const argv = JSON.parse(said.join("")) as string[];
+      expect(argv.slice(0, 4)).toEqual([
+        `--host-version=${HOST}`,
+        "--env=agent",
+        "positional",
+        "--host-version=theirs",
+      ]);
+      expect(argv.slice(4).map((arg) => arg.split("=")[0])).toEqual(["--fifo-in", "--fifo-out"]);
+    } finally {
+      if (child.exitCode === null) child.kill();
+      await exit;
+    }
+  });
+
   it("turns a payload that dies before its channel into a reason", async () => {
-    const args = gatewayArgs({ hostVersion: HOST, worker: GIVES_UP });
+    const args = gatewayArgs({ passthrough: [`--host-version=${HOST}`], worker: GIVES_UP });
     const child = spawn(process.execPath, [GATEWAY, ...args], {
       stdio: ["pipe", "pipe", "pipe"],
     });

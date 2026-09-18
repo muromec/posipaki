@@ -16,8 +16,9 @@
 //   4. `<runtime> <kit>/gateway.js <kit>/payload.js --host-version=<host version>` runs
 //      there, its stdin/stdout are the wire, and the gateway makes the fifos inside the
 //      environment.  The payload is run this way in *every* way in, which is why the
-//      payload is only ever a fifo worker.  The host version travels verbatim: staged
-//      artifacts are ours and the payload checks itself against what it was asked for.
+//      payload is only ever a fifo worker.  The host version is the first of the arguments
+//      the gateway carries: staged artifacts are ours, and the payload checks itself
+//      against what it was asked for.
 //
 // What a way in supplies is `entry`: the argv that runs a command there.  It is the whole
 // difference between bwrap, ssh, a container and this machine, and it is one function.
@@ -87,7 +88,11 @@ export interface RemoteSpec<Args> extends RemoteWayIn {
   runtime?: string[];
   /** Where the kit lands there, relative to its `$HOME`.  Defaults to `DEFAULT_KIT_PARENT`. */
   parent?: string;
-  /** The payload's own arguments, built from the args the actor was spawned with. */
+  /**
+   * The payload's own arguments, built from the args the actor was spawned with.  The gateway
+   * carries them to the payload untouched — it does not know what they mean, and does not need
+   * to: what a consumer tells its own far end is the consumer's business.
+   */
   payloadArgs?: (args: Args, staged: RemoteStaged) => string[];
   /** Where the far end's own output goes.  Defaults to our stderr, tagged with `name`. */
   onOutput?: OutputSink;
@@ -250,10 +255,11 @@ export function gatewayClient<Args>(spec: RemoteSpec<Args>): ClientSpawner<Args>
       staged.runtime,
       `${staged.kitDir}/${GATEWAY_ARTIFACT}`,
       ...gatewayArgs({
-        hostVersion: hostVersion(spec.hostVersion),
+        // The host version is an argument like any other: posipaki renders it and the client
+        // puts it first, and the gateway carries it without knowing what it is.
+        passthrough: [`--host-version=${hostVersion(spec.hostVersion)}`, ...own],
         worker: `${staged.kitDir}/${PAYLOAD_ARTIFACT}`,
       }),
-      ...own,
     ];
     return openChannel(spec, spec.entry(command), spawn);
   };
