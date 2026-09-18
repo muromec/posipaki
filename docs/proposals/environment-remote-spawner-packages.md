@@ -63,21 +63,25 @@ One package per way in. All three exist now, in the same shape:
 
 | Package | Way in | Exports |
 | --- | --- | --- |
-| `posipaki-remote-ssh` | `ssh [user@]host <cmd>` | `sshConnector` (the way in by host) / `sshBootstrap` (staged onto it first) — the same two pieces podman has, minus the container |
-| `posipaki-remote-bwrap` | `bwrap <policy> <cmd>` — the same machine, with less of it in reach | `bwrapConnector` / `bwrapBootstrap`, plus `sandboxArgs` (the policy it suggests). No container actor: bwrap makes the sandbox for as long as the command runs, so there is no life to hand over |
-| `posipaki-remote-podman` | `podman exec -i <container> <cmd>`, plus `run` / `rm` for the container's life | `containerActor` (a container, held and counted), `podmanConnector` / `podmanBootstrap` (the way in by name) and `podmanEnvironment` (both together) |
+| `posipaki-remote-ssh` | `ssh [user@]host <cmd>` | `sshRemote` (a host, and the one command shape) |
+| `posipaki-remote-bwrap` | `bwrap <policy> <cmd>` — the same machine, with less of it in reach | `bwrapRemote`, plus `sandboxArgs` (the policy it suggests) and `bwrapEntry`. No container actor: bwrap makes the sandbox for as long as the command runs, so there is no life to hand over |
+| `posipaki-remote-podman` | `podman exec -i <container> <cmd>`, plus `run` / `rm` for the container's life | `containerActor` (a container, held and counted), `podmanRemote` (an existing container, staged into) and `podmanEnvironment` (both together) |
 
-A package is a wrapper over `exec` and nothing else: it builds the argv for the stage
-command, feeds that command the bootstrap script on stdin, checks the report, then builds
-the argv for the run command and hands the child's stdio to the core's `clientChannel`.
+A package is a wrapper over `exec` and nothing else: it says how a command is reached
+there — `entry(command)` — and the core's `gatewayClient` does every step after that (read
+the payload and posipaki's gateway into one kit, stage it through the same channel, take
+the runtime from its report, run `<runtime> <kit>/gateway.js <kit>/payload.js
+--host-version=<app>@<version>`, and speak the client channel over the child's stdio).
 Podman carries more than ssh, because a container has to exist, stay alive between calls
 and be removable — that is the package's business, not the core's.
 
-**They duplicate each other on purpose.** Sharing argv construction, staging or container
-lifecycle between two mechanisms would be an abstraction over exactly what differs; the
-consumer asked for the duplication, and it keeps each package readable on its own. Each
-package declares its own dependencies (expected: the core and node builtins) so the two
-can diverge without a monorepo-wide decision.
+**The duplication turned out to be the wrong thing to keep.** Three copies of staging, of
+the channel, of the kit and of the gateway's argv differed in exactly one thing — how a
+command is reached — and every other line was a copy that could drift (the packages were
+spelling `--worker=` themselves, against a parser in the core). What is shared now is
+everything below the entry; what a package keeps is its command shape and, for podman, the
+container's life. A new way in is one `entry` function and one package: `posipaki-remote-host`
+(the same machine) is `hostRemote` in the core for that reason.
 
 **Tests** assert the commands and what travels on stdin, against an injected host runner —
 the pattern the consumer already uses (`HostRun`). No ssh or podman needs to be present to
