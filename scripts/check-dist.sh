@@ -57,6 +57,17 @@ if (missing.length > 0) {
 // chunk stays behind and the copied gateway dies of a missing import on the far side — a failure
 // no test here can see, because everything else imports the package (and the sandbox tests build
 // their own gateway).  So it has to be one file, and the build makes it one.
+// A second build pass whose `root` is inferred writes where the inferring says, which for a single
+// entry is one directory up from where this one belongs.  That is how a good bundle once landed at
+// `dist/gateway-cli.js` while the exports map kept pointing at `dist/remote/gateway-cli.js` — a
+// stray in the tarball and a chunked gateway where a file was expected.  So the stray is refused.
+const stray = join(root, "dist", "gateway-cli.js");
+if (existsSync(stray)) {
+  console.error("check-dist: dist/gateway-cli.js is a stray — a second pass wrote one directory");
+  console.error("  up from where it belongs, at dist/remote/gateway-cli.js: see `root` in");
+  console.error("  tsdown.gateway.config.ts.");
+  process.exit(1);
+}
 const gateway = join(root, "dist", "remote", "gateway-cli.js");
 if (existsSync(gateway)) {
   // `from <quote>../…` in either quoting: the shell string this lives in takes no single quote,

@@ -12,8 +12,15 @@ import { defineConfig } from "tsdown";
 // package here already builds (`packages/*/tsdown.config.ts`).  `clean` is off so this pass does not
 // wipe what the main build wrote, and `dts` is off because the main build already emitted the types.
 // `scripts/check-dist.sh` refuses a dist where the gateway imports anything relative.
+//
+// `root` is stated rather than left to be inferred: it *is* inferred as the common base directory
+// of the entries, which for the main build's nine entries is `src/`, and for this lone entry is
+// `src/remote/` — so the first version of this file built a perfectly good bundle at
+// `dist/gateway-cli.js`, one directory away from where the exports map points.  A stray like that is
+// now a failing check rather than a published file (see `scripts/check-dist.sh`).
 export default defineConfig({
   entry: ["src/remote/gateway-cli.ts"],
+  root: "src",
   format: ["esm"],
   dts: false,
   clean: false,
