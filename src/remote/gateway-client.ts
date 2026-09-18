@@ -76,8 +76,8 @@ export interface RemoteWayIn {
 export interface RemoteSpec<Args> extends RemoteWayIn {
   /** The payload bundle on this machine, as the consumer built it. */
   payload: string;
-  /** Whose payload it is: the app name, and the build those bytes came from. */
-  host: KitApp;
+  /** Whose payload this is: the app name, and the build those bytes came from. */
+  hostVersion: KitApp;
   /** The gateway bundle to stage; defaults to {@link GATEWAY_ENTRY}, resolved by us. */
   gateway?: string;
   /** Runtime candidates on the far side, best first.  Defaults to `DEFAULT_RUNTIMES`. */
@@ -131,7 +131,7 @@ async function kitFor(spec: Spec): Promise<Kit> {
     { name: GATEWAY_ARTIFACT, content: await readFile(gateway) },
   ];
   return makeKit(files, {
-    app: spec.host,
+    app: spec.hostVersion,
     runtimes: spec.runtime ?? DEFAULT_RUNTIMES,
     parent: spec.parent ?? DEFAULT_KIT_PARENT,
   });
@@ -246,7 +246,7 @@ export function gatewayClient<Args>(spec: RemoteSpec<Args>): ClientSpawner<Args>
     const command = [
       staged.runtime,
       `${staged.kitDir}/${GATEWAY_ARTIFACT}`,
-      ...gatewayArgs({ app: spec.host, worker: `${staged.kitDir}/${PAYLOAD_ARTIFACT}` }),
+      ...gatewayArgs({ app: spec.hostVersion, worker: `${staged.kitDir}/${PAYLOAD_ARTIFACT}` }),
       ...own,
     ];
     return openChannel(spec, spec.entry(command), spawn);

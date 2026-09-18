@@ -47,7 +47,7 @@ function spec(): BwrapRemoteSpec<Record<string, never>> {
   return {
     name: `it-${process.pid}`,
     args: sandboxArgs({ home: SCRATCH, tmpfs: [] }),
-    host: { name: "posipaki-it", version: "0" },
+    hostVersion: { name: "posipaki-it", version: "0" },
     payload: PAYLOAD,
     gateway: builtGateway(),
     // `runtime` is left out on purpose: the far side probes for one (`node`, `nodejs`,

@@ -58,7 +58,7 @@ function harness(extra: Partial<BwrapRemoteSpec<{ env: string }>> = {}) {
   const spawner = bwrapRemote<{ env: string }>({
     name: "tools",
     args,
-    host: { name: "email-agent", version: "0.13.0" },
+    hostVersion: { name: "email-agent", version: "0.13.0" },
     payload,
     payloadArgs: (spawnArgs) => [`--env=${spawnArgs.env}`],
     run,

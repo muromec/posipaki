@@ -74,7 +74,7 @@ describe("the client side of the gateway, over this machine", () => {
     const home = scratchDir("posipaki-client-");
     const spawner = hostRemote({
       payload: PAYLOAD,
-      host: APP,
+      hostVersion: APP,
       gateway: builtGateway(),
       runtime: [process.execPath],
     });
@@ -101,7 +101,7 @@ describe("the client side of the gateway, over this machine", () => {
     const home = scratchDir("posipaki-client-");
     const spawner = hostRemote({
       payload: PAYLOAD,
-      host: APP,
+      hostVersion: APP,
       gateway: builtGateway(),
       runtime: [process.execPath],
     });
@@ -148,7 +148,7 @@ describe("a way in that says no", () => {
       name: "a way in that says no",
       entry: (command) => ["into", ...command],
       payload,
-      host: APP,
+      hostVersion: APP,
       gateway,
       run,
       spawn: () => {
@@ -172,7 +172,7 @@ describe("a way in that says no", () => {
       name: "a way in that never spoke",
       entry: (command) => command,
       payload,
-      host: APP,
+      hostVersion: APP,
       gateway,
       run,
     });
@@ -189,7 +189,7 @@ describe("a way in that says no", () => {
       name: "a way in that is never reached",
       entry: (command) => command,
       payload: join(scratchDir("posipaki-client-"), "absent.js"),
-      host: APP,
+      hostVersion: APP,
       gateway,
       run: async () => {
         ran = true;
