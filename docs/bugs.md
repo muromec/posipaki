@@ -171,3 +171,37 @@ which is what `fromFds` already was. The test is unchanged.
 lose its channel at startup, and the client end of a gateway inside an environment is
 exactly that shape. Same family as the "child process hangs on early exit" entry above
 (bun + fifo open during startup).
+
+## A hook's `this:` annotation erases the methods surface
+
+**Observed:** 2026-09-19 (from email-agent: `this.slot.poolSize` shipped in a method body
+— `slot` was a method, so the call returned `any`; eight of its ten actors were in that
+state)
+
+A `this:` parameter on a hook is part of that function's signature, so checking a config
+literal instantiates `ActorContext` while `Methods` is still being inferred.  That
+instantiation is built from the constraint (`{ [key: string]: Function }`) and reused
+afterwards, so every `this.<method>()` in the config returns `any` and the methods' own
+`ThisType` sees the same thing — with no diagnostic.  It is the *position* that decides:
+a hook written above `methods` which mentions `this` is enough, and no method body has to
+mention `this` at all.
+
+Measured on email-agent's ten `defineActor` sites: eight poisoned (main actor, connector,
+reflector, repl, matrix, schedule, tool-task, actor-server); the two clean ones (chat,
+task-server) only because their `setup` never mentions `this` — adding
+`afterStart() { void this.name; }` above chat's `methods` poisons it, and the same hook
+below them does not.
+
+**Root cause:** the config's contextual type mentions the type parameters being inferred
+from it.  A `ThisType` marker is applied after inference and is safe; a per-hook annotation
+is part of the signature and is not.
+
+**Fix:** `ActorConfig` carries one `ThisType`; the hooks carry no annotation except
+`beforeStart` and `setup`, which keep one with `MethodOptions` in place of the inferred
+methods — both need `never` for the state, and a `setup` that mentioned `InternalState`
+would make the state inference depend on itself.  A plugin's overlay is a
+`Partial<>`, which does not carry the marker, so `mergeConfigs` restores it through
+`ActorContextOf<C>`.
+
+**Guard:** `src/actor-types.test.ts` — it expects two errors that only exist on a typed
+surface, and asserts that a method's return type is not `any`.

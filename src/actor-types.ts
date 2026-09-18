@@ -91,6 +91,13 @@ export interface ActorDefinition<
   inMessages: ActorMessages<InMsg> | undefined;
   outMessages: ActorMessages<OutMsg> | undefined;
 }
+/**
+ * The config object as a user writes it.
+ *
+ * Hooks take their `this` from the `ThisType` at the end of this type: a per-hook
+ * annotation erases the inferred methods surface.  `beforeStart` and `setup` keep
+ * one, for the state.
+ */
 export type ActorConfig<
   Args,
   InternalState,
@@ -112,7 +119,6 @@ export type ActorConfig<
   resolvedPlugins?: ActorPlugin[];
   outMessages?: ActorMessages<OutMsg>;
   inMessages?: ActorMessages<InMsg>;
-
   /** Fires once `self` is built, before `setup`.  State is not yet set
    *  (`this.state` is `never`).  Use for registering the process/ctx before
    *  any child is forked in `setup`. */
@@ -122,166 +128,55 @@ export type ActorConfig<
       never,
       InMsg,
       OutMsg,
-      Methods,
+      MethodOptions,
       Handlers,
       ReflectionMethods & ActorReflection
     >,
   ) => void | Promise<void>;
 
+  /** `this.state` is `never`: the returned value is the state. */
   setup?: (
     this: ActorContext<
       Args,
       never,
       InMsg,
       OutMsg,
-      Methods,
+      MethodOptions,
       Handlers,
       ReflectionMethods & ActorReflection
     >,
     args: Args,
   ) => Promise<InternalState> | InternalState;
 
-  afterStart?: (
-    this: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods & ActorReflection
-    >,
-  ) => void | Promise<void>;
+  afterStart?: () => void | Promise<void>;
 
-  onStopRequested?: (
-    this: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods & ActorReflection
-    >,
-  ) => HookResult | Promise<HookResult>;
+  onStopRequested?: () => HookResult | Promise<HookResult>;
 
-  beforeEnd?: (
-    this: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods & ActorReflection
-    >,
-    reason?: unknown,
-  ) => HookResult | Promise<HookResult>;
+  beforeEnd?: (reason?: unknown) => HookResult | Promise<HookResult>;
 
   /**
    * Runs once the actor has ended — after its EXIT.  It is *not* called when the
    * actor never started (`setup()` or a pre-start hook threw): the state is
    * typed as present here, and an actor that never got one has nothing to end.
    */
-  afterEnd?: (
-    this: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods & ActorReflection
-    >,
-    reason?: unknown,
-  ) => HookResult | Promise<HookResult>;
+  afterEnd?: (reason?: unknown) => HookResult | Promise<HookResult>;
 
-  onError?: (
-    this: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods & ActorReflection
-    >,
-    error?: unknown,
-  ) => HookResult | ErrorResult | Promise<HookResult | ErrorResult>;
+  onError?: (error?: unknown) => HookResult | ErrorResult | Promise<HookResult | ErrorResult>;
 
-  onEmit?: (
-    this: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods & ActorReflection
-    >,
-    msg: OutMsg,
-    sender: SenderInfo,
-  ) => HookResult | Promise<HookResult>;
+  onEmit?: (msg: OutMsg, sender: SenderInfo) => HookResult | Promise<HookResult>;
 
-  onMessage?: (
-    this: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods & ActorReflection
-    >,
-    msg: InMsg,
-    sender: SenderInfo,
-  ) => HookResult | Promise<HookResult>;
+  onMessage?: (msg: InMsg, sender: SenderInfo) => HookResult | Promise<HookResult>;
 
-  onUnhandled?: (
-    this: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods & ActorReflection
-    >,
-    msg: Message,
-    sender: SenderInfo,
-  ) => void | Promise<void>;
+  onUnhandled?: (msg: Message, sender: SenderInfo) => void | Promise<void>;
 
-  onChildExit?: (
-    this: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods & ActorReflection
-    >,
-    name: string,
-    reason: ExitMessage,
-  ) => HookResult | Promise<HookResult>;
+  onChildExit?: (name: string, reason: ExitMessage) => HookResult | Promise<HookResult>;
 
   /** Fires for each orphan a child leaves behind (in its EXIT).  Return the
    *  policy: `'adopt'` (promote to a child, draining its buffer), `'force-stop'`
    *  (hard-kill), `'unparent'` (drop its buffer, keep it running in `orphans`),
    *  or `'leave'` (keep buffering, propagate up on my exit).  When no `onOrphan`
    *  is defined, the default is `'force-stop'`. */
-  onOrphan?: (
-    this: ActorContext<
-      Args,
-      InternalState,
-      InMsg,
-      OutMsg,
-      Methods,
-      Handlers,
-      ReflectionMethods & ActorReflection
-    >,
-    orphan: AnyProcess,
-  ) => OrphanDecision | void | Promise<OrphanDecision | void>;
+  onOrphan?: (orphan: AnyProcess) => OrphanDecision | void | Promise<OrphanDecision | void>;
 
   handlers: Handlers &
     ThisType<
@@ -322,7 +217,9 @@ export type ActorConfig<
     >;
   // for plugin use only
   $decorate?: Partial<ActorDecorated>;
-};
+} & ThisType<
+  ActorContext<Args, InternalState, InMsg, OutMsg, Methods, Handlers, ReflectionMethods & ActorReflection>
+>;
 export type AnyConfig = ActorConfig<
   unknown,
   unknown,
@@ -407,3 +304,29 @@ export type ActorContext<
 
     ctx: ProcessCtx<Args, HidePrivate<InternalState>, InMsg, OutMsg>;
   };
+
+
+
+/**
+ * The context a config's hooks are typed against, for a `Partial<>` overlay:
+ * a mapped type drops the marker `ActorConfig` carries.
+ */
+export type ActorContextOf<C> = C extends ActorConfig<
+  infer Args,
+  infer InternalState,
+  infer InMsg extends Message,
+  infer OutMsg extends Message,
+  infer Methods extends MethodOptions,
+  infer Handlers,
+  infer ReflectionMethods extends ReflectionOptions
+>
+  ? ActorContext<
+      Args,
+      InternalState,
+      InMsg,
+      OutMsg,
+      Methods,
+      Handlers extends HandlerOptions<InMsg> ? Handlers : HandlerOptions<InMsg>,
+      ReflectionMethods & ActorReflection
+    >
+  : never;
