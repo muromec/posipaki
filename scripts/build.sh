@@ -22,7 +22,8 @@ cd "$ROOT"
 tool_works() { [ -x "$1" ] || return 1; "$1" --version >/dev/null 2>&1; }
 rolldown_ok() { node -e "try{require('rolldown')}catch(e){process.exit(1)}" >/dev/null 2>&1; }
 
-# Entry points mirror tsdown.config.ts.
+# Entry points mirror tsdown.config.ts — its two builds together, since this branch has no
+# splitting and each entry is bundled on its own.
 ENTRY=(
   src/index.ts
   src/xfetch.ts
@@ -47,9 +48,10 @@ build_packages() {
 }
 
 if tool_works "$ROOT/node_modules/.bin/tsdown" && rolldown_ok; then
+  # The directory goes first: tsdown builds its configs together, so neither of them can clean
+  # without risking the other's output (see tsdown.config.ts).
+  rm -rf "$ROOT/dist"
   "$ROOT/node_modules/.bin/tsdown" "$@"
-  # The gateway, alone: it is staged on its own, so it cannot share a chunk with anything.
-  "$ROOT/node_modules/.bin/tsdown" --config "$ROOT/tsdown.gateway.config.ts"
   build_packages
 elif tool_works "$ROOT/node_modules/.bin/esbuild"; then
   echo "build: rolldown unavailable — falling back to esbuild (no .d.ts)" >&2
@@ -64,9 +66,8 @@ else
   exit 2
 fi
 
-# The esbuild branch needs no second pass: it bundles every entry by itself, so the gateway is
-# already one file there.  The tsdown branch is the one that splits, and the pass above is what
-# puts the gateway back together.
+# The esbuild branch needs no second build for the gateway: it bundles every entry by itself, so
+# there the copied file is one module already.
 
 # What was built is what the package promises.
 bash "$ROOT/scripts/check-dist.sh"
