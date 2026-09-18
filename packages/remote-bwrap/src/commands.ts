@@ -1,30 +1,20 @@
-// ── The commands into a sandbox ────────────────────────────────────────────
+// ── The command into a sandbox ─────────────────────────────────────────────
 //
-// Two channels into the same sandbox, both `bwrap <args> …`:
+// The one thing this package knows that posipaki does not: a command reaches bwrap as
+// `bwrap <policy> <command…>`.  Everything this package runs goes through here — the
+// staging script (`sh -s`, the kit fed to it on stdin) and the gateway that follows — so
+// there is exactly one place where the policy meets a command.
 //
-//   prepare  the bootstrap script arrives on stdin, so nothing else can be there;
-//   run      the actor, whose own stdin/stdout *are* the wire.
-//
-// Both are bwrap invocations, and each one builds its own namespaces: there is no
-// sandbox "container" that both enter, only the same policy applied twice.  That
-// is why nothing here is long-lived and why `--die-with-parent` is enough — when
-// we go, the last process on the other side of the wire goes with us.
-//
-// Every command is built here and asserted as data: nothing in this file talks to
-// bwrap, so a shape is testable without a sandbox.
+// It is built and asserted as data: nothing in this file talks to bwrap, so the shape is
+// testable without a sandbox.
 
-import type { SandboxSpec } from "./spec.js";
-
-/** The names a staged kit's artifacts get inside the kit directory. */
-export const PAYLOAD_ARTIFACT = "payload.js";
-export const GATEWAY_ARTIFACT = "gateway.js";
-
-/** One channel into the sandbox: the policy, then the command. */
-export function bwrapEntry(sandbox: SandboxSpec, argv: string[]): string[] {
-  return ["bwrap", ...sandbox.args, ...argv];
+/** The sandbox: what it is called where errors are reported, and the arguments that shape it. */
+export interface Sandbox {
+  name: string;
+  args: string[];
 }
 
-/** The preparing channel.  The script is fed to it; nothing else may be. */
-export function bwrapStageCommand(sandbox: SandboxSpec): string[] {
-  return bwrapEntry(sandbox, ["sh", "-s"]);
+/** The policy, then the command: the one shape bwrap is reached in. */
+export function bwrapEntry(args: string[], command: string[]): string[] {
+  return ["bwrap", ...args, ...command];
 }

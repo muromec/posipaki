@@ -1,32 +1,17 @@
-// ── The commands into a sandbox ────────────────────────────────────────────
+// ── The command into a sandbox ─────────────────────────────────────────────
 //
-// Both channels are asserted exactly: bwrap, the policy as it was given, and the
-// shell or runtime behind it.  There is no sandbox in this file by design — a
-// command is data, and what it says is the whole contract with bwrap.
+// Asserted exactly: bwrap, the policy as it was given, and the command behind it.  There
+// is no sandbox in this file by design — a command is data, and what it says is the whole
+// contract with bwrap.
 
 import { describe, expect, it } from "vitest";
-import {
-  GATEWAY_ARTIFACT,
-  PAYLOAD_ARTIFACT,
-  bwrapEntry,
-  bwrapStageCommand,
-} from "./commands.js";
-import type { BwrapSpec } from "./spec.js";
+import { bwrapEntry } from "./commands.js";
 
-const SPEC: BwrapSpec = {
-  name: "tools",
-  args: ["--ro-bind", "/", "/"],
-  app: { name: "email-agent", version: "0.13.0" },
-  payload: "build/env-payload.js",
-};
+const POLICY = ["--ro-bind", "/", "/"];
 
-describe("the commands into a sandbox", () => {
-  it("stages with the policy and a shell, the script on stdin", () => {
-    expect(bwrapStageCommand(SPEC)).toEqual(["bwrap", "--ro-bind", "/", "/", "sh", "-s"]);
-  });
-
+describe("the command into a sandbox", () => {
   it("puts the policy before the command, and the command exactly as given", () => {
-    expect(bwrapEntry(SPEC, ["/usr/bin/node", "/home/u/payload.js"])).toEqual([
+    expect(bwrapEntry(POLICY, ["/usr/bin/node", "/home/u/payload.js"])).toEqual([
       "bwrap",
       "--ro-bind",
       "/",
@@ -36,7 +21,19 @@ describe("the commands into a sandbox", () => {
     ]);
   });
 
-  it("names the artifacts a staged kit carries", () => {
-    expect([PAYLOAD_ARTIFACT, GATEWAY_ARTIFACT]).toEqual(["payload.js", "gateway.js"]);
+  it("wraps the staging command like any other command: the script is fed to `sh -s`", () => {
+    // The kit is written by a script, and the script arrives on stdin — so the same
+    // policy shapes the sandbox it writes in.
+    expect(bwrapEntry(POLICY, ["sh", "-s"])).toEqual(["bwrap", "--ro-bind", "/", "/", "sh", "-s"]);
+  });
+
+  it("is the whole of what this package says about a command", () => {
+    // Nothing about the payload, the gateway or the wire lives here: a way in says how a
+    // command is reached, and everything inside it is posipaki's.
+    expect(bwrapEntry([], ["/usr/bin/node", "/k/gateway.js"])).toEqual([
+      "bwrap",
+      "/usr/bin/node",
+      "/k/gateway.js",
+    ]);
   });
 });

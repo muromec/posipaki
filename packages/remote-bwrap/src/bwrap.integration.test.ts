@@ -13,26 +13,46 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterAll, expect, it } from "vitest";
-import type { BwrapSpec } from "./spec.js";
-import { bwrapBootstrap } from "./bootstrap.js";
-import { runHost } from "./host.js";
+import { runHost } from "posipaki/remote/node";
+import { bwrapRemote } from "./remote.js";
 import { sandboxArgs } from "./sandbox.js";
+import type { BwrapRemoteSpec } from "./spec.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const PAYLOAD = join(HERE, "fixtures", "sh-payload.sh");
+const ROOT = resolve(HERE, "..", "..", "..");
+const PAYLOAD = join(HERE, "fixtures", "fifo-payload.js");
 const SCRATCH = mkdtempSync(join(tmpdir(), "posipaki-bwrap-it-"));
 
+/**
+ * The gateway program, built the way a consumer builds one: a bundle, because what is
+ * staged into a sandbox is one file with its imports already inside it.  posipaki's
+ * published entry is the same file — built — which is what a consumer stages.
+ */
+function builtGateway(): string {
+  const out = join(SCRATCH, "gateway.js");
+  const built = spawnSync(
+    process.execPath,
+    ["build", "--target=node", `--outfile=${out}`, join(ROOT, "src", "remote", "gateway-cli.ts")],
+    { cwd: ROOT, encoding: "utf-8" },
+  );
+  if (built.status !== 0) throw new Error(`cannot build the gateway: ${built.stderr}`);
+  return out;
+}
+
 /** The sandbox the actor runs in: its own writable directory, nothing else. */
-function spec(): BwrapSpec {
+function spec(): BwrapRemoteSpec<Record<string, never>> {
   return {
     name: `it-${process.pid}`,
     args: sandboxArgs({ home: SCRATCH, tmpfs: [] }),
-    app: { name: "posipaki-it", version: "0" },
+    host: { name: "posipaki-it", version: "0" },
     payload: PAYLOAD,
-    runtime: ["sh"],
+    gateway: builtGateway(),
+    // `runtime` is left out on purpose: the far side probes for one (`node`, `nodejs`,
+    // `bun`), and what it finds is what runs the gateway — and, through it, the payload.
+    handshakeTimeoutMs: 60_000,
   };
 }
 
@@ -47,7 +67,7 @@ afterAll(() => {
 maybe(
   "runs an actor in a sandbox of its own, speaks the wire, and leaves nothing behind",
   async () => {
-    const spawner = bwrapBootstrap<Record<string, never>>(spec(), { handshakeTimeoutMs: 60_000 });
+    const spawner = bwrapRemote<Record<string, never>>(spec());
 
     // The kit is staged into the sandbox's own home, which is a real directory
     // here: bwrap binds paths, it does not copy anything.
@@ -58,7 +78,7 @@ maybe(
 
     const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage(resolve));
     await channel.send({ $msg: { fromName: "test", body: { echo: "hi" } } });
-    expect(await heard).toEqual({ $msg: { fromName: "sh-payload", body: { echo: "pong" } } });
+    expect(await heard).toEqual({ $msg: { fromName: "fifo-payload", body: { echo: "hi" } } });
 
     // And it is a sandbox: the one writable directory is the one we gave it.
     const outside = await runHost(

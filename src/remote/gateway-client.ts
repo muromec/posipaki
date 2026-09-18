@@ -85,7 +85,7 @@ export interface RemoteSpec<Args> extends RemoteWayIn {
   /** Where the kit lands there, relative to its `$HOME`.  Defaults to `DEFAULT_KIT_PARENT`. */
   parent?: string;
   /** The payload's own arguments, built from the args the actor was spawned with. */
-  args?: (args: Args, staged: RemoteStaged) => string[];
+  payloadArgs?: (args: Args, staged: RemoteStaged) => string[];
   /** Where the far end's own output goes.  Defaults to our stderr, tagged with `name`. */
   onOutput?: OutputSink;
   /** How long to wait for the far end's first protocol frame. */
@@ -98,7 +98,7 @@ export interface RemoteSpec<Args> extends RemoteWayIn {
  * The part of a spec the machinery here reads, with the actor's own arguments left out:
  * staging, the channel and the argv are the same whatever an actor is told.
  */
-type Spec = Omit<RemoteSpec<unknown>, "args">;
+type Spec = Omit<RemoteSpec<unknown>, "payloadArgs">;
 
 /** What staging left behind: where the kit is, and what will run it. */
 export interface RemoteStaged {
@@ -242,7 +242,7 @@ export function gatewayClient<Args>(spec: RemoteSpec<Args>): ClientSpawner<Args>
     // should fail here, not as an environment that cannot be reached.
     const kit = await kitFor(spec);
     const staged = await stageKit(spec, kit, run);
-    const own = spec.args?.(args, staged) ?? [];
+    const own = spec.payloadArgs?.(args, staged) ?? [];
     const command = [
       staged.runtime,
       `${staged.kitDir}/${GATEWAY_ARTIFACT}`,
