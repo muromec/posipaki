@@ -19,7 +19,7 @@ import type { HostStart } from "./lifetime.js";
 import type { ContainerSpec, PodmanRemoteSpec } from "./spec.js";
 
 const FAR_END = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "staged-payload.js");
-const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.34.0-abcdef12";
+const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.35.0-abcdef12";
 const REPORT = `staged\nkit ${KIT_DIR}\nruntime /usr/bin/node\n`;
 
 const children: ChildProcess[] = [];
