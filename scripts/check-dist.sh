@@ -9,9 +9,23 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 
-# The root comes in through the environment: `node -e` and `bun -e` do not agree
-# on where the first script argument ends up.
-CHECK_DIST_ROOT="$ROOT" node -e '
+# Whatever runtime this machine has runs the check: `node` is not everywhere, and a
+# build that cannot check what it produced is worse than one that never promised to.
+RUNNER=""
+for candidate in node bun; do
+  if command -v "$candidate" >/dev/null 2>&1; then
+    RUNNER="$(command -v "$candidate")"
+    break
+  fi
+done
+if [ -z "$RUNNER" ]; then
+  echo "check-dist: neither node nor bun is on this machine" >&2
+  exit 2
+fi
+
+# The root comes in through the environment: the first script argument does not land in
+# the same place for every runtime.
+CHECK_DIST_ROOT="$ROOT" "$RUNNER" -e '
 const { existsSync, readFileSync } = require("node:fs");
 const { join } = require("node:path");
 const root = process.env.CHECK_DIST_ROOT;
