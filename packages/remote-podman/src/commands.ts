@@ -1,31 +1,18 @@
 // ── The commands into a container ──────────────────────────────────────────
 //
-// Two channels into the same container, both `podman exec -i <name> …`:
+// Two kinds, both built here and asserted as data: the one shape a command reaches an
+// *existing* container in (`podman exec -i <name> <command…>`), which is what every run of
+// an actor goes through — the staging script first, the gateway after it; and the commands
+// that ask about, keep alive and remove a container, which is the lifetime's business (see
+// lifetime.ts).
 //
-//   prepare  the bootstrap script arrives on stdin, so nothing else can be there;
-//   run      the actor, whose own stdin/stdout *are* the wire.
-//
-// A kit cannot be staged and run on one channel: while the script is on stdin the
-// wire cannot be, so the actor gets a second `exec` into the container.  The
-// container's own life is three more commands — see lifetime.ts.
-//
-// Every command is built here and asserted as data: nothing in this file talks to
-// podman, so a shape is testable without a container.
+// Nothing in this file talks to podman, so every shape is testable without a container.
 
 import type { ContainerSpec } from "./spec.js";
-
-/** The names a staged kit's artifacts get inside the kit directory. */
-export const PAYLOAD_ARTIFACT = "payload.js";
-export const GATEWAY_ARTIFACT = "gateway.js";
 
 /** One channel into the container.  `-i` because the wire is on stdin. */
 export function podmanEntry(container: string, argv: string[]): string[] {
   return ["podman", "exec", "-i", container, ...argv];
-}
-
-/** The preparing channel.  The script is fed to it; nothing else may be. */
-export function podmanStageCommand(container: string): string[] {
-  return podmanEntry(container, ["sh", "-s"]);
 }
 
 /**

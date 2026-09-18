@@ -12,14 +12,17 @@
 import type { Channel, ClientSpawner } from "posipaki/remote";
 import { containerActor } from "./container.js";
 import type { ContainerOut } from "./container.js";
-import { podmanBootstrap } from "./bootstrap.js";
-import type { PodmanBootstrapOptions } from "./bootstrap.js";
 import type { ContainerLifeOptions } from "./lifetime.js";
+import { podmanRemote } from "./remote.js";
 import { PodmanSpecError } from "./spec.js";
-import type { ContainerSpec, KitSpec } from "./spec.js";
+import type { ContainerSpec, PodmanRemoteSpec } from "./spec.js";
 
-/** Everything an environment takes: the container's life, the way in, and how closely the actor watches. */
-export type PodmanEnvironmentOptions<Args> = PodmanBootstrapOptions<Args> &
+/**
+ * Everything an environment takes: the actor, the container it runs in, and the container's
+ * own life.  `runHost` is the lifetime's (the probes and the removal), `run` is the wire's
+ * (staging and the gateway) — one object, two hosts a test may want to stand in for.
+ */
+export type PodmanEnvironmentSpec<Args> = PodmanRemoteSpec<Args> &
   ContainerLifeOptions & {
     /** How often the container actor looks at whether the container is still there. */
     watchMs?: number;
@@ -74,17 +77,14 @@ async function holdContainer(
  * name that is taken is taken over — what is there is killed and ours is started
  * (`onConflict: "replace"`).  An environment that must not do that says so.
  */
-export function podmanEnvironment<Args>(
-  spec: ContainerSpec & KitSpec,
-  options: PodmanEnvironmentOptions<Args> = {},
-): ClientSpawner<Args> {
-  const { onConflict = "replace" } = options;
+export function podmanEnvironment<Args>(spec: PodmanEnvironmentSpec<Args>): ClientSpawner<Args> {
+  const { onConflict = "replace" } = spec;
   return async (args: Args): Promise<Channel> => {
-    const holder = await holdContainer(spec, { ...options, onConflict });
-    const connect = podmanBootstrap<Args>(spec, {
-      ...options,
+    const holder = await holdContainer(spec, { ...spec, onConflict });
+    const connect = podmanRemote<Args>({
+      ...spec,
       onGone: () => {
-        options.onGone?.();
+        spec.onGone?.();
         holder.release();
       },
     });

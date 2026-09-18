@@ -9,7 +9,7 @@ import { expect, it } from "vitest";
 import { containerActor } from "./container.js";
 import type { ContainerActorArgs, ContainerOut } from "./container.js";
 import { containerKeepaliveCommand, containerRemoveCommand } from "./commands.js";
-import type { HostRun } from "./host.js";
+import type { HostRun } from "posipaki/remote/node";
 import type { HostStart } from "./lifetime.js";
 
 function spec(extra: Partial<ContainerActorArgs> = {}): ContainerActorArgs {

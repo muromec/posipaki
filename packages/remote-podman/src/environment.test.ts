@@ -13,10 +13,10 @@ import { fileURLToPath } from "node:url";
 import { afterEach, expect, it } from "vitest";
 import { containerExistsCommand, containerKeepaliveCommand, containerRemoveCommand } from "./commands.js";
 import { podmanEnvironment } from "./environment.js";
-import type { PodmanEnvironmentOptions } from "./environment.js";
-import type { HostRun, SpawnChild } from "./host.js";
+import type { PodmanEnvironmentSpec } from "./environment.js";
+import type { HostRun, SpawnChild } from "posipaki/remote/node";
 import type { HostStart } from "./lifetime.js";
-import type { ContainerSpec, KitSpec } from "./spec.js";
+import type { ContainerSpec, PodmanRemoteSpec } from "./spec.js";
 
 const FAR_END = join(dirname(fileURLToPath(import.meta.url)), "fixtures", "staged-payload.js");
 const KIT_DIR = "/home/agent/bin/posipaki/email-agent-0.13.0-posipaki-0.34.0-abcdef12";
@@ -35,7 +35,7 @@ afterEach(async () => {
 });
 
 /** A payload bundle on a throwaway path, and the container it belongs to. */
-function spec(extra: Partial<ContainerSpec & KitSpec> = {}): ContainerSpec & KitSpec {
+function spec(extra: Partial<PodmanRemoteSpec<{ env: string }>> = {}): PodmanRemoteSpec<{ env: string }> {
   const dir = mkdtempSync(join(tmpdir(), "posipaki-podman-"));
   scratchDirs.push(dir);
   const payload = join(dir, "payload.js");
@@ -43,7 +43,7 @@ function spec(extra: Partial<ContainerSpec & KitSpec> = {}): ContainerSpec & Kit
   return {
     image: "toolbox:1",
     container: "env-agent",
-    app: { name: "email-agent", version: "0.13.0" },
+    hostVersion: { name: "email-agent", version: "0.13.0" },
     payload,
     ...extra,
   };
@@ -101,13 +101,14 @@ function host(container: ContainerSpec): {
 it("starts a container for the actor, runs it in there, and lets the container go when it is done", async () => {
   const container = spec();
   const fake = host(container);
-  const environment = podmanEnvironment<{ env: string }>(container, {
+  const environment = podmanEnvironment<{ env: string }>({ ...container,
     runHost: fake.runHost,
+    run: fake.runHost,
     startHost: fake.startHost,
-    spawnChild: fake.spawnChild,
+    spawn: fake.spawnChild,
     pollMs: 1,
     watchMs: 10,
-    args: (args) => [`--env=${args.env}`],
+    payloadArgs: (args) => [`--env=${args.env}`],
   });
 
   const channel = await environment({ env: "agent" });
@@ -126,21 +127,25 @@ it("takes over a name that is already taken, because the container here is the a
   const fake = host(container);
   const commands: string[][] = [];
   let there = true;
-  const environment = podmanEnvironment<{ env: string }>(container, {
-    runHost: async (command) => {
-      commands.push(command);
-      if (command[1] === "rm") {
-        there = false;
-        return { code: 0, stdout: "", stderr: "" };
-      }
-      if (command[1] === "container") return { code: there ? 0 : 1, stdout: "", stderr: "" };
-      return { code: 0, stdout: REPORT, stderr: "" };
-    },
+  // One fake host for both questions: the container's life (a probe, a removal) and the
+  // wire's staging, which is a command like any other.
+  const onHost: HostRun = async (command) => {
+    commands.push(command);
+    if (command[1] === "rm") {
+      there = false;
+      return { code: 0, stdout: "", stderr: "" };
+    }
+    if (command[1] === "container") return { code: there ? 0 : 1, stdout: "", stderr: "" };
+    return { code: 0, stdout: REPORT, stderr: "" };
+  };
+  const environment = podmanEnvironment<{ env: string }>({ ...container,
+    runHost: onHost,
+    run: onHost,
     startHost: async (command) => {
       there = true;
       return fake.startHost(command);
     },
-    spawnChild: fake.spawnChild,
+    spawn: fake.spawnChild,
     pollMs: 1,
     watchMs: 10,
   });
@@ -159,13 +164,17 @@ it("takes over a name that is already taken, because the container here is the a
 it("says the container is not available when it was told to fail instead of take over", async () => {
   const container = spec();
   const fake = host(container);
-  const environment = podmanEnvironment<{ env: string }>(container, {
+  const onHost: HostRun = async (command) =>
+    command[1] === "container"
+      ? { code: 0, stdout: "", stderr: "" }
+      : { code: 0, stdout: REPORT, stderr: "" };
+  const environment = podmanEnvironment<{ env: string }>({ ...container,
     // Somebody else is holding it, and this environment asked to hold nothing else's.
     onConflict: "fail",
-    runHost: async (command) =>
-      command[1] === "container" ? { code: 0, stdout: "", stderr: "" } : { code: 0, stdout: REPORT, stderr: "" },
+    runHost: onHost,
+    run: onHost,
     startHost: fake.startHost,
-    spawnChild: fake.spawnChild,
+    spawn: fake.spawnChild,
     pollMs: 1,
   });
 
@@ -179,21 +188,32 @@ it("hands the actor's own arguments to the staged payload", async () => {
   const container = spec();
   const fake = host(container);
   const commands: string[][] = [];
-  const environment = podmanEnvironment<{ env: string }>(container, {
+  const environment = podmanEnvironment<{ env: string }>({ ...container,
     runHost: fake.runHost,
+    run: fake.runHost,
     startHost: fake.startHost,
     pollMs: 1,
     watchMs: 10,
-    args: (args) => [`--env=${args.env}`],
-    spawnChild: (command, stdio) => {
+    payloadArgs: (args) => [`--env=${args.env}`],
+    spawn: (command, stdio) => {
       commands.push(command);
       return fake.spawnChild(command, stdio);
     },
-  } satisfies PodmanEnvironmentOptions<{ env: string }>);
+  } satisfies PodmanEnvironmentSpec<{ env: string }>);
 
   const channel = await environment({ env: "live" });
   expect(commands).toEqual([
-    ["podman", "exec", "-i", "env-agent", "/usr/bin/node", `${KIT_DIR}/payload.js`, "--env=live"],
+    [
+      "podman",
+      "exec",
+      "-i",
+      "env-agent",
+      "/usr/bin/node",
+      `${KIT_DIR}/gateway.js`,
+      `${KIT_DIR}/payload.js`,
+      "--host-version=email-agent@0.13.0",
+      "--env=live",
+    ],
   ]);
   children[0].kill();
   await channel.close().catch(() => {});

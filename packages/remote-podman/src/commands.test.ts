@@ -6,13 +6,10 @@
 
 import { describe, expect, it } from "vitest";
 import {
-  GATEWAY_ARTIFACT,
-  PAYLOAD_ARTIFACT,
   containerExistsCommand,
   containerKeepaliveCommand,
   containerRemoveCommand,
   podmanEntry,
-  podmanStageCommand,
 } from "./commands.js";
 import type { ContainerSpec } from "./spec.js";
 
@@ -22,7 +19,17 @@ const SPEC: ContainerSpec = { image: "registry.example.org/team/toolbox:1.2", co
 describe("the commands into a container", () => {
   it("enters by the name it was given, and takes nothing from the image", () => {
     expect(podmanEntry(CONTAINER, ["true"])).toEqual(["podman", "exec", "-i", "env-agent", "true"]);
-    expect(podmanStageCommand(CONTAINER)).toEqual(["podman", "exec", "-i", "env-agent", "sh", "-s"]);
+    // The staging script and the gateway are commands like any other: `-i` because the
+    // wire is on stdin, and the name because the container is already there.
+    expect(podmanEntry(CONTAINER, ["sh", "-s"])).toEqual(["podman", "exec", "-i", "env-agent", "sh", "-s"]);
+    expect(podmanEntry(CONTAINER, ["/usr/bin/node", "/k/gateway.js"])).toEqual([
+      "podman",
+      "exec",
+      "-i",
+      "env-agent",
+      "/usr/bin/node",
+      "/k/gateway.js",
+    ]);
   });
 
   it("gives the container its life: a run held by stdin, a probe, a removal", () => {
@@ -45,10 +52,5 @@ describe("the commands into a container", () => {
       "env-agent",
     ]);
     expect(containerRemoveCommand(CONTAINER)).toEqual(["podman", "rm", "-f", "env-agent"]);
-  });
-
-  it("names the artifacts inside the kit", () => {
-    expect(PAYLOAD_ARTIFACT).toBe("payload.js");
-    expect(GATEWAY_ARTIFACT).toBe("gateway.js");
   });
 });

@@ -19,8 +19,8 @@ import {
   containerKeepaliveCommand,
   containerRemoveCommand,
 } from "./commands.js";
-import { runHost } from "./host.js";
-import type { HostRun } from "./host.js";
+import { runHost } from "posipaki/remote/node";
+import type { HostRun } from "posipaki/remote/node";
 import { PodmanSpecError } from "./spec.js";
 import type { ContainerSpec } from "./spec.js";
 

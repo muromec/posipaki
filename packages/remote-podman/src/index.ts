@@ -5,26 +5,20 @@
 //
 //   containerActor   a container, as an actor: it starts one, holds it, counts
 //                    the consumers that retain it, and lets it go at the end
-//   podmanConnector  the way in by name: a prepare step (optional) and a command,
-//                    on the exec's own stdin/stdout.  No container, no channel
-//   podmanBootstrap  the connector with the actor's bundle staged into it first
+//   podmanRemote     the way in by name: the actor staged *into* a container that is
+//                    already there, over the exec's own stdin/stdout
 //   podmanEnvironment  both together: a container of its own per actor
 //
-// The wire, the kit vocabulary and the gateway are posipaki's
-// (`posipaki/remote/node`); what lives here is the container half.
+// The payload, the gateway, the kit, the runtime and the wire are posipaki's
+// (`posipaki/remote/node`, where `gatewayClient` turns an `entry` into a spawner); what
+// lives here is the container half — its life, and the one command shape.
 
 export {
-  GATEWAY_ARTIFACT,
-  PAYLOAD_ARTIFACT,
   containerExistsCommand,
   containerKeepaliveCommand,
   containerRemoveCommand,
   podmanEntry,
-  podmanStageCommand,
 } from "./commands.js";
-export { runHost, spawnChild } from "./host.js";
-export type { HostResult, HostRun, SpawnChild } from "./host.js";
-export { podmanKit } from "./kit.js";
 export {
   CONTAINER_REAP_MS,
   CONTAINER_START_MS,
@@ -43,11 +37,8 @@ export type {
 } from "./lifetime.js";
 export { containerActor, holdContainer } from "./container.js";
 export type { ContainerActorArgs, ContainerIn, ContainerOut } from "./container.js";
-export { podmanConnector } from "./connect.js";
-export type { PodmanConnectOptions, PodmanConnectSpec, PodmanPrepare } from "./connect.js";
-export { podmanBootstrap } from "./bootstrap.js";
+export { podmanRemote } from "./remote.js";
 export { podmanEnvironment } from "./environment.js";
-export type { PodmanEnvironmentOptions } from "./environment.js";
+export type { PodmanEnvironmentSpec } from "./environment.js";
 export { PodmanSpecError } from "./spec.js";
-export type { ContainerSpec, KitSpec, PodmanStaged } from "./spec.js";
-export { podmanStage } from "./stage.js";
+export type { ContainerSpec, KitApp, PodmanRemoteSpec } from "./spec.js";

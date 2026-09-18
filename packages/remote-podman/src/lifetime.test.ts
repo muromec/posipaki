@@ -10,7 +10,7 @@ import {
   containerKeepaliveCommand,
   containerRemoveCommand,
 } from "./commands.js";
-import type { HostResult, HostRun } from "./host.js";
+import type { HostResult, HostRun } from "posipaki/remote/node";
 import { containerExists, removeContainer, startContainer } from "./lifetime.js";
 import type { ContainerHandle, HostStart } from "./lifetime.js";
 import type { ContainerSpec } from "./spec.js";
