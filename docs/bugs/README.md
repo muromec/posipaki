@@ -3,7 +3,7 @@
 > One file per bug.  Active bugs live in this directory, fixed ones in `FIXED/`.
 > The table below is the index; keep it current when a bug is filed or fixed.
 
-**Next free id: BUG-007.**
+**Next free id: BUG-009.**
 
 ## Index
 
@@ -15,6 +15,8 @@
 | BUG-004 | [A message sent before the process is ready is swallowed](FIXED/BUG-004-a-message-sent-before-the-process-is-ready-is-swallowed.md) | — | fixed 0.32.0, `3cb5bd5` |
 | BUG-005 | [A fifo reader can be closed before its first byte](FIXED/BUG-005-a-fifo-reader-can-be-closed-before-its-first-byte.md) | — | fixed 0.33.1, `f5ac3e9` |
 | BUG-006 | [A hook's `this:` annotation erases the methods surface](FIXED/BUG-006-a-hook-s-this-annotation-erases-the-methods-surface.md) | — | fixed 0.35.2, `d31a585` |
+| BUG-007 | [A remote child is shown under the far side's own name](BUG-007-a-remote-child-is-shown-under-the-far-side-s-own-name.md) | 🟡 MEDIUM | **open** |
+| BUG-008 | [A process on the far side cannot be looked up by name](BUG-008-a-process-on-the-far-side-cannot-be-looked-up-by-name.md) | 🟡 MEDIUM | **open** |
 
 ## Filing one
 
