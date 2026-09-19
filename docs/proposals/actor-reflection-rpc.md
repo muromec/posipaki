@@ -99,9 +99,10 @@ Three frames, in the `$r` family:
 ```
 
 Beside those, a frame that asks something of a process rather than of its methods —
-`$stop`, `$pause`, `$resume`, `$release` — carries no answer of its own: what answers
-them is the process itself, saying that it ended, or nothing at all (see *Control and
-the end of a process* and *Letting a handle go*).
+`$stop`, `$pause`, `$resume`, `$release`, `$tune` — carries no answer of its own: what
+answers them is the process itself, saying that it ended, or nothing at all (see
+*Control and the end of a process*, *Letting a handle go* and *How much is said about a
+process*).
 
 The method name is in the frame key, so a frame says what it is without a table.
 
@@ -203,12 +204,14 @@ kid.$reflection["inspect.getTree"];  // what it announced it can answer
 kid.send({ type: "PING" });           // a message for it
 kid.subscribe("message", (msg) => …); // what it says
 kid.subscribe("state", () => …);      // what it holds
+kid.tune(["state", "exit"]);          // exactly this much, or "silent" for nothing
 ```
 
-- A process that crosses is announced and streamed from that moment: what it can
-  answer, the state it holds, and what it emits.  The stream starts after the
-  frame that carried the reference, so a handle is named before it hears anything,
-  and the entry that carried it needs no code of its own.
+- A process that crosses is announced from that moment — what it can answer — and then
+  says as much of what it holds, what it says and its end as the handle asks for; a
+  process nobody has asked about is silent (2j, 2k below).  Everything said about it
+  comes after the frame that carried the reference, so a handle is named before it
+  hears anything, and the entry that carried it needs no code of its own.
 - A handle is not a node in this side's tree.  Asking the proxy for the tree walks
   the far side and gives that tree; a handle is how a process there is talked to,
   not where it sits here.
@@ -230,11 +233,12 @@ await surface["probe.poke"](myChild);   // myChild is numbered 1 here, and a han
 
 - It needs no code of its own: what crosses is one walk, in both directions, so a
   process handed *out* is the same walk as one handed back.
-- A process this side hands over is streamed from that moment, exactly as the far
-  side streams its own — what it can answer, the state it holds, and what it emits,
-  each frame addressed with the id it crossed by. The side that holds a process is
-  the side that says what it holds, so a `$state` frame for a process of this
-  side's own is ignored here and lands on the handle there.
+- A process this side hands over is spoken about from that moment, exactly as the far
+  side speaks about its own — what it can answer, and then as much of what it holds,
+  what it says and its end as the far side asks for, each frame addressed with the id
+  it crossed by. The side that holds a process is the side that says what it holds, so
+  a `$state` frame for a process of this side's own is ignored here and lands on the
+  handle there.
 - A message addressed to that id is delivered into the process where it lives, and
   what that process does about it crosses back on its stream — which is how a
   `send` on a handle is answered rather than merely delivered.
@@ -264,8 +268,10 @@ kid.hasEnded();                  // true once that exit has arrived
   holds that process, which is also the side that can act on it.
 - A streamed process's **end is the last thing said about it**: `{"$exit": {code,
   state}, "to": 3}`, after which nothing more about it crosses and its stream is
-  dropped. A process that fails to run takes the same road with `code: 1`, so a
-  handle is never left waiting for news that cannot come.
+  dropped. It is said to a handle that has asked for it, which `wait()` and `stop()`
+  do on the caller's behalf (2j, 2k). A process that fails to run takes the same road
+  with `code: 1`, so a handle that is waiting is never left waiting for news that
+  cannot come.
 - `wait()` answers with what the process left behind. A handle whose *connection*
   is gone rejects instead: after the wire, a process that keeps running cannot be
   told from one that died with it.
@@ -303,6 +309,50 @@ kid.isConnected();      // false
   knows only that it is gone.
 - Releasing is not stopping: nothing is asked of the process, and whether it keeps
   running is not this connection's business any more.
+
+### How much is said about a process — done (2j, 2k)
+
+Everything said about a process that crossed is one of three categories — what it says
+(`message`), what it holds (`state`), and that it is over (`exit`) — and a handle
+decides which of them cross:
+
+```ts
+const kid = proc.state.kid;            // RemoteProcess
+kid.subscribe("message", (msg) => …);  // asking to hear what it says arms `message`
+kid.subscribe("state", () => …);       // and so does this for what it holds
+await kid.wait();                      // waiting is a subscription to the end
+kid.tune(["state", "exit"]);           // or ask for exactly this much, and no more
+kid.tune("silent");                    // nothing at all: the empty list
+```
+
+- **A process that crosses is silent.** A `$tune` frame names the categories that cross
+  from then on — `{"$tune": {"streams": ["state"]}, "to": 3}` — and the list is absolute
+  rather than a difference, written in the one order the three are ever named in.
+  Silence is the empty list, so a handle that asks for nothing hears nothing.
+- The announcement is not one of the three.  `$r.methods` crosses even in silence and
+  once per process: a handle that cannot name a method can do nothing with the process
+  however much it is told about it, so this is not something to be asked for.
+- **Asking for the state says it there and then.** In silence the far side has heard
+  nothing about its state, so a handle that has just asked for it gets what it holds at
+  once rather than waiting for it to change.
+- **Subscribing is asking.** The first thing that wants a category is what turns it on,
+  and unsubscribing leaves it on: the far side is not told to stop saying something that
+  another subscriber may still want.  `wait()` and `stop()` are subscriptions to the end,
+  and `stop()` asks for it before it asks the process to stop — whether an exit is sent
+  is decided by what the far side has been asked for when it comes.
+- **Silence is silence.** An `exit` nobody asked for is not sent, so a handle can be left
+  that never learns the process is over, and a `wait()` on it never answers.  The far
+  side's table keeps that id, as it does for every process that ends: an id is never
+  handed out again (2b), so a process that ends and one that was let go of both leave a
+  number that means nothing.
+- **The root of a connection is the exception.** It is not a process that was handed over
+  but the one the handing over is done through: what is said about it — `$r.methods`, its
+  state, its messages — is the connection's own, as it always was, and a `$tune` addressed
+  to it finds no stream and says nothing.
+- One side's asking is the other side's stream: a tune addresses the process it is about,
+  and is acted on by the side that holds it.  An id this side does not stream has nothing
+  to tune, and a frame naming a category the vocabulary has no word for is dropped rather
+  than guessed at.
 
 What is left: orphans, marked TBD in this document until they are thought through
 (2g). Two gaps beside those: a method call from the far side into a process
@@ -354,7 +404,12 @@ declare module "posipaki" {
     handle; both directions, over a real subprocess as well
 13. Letting a handle go — done (2h): `$release`, the id dropped on the far side, the
     handle dead on this one, and `isConnected()` as the single answer about that
-14. Tests: local invocation, plugin registration, wire round-trip, concurrent
+14. Saying less about a process — done (2j): `$tune`, `tune()` on the handle, only the
+    categories asked for crossing, and the state said the moment it is asked for
+15. Silence by default — done (2k): a process that crosses says nothing until the far
+    side asks, which a subscription, a `wait()` or a `tune()` does; the root of a
+    connection is the one thing that still says what it always said
+16. Tests: local invocation, plugin registration, wire round-trip, concurrent
     calls, refusals, references over a real subprocess — done; and every carrier
     of a reference — a message body, a call argument, a state update that replaces
     one process with another — tested in both directions (2e)
