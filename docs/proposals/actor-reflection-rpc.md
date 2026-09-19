@@ -1,25 +1,22 @@
 # Actor Reflection RPC
 
-**Status:** draft
+**Status:** increment 1 (calling reflection methods over the seam) and increment
+2a (process references both ways) are implemented; 2b (addressing a process by
+its reference) is not.
 
 ## Summary
 
-Add a generic reflection/RPC mechanism to `defineActor`. Actors can
-expose named methods callable through `actor.$reflection.method()`.
-For local actors, methods are invoked directly. For remote actors
-(via `defineRemoteActor`), calls are translated to wire protocol
-messages with request-response matching and timeouts.
+`defineActor` actors expose named methods through `actor.$reflection.method()`,
+reachable from outside the message loop. Locally a method is invoked and its
+value wrapped; behind a wire the call is a frame and the answer is a frame. A
+call reads the same in both cases: it answers with a promise.
 
 ## Motivation
 
-Currently there is no way to inspect or interact with a running actor
-from outside its message handlers. The persona (or operator) can't ask
-"what children do you have?", "what's your state?", or "please stop."
-All interaction must go through the message dispatch loop.
-
-Reflection methods provide a side-channel for introspection and
-control — discoverable, typed, and available both locally and across
-process boundaries.
+There is no way to inspect or drive a running actor from outside its message
+handlers. The persona (or an operator) cannot ask "what children do you have?",
+"what is your state?", or "please stop" without a message type per question, and
+none of that survives a process boundary at all.
 
 Concrete use cases:
 
@@ -32,12 +29,12 @@ Concrete use cases:
 
 ### defineActor config
 
-`defineActor` gets a new optional field `$reflectionMethods`:
+`defineActor` takes `$reflectionMethods`:
 
 ```ts
 const actor = defineActor({
   $reflectionMethods: {
-    ping: () => 'pong',
+    ping: () => "pong",
     getStatus(): { uptime: number } {
       return { uptime: Date.now() - this.state.startedAt };
     },
@@ -46,145 +43,166 @@ const actor = defineActor({
 });
 ```
 
-Methods have access to `this` (the ActorContext) — same as handlers
-and lifecycle hooks.
+Methods have access to `this` (the `ActorContext`) — the same `this` handlers and
+lifecycle hooks get.
 
 ### Plugin API
 
-Plugins register reflection methods via `ctx.registerMethod()`:
+Plugins contribute methods through `mergeConfigs`, so a plugin's names live in
+its own namespace:
 
 ```ts
-const myPlugin: ActorPlugin = {
-  name: "myPlugin",
-  install(ctx) {
-    ctx.registerMethod("ping", () => "pong");
-    ctx.registerMethod("stop", () => ctx.agreeToStop());
-  },
-};
+const myPlugin: ActorPlugin = async (config) =>
+  mergeConfigs(config, {
+    $reflectionMethods: {
+      ...config.$reflectionMethods,
+      "myPlugin.ping": async function () {
+        return "pong";
+      },
+    },
+  });
 ```
 
-This follows the same pattern as `ctx.onMessage()`, `ctx.onEmit()`,
-`ctx.decorate()` — a registration point on the actor context available
-during plugin `install()`.
+### `$reflection`
 
-### $reflection namespace
-
-Both sources (config + plugins) merge into `actor.$reflection`:
+Both sources merge into the process handle's `$reflection`:
 
 ```ts
-const proc = actor.spawn(args);
-
-// Call reflection methods
+const proc = await actor.spawn(args);
 const status = await proc.$reflection.getStatus();
 await proc.$reflection.stop();
 ```
 
-The `$reflection` proxy is lazy — it intercepts property access and
-either invokes the method directly (local actor) or sends a wire
-message (remote actor).
+Every method is async, and that is enforced by type rather than by convention:
+`ReflectionMethod` is `(...args: never[]) => Promise<unknown>`,
+`ReflectionOptions` is an index signature over it, and `ActorReflection`
+extends `ReflectionOptions` — so a method declared `() => number` does not
+compile. The parameters are `never` because nothing is called *through* the
+type; it exists to check what a method is written as.
+
+`defineActor` wraps each method so that whatever it returns reaches the caller as
+a promise (see Implementation 4).
 
 ### Wire protocol
 
-Three new message types in the `$reflect` namespace:
+Three frames, in the `$r` family:
 
 ```
-$reflect.method  { id: number, method: string, args?: unknown[] }
-$reflect.result  { id: number, data: unknown }
-$reflect.error   { id: number, message: string, code?: string }
+{"$r.methods": ["inspect.getTree", …]}     server → client, once
+{"$r.call.<name>": {seq, args}}            client → server
+{"$r.result.<name>": {seq, value}}         server → client
+{"$r.result.<name>": {seq, error}}         server → client
 ```
 
-**Request-response matching**: each `$reflect.method` carries a
-monotonically increasing `id` (per connection). The corresponding
-`$reflect.result` or `$reflect.error` carries the same `id`. The
-caller keeps a `Map<number, PromiseResolver>` and resolves when the
-matching response arrives.
+The method name is in the frame key, so a frame says what it is without a table.
 
-**Timeouts**: if no response arrives within a configurable timeout
-(default 5 seconds), the promise rejects with a synthetic
-`$reflect.error { code: 'timeout' }`.
+**Request-response matching**: `seq` belongs to one connection and is never
+reused. The answer carries the `seq` of the call it belongs to, so two calls to
+the same method in flight at once stay apart, and answers may come back in any
+order. The caller keeps a `Map<number, …>` and settles the matching promise.
 
-**Auto-rejection**: if the remote doesn't recognize the method (no
-handler registered), the protocol layer replies with:
+**Unknown method**: a name the server never announced is answered with
+`{seq, error}` — the announced list *is* the dispatch table, so no frame can
+reach a property the actor did not offer.
 
-```
-$reflect.error { id, message: 'unknown method: <name>', code: 'unknown_method' }
-```
+**Refused results**: a method that throws, and a result that cannot cross a frame
+(a function, a symbol, a bigint, a value with a cycle), are answered with
+`{seq, error}` rather than half-written.
 
-No silent drops, no hanging promises.
+**No deadline.** A call that is never answered fails when the wire closes; a
+configured timeout was considered and left out of scope. The transport already
+reports a peer that is gone, and a deadline would have to tell "slow" from
+"gone" without knowing which the far side is.
 
 ### Capability advertisement
 
-During `$proto` handshake, each side advertises its available methods:
+The server announces what it can answer — `{"$r.methods": [names]}` — once, after
+its actor is ready and before the first `$state`. The client installs one
+function per announced name on `$reflection`; a name that is never announced is
+never callable, so a peer that announces nothing simply has no methods.
 
-```json
-{
-  "proto": "posipaki-1",
-  "plugins": ["treeIntrospection"],
-  "methods": ["getTree", "getState", "stop"]
-}
+It cannot ride the `$proto` handshake: the spawner performs that one, and a
+spawner has no actor — nothing to ask about what can be answered. The list is
+computed after `spawn()`, which is also the first moment it is true.
+
+### Process references
+
+A process is not JSON, so a method that returns one answers with a reference:
+
+```
+{"$p": {"id": 3, "pname": "main:worker"}}
 ```
 
-The host can check `methods` before calling — avoid sending
-`$reflect.method` to actors that won't respond.
+- Ids belong to a connection and to the side that holds the process. One per
+  process — handed over twice, it is the same id both times — monotonic, and
+  never reused, so a stale reference cannot come to mean another process.
+- Ids start at 1. Id 0 is never handed out: it stays free for the remote root,
+  which a frame names by carrying no id at all.
+- Containers are copied, never rewritten: the state an actor is still running on
+  is not the wire's to edit.
+- Both sides parse references: a result on the caller's side, an argument on the
+  answerer's. Parsing gives an `UnreachableRemoteProcess` — the id and the name,
+  and no way to reach it. A reference sent back travels as the id it came with.
 
-### Remote connector integration
+What makes a value a process is judged by what it holds, not by `instanceof`: a
+build inlines its own copy of `AsyncProcess` per entry point, so a process built
+by `posipaki` is not an instance of the class inside `posipaki/remote`.
 
-**Host side** (`host.ts`): `RemoteProxy.$reflection` intercepts method
-calls, assigns an `id`, sends `$reflect.method` over the wire, returns
-a promise that resolves on `$reflect.result` or rejects on
-`$reflect.error`/timeout.
+### What 2b adds
 
-**Child side** (`child.ts`): the wire protocol layer receives
-`$reflect.method`, looks up the method in the registered handlers,
-invokes it, sends `$reflect.result` with the return value or
-`$reflect.error` if the method throws or is unknown.
+- `to: <id>` on the frames that address a process (`$msg`, calls, lifecycle), with
+  an absent id meaning the remote root.
+- Resolving an id against the connection's table, so a reference converges with
+  the process it names.
+- Telling the holder when a process behind a handed-out id dies, so a handle
+  cannot look alive forever without a subscription per handle.
 
 ### TypeScript
 
-Methods are typed — `$reflection` carries the union of all registered
-method signatures:
+Config-defined methods are typed from the config; plugin methods through
+declaration merging on `ActorReflection`. Both are held to the async contract:
 
 ```ts
-type ReflectionOf<T extends ActorDefinition<...>> = {
-  [K in keyof T['config']['$reflectionMethods']]:
-    T['config']['$reflectionMethods'][K] extends (...args: infer A) => infer R
-      ? (...args: A) => Promise<R>
-      : never;
-};
+declare module "posipaki" {
+  interface ActorReflection {
+    "myPlugin.getCount": () => Promise<number>;
+  }
+}
 ```
-
-Plugin-registered methods can't be statically typed (they're dynamic),
-but `$reflection` is typed as `Record<string, (...args: any[]) => Promise<unknown>>`
-for the dynamic portion.
 
 ## Implementation plan
 
-1. Add `$reflectionMethods` to `ActorConfig` type
-2. Build the `$reflection` proxy on `AsyncProcess` — intercepts property access
-3. Add `ctx.registerMethod()` to `ActorContext`
-4. Merge config methods + plugin methods into the handler map
-5. Add `$reflect.method`/`$reflect.result`/`$reflect.error` to the wire protocol
-6. Integrate into `host.ts` (RemoteProxy) and `child.ts` (runChild)
-7. Add capability advertisement to `$proto` handshake
-8. TypeScript: type inference for config-defined methods
-9. Tests: local invocation, plugin registration, wire round-trip, timeout, unknown method
+1. `$reflectionMethods` in `ActorConfig` — done
+2. `$reflection` on the process, filled by `defineActor` — done, one object with
+   the context's own `reflection`
+3. Plugin registration — done through `mergeConfigs`
+4. Method wrapping, so a call answers with a promise — done
+5. Wire frames — done, as `$r.call.<name>` / `$r.result.<name>`
+6. The seam (`client.ts` / `server.ts`) — done
+7. Capability advertisement — done, as `$r.methods` before the first `$state`
+8. Process references, both directions — done (2a)
+9. Addressing a process by reference — pending (2b)
+10. Tests: local invocation, plugin registration, wire round-trip, concurrent
+    calls, refusals, references over a real subprocess — done
 
 ## Open questions
 
-- **Should `$reflection` return `Promise` always?** Yes — keeps the
-  API uniform. Local calls resolve synchronously but still return
-  a Promise.
-- **Should method args be serializable?** Yes — same constraints as
-  wire messages. JSON-serializable only for remote calls.
+- **Should `$reflection` return `Promise` always?** Yes, and it does — the type
+  contract requires it, so a local call and a call over a wire are read the same
+  way.
+- **Should method args be serializable?** Yes: what crosses is JSON, plus
+  references to processes. Anything else is refused before it is written, rather
+  than dropped by the encoder.
 - **Should there be a way to list available methods at runtime?**
-  `actor.$reflection.$methods()` could return the registered method
-  names. Useful before calling.
-- **Error propagation?** If a method throws, the error message is sent
-  as `$reflect.error` with `code: 'method_error'`. The original stack
-  trace is lost across the wire (by design — different process).
+  `$reflection.$methods()` could answer with the announced names. The client
+  keeps the list; it is not exposed.
+- **Error propagation?** A method's own message crosses; the stack does not
+  (different process). The wire carries a message, not a code: a caller that
+  wants codes has to read the message or the framework has to classify.
 
 ## Related
 
 - [Remote Actors](actor-remote.md)
 - [Actor Plugin System](actor-plugin-system.md)
 - [defineActor Proposal](define-actor-proposal.md)
+- [Migration: reflection methods are async](../migration/reflection-methods-are-async.md)
