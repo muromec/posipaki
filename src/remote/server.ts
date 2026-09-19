@@ -11,7 +11,6 @@ import type { Channel } from "./channel.js";
 import {
   ProcessTable,
   ROOT_ID,
-  encodeProcessRefs,
   isRemoteProcess,
   type ProcessHandle,
   type ProcessRef,
@@ -21,7 +20,6 @@ import { ProcessStreams, reflectionNames } from "./process-streams.js";
 import { makeSender } from "./sender.js";
 import {
   REFLECT_METHODS,
-  REFLECT_RESULT,
   asReflectionCall,
   decodeFrame,
   encodeFrame,
@@ -35,10 +33,10 @@ import {
   isState,
   isStop,
   isTune,
-  jsonProblem,
+  isReflectionMethods,
   tuneFrame,
-  type ReflectionCall,
 } from "./channel.js";
+import { CallSide, answerCall } from "./call-side.js";
 
 export type Spawner = () => Promise<Channel>;
 
@@ -61,10 +59,15 @@ export async function serveRemoteActor<
   // that carried it.
   const table = new ProcessTable<ProcessHandle>("even", (proc, id) => streams.crossed(proc, id));
 
-  const sendToFrame = async (frame: Record<string, unknown>, to: number): Promise<void> => {
-    await channel.send(encodeFrame(frame, table, to));
+  /** Put an encoded frame on the wire, and then say what it numbered.  A frame that
+   *  carried a reference has to be out before anything about that process is. */
+  const write = async (frame: Record<string, unknown>): Promise<void> => {
+    await channel.send(frame);
     streams.flush();
   };
+
+  const sendToFrame = (frame: Record<string, unknown>, to: number): Promise<void> =>
+    write(encodeFrame(frame, table, to));
 
   const sendTo: FrameSink = (frame, to) => {
     void sendToFrame(frame, to).catch((e: unknown) => {
@@ -75,6 +78,10 @@ export async function serveRemoteActor<
   // Everything is in place to speak: the sink writes to the wire, and what the
   // table numbers crosses through it.
   const streams = new ProcessStreams(sendTo);
+
+  // Both ends of a connection make calls and answer them: a process the far side
+  // holds is asked the same way this side is asked.
+  const calls = new CallSide(write, table);
 
   /** The handle for a reference that arrived: the same one every time, and the
    *  process itself when the reference names a process of this side's own. */
@@ -142,47 +149,12 @@ export async function serveRemoteActor<
   await sendToFrame({ [REFLECT_METHODS]: reflectionNames(proc) }, ROOT_ID);
   await sendToFrame({ $state: proc.state as Record<string, unknown> }, ROOT_ID);
 
-  /** Call one announced reflection method and answer with what it said, or why not. */
-  async function answerCall(call: ReflectionCall, target: ProcessHandle | undefined): Promise<void> {
-    const reply = (body: Record<string, unknown>) =>
-      sendToFrame({ [`${REFLECT_RESULT}${call.name}`]: body }, ROOT_ID);
-    // Only a process this side holds can be asked: the id a call names is the
-    // holder's own, and this side is the holder of what it serves.
-    if (!isProcess(target)) {
-      await reply({ seq: call.seq, error: "no process with that id on this connection" });
-      return;
-    }
-    const names = reflectionNames(target);
-    const surface = target.$reflection as unknown as Record<string, Function>;
-    const method = names.includes(call.name) ? surface[call.name] : undefined;
-    if (typeof method !== "function") {
-      await reply({ seq: call.seq, error: `no reflection method named ${call.name}` });
-      return;
-    }
-    try {
-      // A method may be written for a call that answers later; the wire has no
-      // opinion about that, it just waits for the frame.
-      // References in the arguments become handles on the far side's processes,
-      // and processes in the answer become references.  What is left has to be
-      // JSON, or the call is refused rather than half-written.
-      const value = encodeProcessRefs(await method(...call.args), table);
-      const problem = jsonProblem(value);
-      if (problem !== null) {
-        await reply({
-          seq: call.seq,
-          error: `${call.name} returned ${problem}, which cannot cross a frame`,
-        });
-        return;
-      }
-      await reply({ seq: call.seq, value });
-    } catch (err) {
-      await reply({ seq: call.seq, error: err instanceof Error ? err.message : String(err) });
-    }
-  }
-
   // bridge channel input → actor
   function dispatch(raw: Record<string, unknown>): void {
     const frame = decodeFrame(raw, handleFor);
+    // An answer is about the call waiting for it and not about a process: it names
+    // the seq, and is settled before anything is looked up.
+    if (calls.settle(frame)) return;
     const to = frameTo(frame);
     const target = to === null ? undefined : table.resolve(to);
     if (isRelease(frame)) {
@@ -205,6 +177,18 @@ export async function serveRemoteActor<
       if (to !== null) {
         const kinds = tuneFrame(frame);
         if (kinds !== null) streams.tune(to, kinds);
+      }
+      return;
+    }
+    if (isReflectionMethods(frame)) {
+      // What a process the far side holds can answer, said the moment it crossed:
+      // the handle here reads it as its own surface, so a name asked on it is asked
+      // there.  An announcement about a process of this side's own is this side's to
+      // make, not the far side's to tell it.
+      if (isRemoteProcess(target)) {
+        target.receiveMethods(frame[REFLECT_METHODS], (method, args) =>
+          calls.call(method, args, target.ref.id),
+        );
       }
       return;
     }
@@ -243,7 +227,7 @@ export async function serveRemoteActor<
       return;
     }
     const call = asReflectionCall(frame);
-    if (call) void answerCall(call, target);
+    if (call) void answerCall(call, target, write, table);
   }
 
   channel.removeHandler();
@@ -263,6 +247,9 @@ export async function serveRemoteActor<
   stopMirroringMessage();
   stopMirroringState();
   streams.stopAll();
+  // A call this side made and the far side has not answered is not going to be
+  // answered now; it fails here rather than hanging.
+  calls.rejectAll();
   await sendToFrame({ $exit: { code, state: proc.state } }, ROOT_ID);
   await channel.close();
 }

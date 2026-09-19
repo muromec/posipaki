@@ -17,8 +17,8 @@ import { ProcessStreams } from "./process-streams.js";
 import { RemoteProcess, type FrameSink } from "./remote-process.js";
 import { makeSender } from "./sender.js";
 import {
-  REFLECT_CALL,
-  asReflectionResult,
+  REFLECT_METHODS,
+  asReflectionCall,
   decodeFrame,
   encodeFrame,
   frameTo,
@@ -31,9 +31,9 @@ import {
   isReflectionMethods,
   isState,
   isTune,
-  jsonProblem,
   tuneFrame,
 } from "./channel.js";
+import { CallSide, answerCall } from "./call-side.js";
 
 export type ClientSpawner<Args> = (args: Args) => Promise<Channel>;
 
@@ -114,40 +114,10 @@ export function remoteClient<
       let currentState: Record<string, unknown> = {};
 
       // ── the call side ──────────────────────────────────────────────────
-      // `seq` belongs to this connection and is never reused, so two calls to
-      // the same method in flight at once stay apart; the answer names the one
-      // it belongs to, whichever process it was asked of.
-      let calls = 0;
-      const pending = new Map<
-        number,
-        { name: string; resolve: (value: unknown) => void; reject: (error: Error) => void }
-      >();
-
-      const callMethod = (method: string, callArgs: unknown[], to: number): Promise<unknown> =>
-        new Promise((resolve, reject) => {
-          // Processes among the arguments become references first — mine, with
-          // ids from my table, or the far side's own coming back — and what is
-          // left has to be JSON, or nothing is sent at all.
-          const seq = ++calls;
-          const frame = encodeFrame({ [`${REFLECT_CALL}${method}`]: { seq, args: callArgs } }, table, to);
-          const problem = jsonProblem(frame);
-          if (problem !== null) {
-            reject(new Error(`cannot send ${problem} to ${method}`));
-            return;
-          }
-          pending.set(seq, { name: method, resolve, reject });
-          void write(frame).catch((error: unknown) => {
-            pending.delete(seq);
-            reject(error instanceof Error ? error : new Error(String(error)));
-          });
-        });
-
-      /** One function per announced name, on the surface whoever calls reads. */
-      const install = (surface: Record<string, unknown>, methods: string[], to: number): void => {
-        for (const method of methods) {
-          surface[method] = (...callArgs: unknown[]) => callMethod(method, callArgs, to);
-        }
-      };
+      // This side both makes calls and answers them, and so does the other end of
+      // every connection: what a call is, and how an answer finds the one waiting
+      // for it, is written once in call-side.ts.
+      const calls = new CallSide(write, table);
 
       /**
        * The handle for a reference that arrived.  A process handed over twice is
@@ -182,9 +152,12 @@ export function remoteClient<
 
       channel.onMessage((raw) => {
         const frame = decodeFrame(raw, handleFor);
-        // Every frame is looked up once, by the process it is about — the root
-        // when it says nothing — so which frames a connection accepts is the
-        // table's answer, not a rule per frame kind.
+        // An answer is about the call waiting for it and not about a process: it
+        // names the seq, and is settled before anything is looked up.  Every other
+        // frame is looked up once, by the process it is about — the root when it says
+        // nothing — so which frames a connection accepts is the table's answer, not a
+        // rule per frame kind.
+        if (calls.settle(frame)) return;
         const to = frameTo(frame);
         const target = to === null ? undefined : table.resolve(to);
         // An id this connection knows nothing about: nothing to deliver to.
@@ -206,8 +179,11 @@ export function remoteClient<
           else if (isMsg(frame)) target.receiveMessage(frame.$msg.body as OutMsg, frame.$msg.fromName);
           else if (isExit(frame)) target.receiveExit(frame.$exit);
           else if (isReflectionMethods(frame)) {
-            target.receiveMethods(frame["$r.methods"], (method, callArgs) =>
-              callMethod(method, callArgs, target.ref.id),
+            // What the far side holds can answer, and how this side asks it: what
+            // was announced is the whole surface, so a name never announced is never
+            // called here either.
+            target.receiveMethods(frame[REFLECT_METHODS], (method, callArgs) =>
+              calls.call(method, callArgs, target.ref.id),
             );
           }
           return;
@@ -228,6 +204,12 @@ export function remoteClient<
               // its to ask, and this is where the asking lands.
               const kinds = tuneFrame(frame);
               if (kinds !== null) streams.tune(to, kinds);
+            } else {
+              // A call into a process of this side's own, made from over there: the
+              // method is this side's to run, and the answer goes back by name and
+              // seq, the way the root's does.
+              const call = asReflectionCall(frame);
+              if (call) void answerCall(call, target, write, table);
             }
           }
           return;
@@ -247,24 +229,17 @@ export function remoteClient<
             exitResolver = null;
           }
         } else if (isReflectionMethods(frame)) {
-          install(this.reflection as unknown as Record<string, unknown>, frame["$r.methods"], ROOT_ID);
-        } else {
-          const result = asReflectionResult(frame);
-          if (!result) return;
-          const waiting = pending.get(result.seq);
-          if (!waiting) return;
-          pending.delete(result.seq);
-          if (result.error === undefined) waiting.resolve(result.value);
-          else waiting.reject(new Error(`${waiting.name}: ${result.error}`));
+          calls.install(
+            this.reflection as unknown as Record<string, unknown>,
+            frame[REFLECT_METHODS],
+            ROOT_ID,
+          );
         }
       });
       channel.onClose(() => {
         // A call that was in flight when the wire went away has no answer
         // coming; it fails here rather than hanging forever.
-        for (const waiting of pending.values()) {
-          waiting.reject(new Error(`connection closed before ${waiting.name} answered`));
-        }
-        pending.clear();
+        calls.rejectAll();
         // Handles live on this connection: with it gone there is nothing to
         // reach, and nothing to wait for either.
         for (const held of table.handles()) {

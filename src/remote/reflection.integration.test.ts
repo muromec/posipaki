@@ -34,6 +34,18 @@ const worker = defineActor({
   async setup() {
     return { pings: 0 };
   },
+  $reflectionMethods: {
+    // Something for the far side to ask for: a method of a process of this side's
+    // own is this side's to run, wherever the asking comes from.
+    async "probe.ping"(n: number) {
+      this.state.pings += n;
+      this.ctx.notify();
+      return `pong:${n}`;
+    },
+    async "probe.boom"() {
+      throw new Error("mine said no");
+    },
+  },
   handlers: {
     async PING() {
       this.state.pings += 1;
@@ -167,6 +179,21 @@ describe("reflection across a process boundary", () => {
     // the stream that started when it crossed.
     expect(seen).toEqual({ heard: ["PONG"], pings: 1 });
     expect((mine.state as unknown as { pings: number }).pings).toBe(1);
+
+    await mine.stop();
+    await proc.stop();
+  }, 20000);
+
+  it("answers a call into a process of mine, made from over there", async () => {
+    const { proc, surface } = await spawnPayload();
+
+    const mine = await worker.spawn({});
+    // Handed over inside the call that asks about it: the far side gets a handle, and
+    // the method it names is run here, where the process lives.
+    expect(await surface["probe.ask"](mine, "probe.ping", [2])).toBe("pong:2");
+    expect((mine.state as unknown as { pings: number }).pings).toBe(2);
+    // A method that refuses refuses with its own reason, and the reason crosses.
+    await expect(surface["probe.ask"](mine, "probe.boom", [])).rejects.toThrow("mine said no");
 
     await mine.stop();
     await proc.stop();

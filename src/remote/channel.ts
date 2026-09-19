@@ -172,16 +172,20 @@ export function tuneFrame(frame: { $tune: unknown }): StreamKind[] | null {
 
 // ── reflection frames ──────────────────────────────────────────────────────
 //
-// A reflection call crosses the seam as one frame and its answer as another:
+// A reflection call crosses the seam as one frame and its answer as another, and
+// both go both ways: whoever holds a process is the one that answers for it.
 //
-//   {"$r.methods": ["inspect.getTree", …]}   the server's announcement, once
-//   {"$r.call.<name>": {seq, args}}          client → server
-//   {"$r.result.<name>": {seq, value}}       server → client, answered
-//   {"$r.result.<name>": {seq, error}}       server → client, refused
+//   {"$r.methods": ["inspect.getTree", …]}   what a process can answer, once, when
+//                                            it crosses (and, for the root, once
+//                                            when the connection opens)
+//   {"$r.call.<name>": {seq, args}}          asking, addressed to the process
+//   {"$r.result.<name>": {seq, value}}       answered
+//   {"$r.result.<name>": {seq, error}}       refused
 //
 // The method name is in the frame key, so a frame says what it is without a
 // table, and `seq` — one connection's, never reused — tells two calls to the
-// same method apart while both are in flight.
+// same method apart while both are in flight.  An answer is about the call and not
+// about a process, so it carries no address: it names the seq it settles.
 
 export const REFLECT_METHODS = "$r.methods";
 export const REFLECT_CALL = "$r.call.";

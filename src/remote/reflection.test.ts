@@ -391,6 +391,36 @@ describe("a process of this side, handed over", () => {
     await mine.stop();
     await endProxy(channel, proc);
   });
+  it("answers a call into a process of mine, where it lives", async () => {
+    const { channel, proc, surface } = await spawnProxy(["probe.use"]);
+
+    const mine = await Echo.spawn({});
+    const answer = surface["probe.use"]!(mine);
+    await waitUntil(() => channel.sent.some((f) => frameKey(f, REFLECT_CALL)), "the call");
+    channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
+    await answer;
+
+    // A call the far side addressed to it: the method is this side's to run, and the
+    // answer goes back by name and seq the way the root's does.
+    channel.handler!({ to: 1, [`${REFLECT_CALL}echo.pings`]: { seq: 7, args: [] } });
+    await waitUntil(() => answersFor(channel, "echo.pings").length === 1, "the answer");
+    expect(answersFor(channel, "echo.pings")[0]).toEqual({ seq: 7, value: 0 });
+    // Answered to the root: an answer is about the call, not about a process.
+    const answered = channel.sent.find((f) => `${REFLECT_RESULT}echo.pings` in f);
+    expect(answered?.to).toBeUndefined();
+
+    // A name it cannot answer is refused, and the refusal names it.
+    channel.handler!({ to: 1, [`${REFLECT_CALL}echo.nope`]: { seq: 8, args: [] } });
+    await waitUntil(() => answersFor(channel, "echo.nope").length === 1, "the refusal");
+    expect(answersFor(channel, "echo.nope")[0]).toEqual({
+      seq: 8,
+      error: "no reflection method named echo.nope",
+    });
+
+    await mine.stop();
+    await endProxy(channel, proc);
+  });
+
   it("makes a handle of a reference that arrived inside a message body", async () => {
     const { channel, proc } = await spawnProxy(["probe.ask"]);
     const heard: Message[] = [];
@@ -708,6 +738,13 @@ function makeProbe() {
       async "probe.held"() {
         return held ? { pname: held.pname, state: held.state } : null;
       },
+      async "probe.ask"(method: string, args: unknown[]) {
+        // A method of a process of the far side's own.  What was announced is the
+        // whole surface here too, so a name it never announced is not there to ask.
+        const asked = held?.$reflection[method];
+        if (typeof asked !== "function") throw new Error(`nothing to ask: ${method}`);
+        return await asked(...args);
+      },
       async "probe.stateOf"() {
         return this.state;
       },
@@ -783,6 +820,7 @@ describe("serveRemoteActor reflection", () => {
       "probe.whatItGot",
       "probe.take",
       "probe.held",
+      "probe.ask",
       "probe.stateOf",
       "probe.sendChild",
       "probe.swap",
@@ -1014,6 +1052,40 @@ describe("serveRemoteActor reflection", () => {
       seq: 23,
       value: { pname: "mine", state: null },
     });
+
+    await endServer(channel, served);
+  });
+
+  it("asks a process it holds for a method the far side announced", async () => {
+    const { channel, served } = await serveProbe();
+
+    // A process of the far side's, handed over inside a message, and then what it can
+    // answer: the announcement is how a method of it becomes callable here.
+    channel.handler!({
+      $msg: {
+        fromName: "client",
+        body: { type: "KEEP", kid: { [PROCESS_REF]: { id: 1, pname: "mine" } } },
+      },
+    });
+    await waitUntil(() => channel.sent.some((f) => isState(f) && "kept" in f.$state), "the state it set");
+    channel.handler!({ to: 1, [REFLECT_METHODS]: ["echo.pings"] });
+
+    channel.handler!({ [`${REFLECT_CALL}probe.ask`]: { seq: 30, args: ["echo.pings", []] } });
+    await waitUntil(() => channel.sent.some((f) => f.to === 1 && frameKey(f, REFLECT_CALL)), "the call it made");
+    const made = asReflectionCall(channel.sent.find((f) => f.to === 1 && frameKey(f, REFLECT_CALL))!)!;
+    expect(made.name).toBe("echo.pings");
+    expect(made.args).toEqual([]);
+
+    // The test plays the far side and answers the call it was asked: the answer is
+    // what the method here waits for, and its own answer follows.
+    channel.handler!({ [`${REFLECT_RESULT}echo.pings`]: { seq: made.seq, value: 0 } });
+    await waitUntil(() => answerFor(channel, "probe.ask") !== undefined, "the answer");
+    expect(answerFor(channel, "probe.ask")).toEqual({ seq: 30, value: 0 });
+
+    // And a name that was never announced is not there to ask.
+    channel.handler!({ [`${REFLECT_CALL}probe.ask`]: { seq: 31, args: ["echo.nope", []] } });
+    await waitUntil(() => answersFor(channel, "probe.ask").length === 2, "the refusal");
+    expect(answersFor(channel, "probe.ask")[1]).toEqual({ seq: 31, error: "nothing to ask: echo.nope" });
 
     await endServer(channel, served);
   });

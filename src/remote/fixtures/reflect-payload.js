@@ -80,6 +80,16 @@ const reflector = defineActor({
       stop();
       return { heard, pings: handle.state?.pings };
     },
+    async "probe.ask"(handle, method, args) {
+      // A method of a process of the far side's own, asked from here.  What it can
+      // answer is announced on its own frame, which comes after the one that carried
+      // the reference, so the surface is waited for rather than assumed.
+      await until(
+        () => typeof handle.$reflection?.[method] === "function",
+        `the announcement of ${method}`,
+      );
+      return await handle.$reflection[method](...args);
+    },
     async "probe.boom"() {
       throw new Error("probe said no");
     },
