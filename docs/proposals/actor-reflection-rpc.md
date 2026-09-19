@@ -249,8 +249,10 @@ await surface["probe.poke"](myChild);   // myChild is numbered 1 here, and a han
 - The wire carries a sender as a name, since a symbol cannot be written down. A
   side turns the name back into a sender, and uses the parent's stable id when the
   name is the one the receiving process was told is its parent.
-- A method call *into* a process this side holds is not answered yet: the
-  announcement arrives, and the call side of it is still to come.
+- A method call *into* a process this side holds is answered here: the announcement
+  that crossed with the reference is the surface the far side reads, and a call it
+  makes is a frame this side answers by name and seq, exactly as the root's are.
+  The call side is one implementation for both ends of a connection.
 
 ### Control and the end of a process — done (2f)
 
@@ -364,12 +366,10 @@ kid.tune("silent");                    // nothing at all: the empty list
   than guessed at.
 
 What is left: orphans, marked TBD in this document until they are thought through
-(2g). Two gaps beside those: a method call from the far side into a process
-this side holds is still not answered — the announcement arrives, the call side of
-it does not — and a process handed over as *the root of a connection* is read by
-the far side as its own root, since id 0 means that on both ends. Nothing exercises
-the second one; making it work would mean numbering the root like any other process
-when it crosses.
+(2g) and left as undefined behaviour until they are. One gap beside them: a process
+handed over as *the root of a connection* is read by the far side as its own root,
+since id 0 means that on both ends. Nothing exercises it; making it work would mean
+numbering the root like any other process when it crosses.
 
 ### Orphans — TBD (2g)
 
@@ -422,6 +422,12 @@ declare module "posipaki" {
     calls, refusals, references over a real subprocess — done; and every carrier
     of a reference — a message body, a call argument, a state update that replaces
     one process with another — tested in both directions (2e)
+17. Calls both ways — done: a process a side hands over answers the methods it
+    announced.  One call side serves both ends (`call-side.ts`): the `seq` and the
+    calls waiting under it, the surface a handle reads, the answer that settles it,
+    and the refusal of a call that cannot be answered.  The root is not a special
+    case — its methods are announced and asked the same way, only over the
+    connection's own frames
 
 ## Open questions
 
