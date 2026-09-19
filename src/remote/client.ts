@@ -11,7 +11,14 @@ import type { HookResult } from "../hooks.js";
 import type { ActorDefinition, HandlerOptions, MethodOptions, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
-import { isState, isMsg, isExit } from "./channel.js";
+import {
+  REFLECT_CALL,
+  asReflectionResult,
+  isExit,
+  isMsg,
+  isReflectionMethods,
+  isState,
+} from "./channel.js";
 
 export type ClientSpawner<Args> = (args: Args) => Promise<Channel>;
 
@@ -46,8 +53,43 @@ export function remoteClient<
       });
 
       let currentState: Record<string, unknown> = {};
+
+      // ── the call side ──────────────────────────────────────────────────
+      // Every reflection method the far side announced becomes one function on
+      // this process's reflection surface.  `seq` belongs to this connection
+      // and is never reused, so two calls to the same method in flight at once
+      // stay apart; the answer names the one it belongs to.
+      let calls = 0;
+      const pending = new Map<
+        number,
+        { name: string; resolve: (value: unknown) => void; reject: (error: Error) => void }
+      >();
+
+      const install = (methods: string[]): void => {
+        const surface = this.reflection as unknown as Record<string, unknown>;
+        for (const method of methods) {
+          surface[method] = (...callArgs: unknown[]) =>
+            new Promise((resolve, reject) => {
+              const seq = ++calls;
+              pending.set(seq, { name: method, resolve, reject });
+              void Promise.resolve(
+                channel.send({ [`${REFLECT_CALL}${method}`]: { seq, args: callArgs } }),
+              ).catch((error: unknown) => {
+                pending.delete(seq);
+                reject(error instanceof Error ? error : new Error(String(error)));
+              });
+            });
+        }
+      };
+
+      // The announcement comes before the first $state, so both are gathered
+      // here; a peer that says it later is still honoured, by the handler below.
       await new Promise<void>((resolve) => {
         channel.onMessage((frame) => {
+          if (isReflectionMethods(frame)) {
+            install(frame["$r.methods"]);
+            return;
+          }
           if (isState(frame)) {
             Object.assign(currentState, frame.$state);
             resolve();
@@ -74,9 +116,25 @@ export function remoteClient<
             exitResolver({ code: frame.$exit.code, state: frame.$exit.state as State });
             exitResolver = null;
           }
+        } else if (isReflectionMethods(frame)) {
+          install(frame["$r.methods"]);
+        } else {
+          const result = asReflectionResult(frame);
+          if (!result) return;
+          const waiting = pending.get(result.seq);
+          if (!waiting) return;
+          pending.delete(result.seq);
+          if (result.error === undefined) waiting.resolve(result.value);
+          else waiting.reject(new Error(`${waiting.name}: ${result.error}`));
         }
       });
       channel.onClose(() => {
+        // A call that was in flight when the wire went away has no answer
+        // coming; it fails here rather than hanging forever.
+        for (const waiting of pending.values()) {
+          waiting.reject(new Error(`connection closed before ${waiting.name} answered`));
+        }
+        pending.clear();
         if (exitResolver) {
           exitResolver({ code: null, state: currentState as State });
           exitResolver = null;
@@ -87,6 +145,7 @@ export function remoteClient<
         public: currentState as State,
         private: { channel, exitPromise, fromName },
       };
+
     },
     async onMessage(msg: InMsg): Promise<HookResult> {
       this.state.private.channel?.send({ $msg: { fromName: this.state.private.fromName, body: msg } });

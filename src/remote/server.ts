@@ -7,7 +7,15 @@
 import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
-import { isInit, isMsg } from "./channel.js";
+import {
+  REFLECT_METHODS,
+  REFLECT_RESULT,
+  asReflectionCall,
+  isInit,
+  isMsg,
+  jsonProblem,
+  type ReflectionCall,
+} from "./channel.js";
 
 export type Spawner = () => Promise<Channel>;
 
@@ -53,14 +61,14 @@ export async function serveRemoteActor<
   });
 
   // bridge actor output → channel
-  proc.subscribe("message", async (msg, sender) => {
+  const stopMirroringMessage = proc.subscribe("message", async (msg, sender) => {
     try {
       await channel.send({ $msg: { fromName: sender.fromName, body: msg } });
     } catch {
       console.error("Error sending out the message");
     }
   });
-  proc.subscribe("state", async () => {
+  const stopMirroringState = proc.subscribe("state", async () => {
     try {
       await channel.send({ $state: proc.state as Record<string, unknown> });
     } catch (e) {
@@ -69,14 +77,52 @@ export async function serveRemoteActor<
   });
 
   await proc.ready();
+
+  // What this actor can be asked over the wire, announced once before the first
+  // $state.  The client installs its call side from this list, and a name that
+  // was never announced is never dispatched: the list is the whole surface, so
+  // no frame can reach a property the actor did not offer.
+  const reflection = proc.$reflection as unknown as Record<string, Function>;
+  const announced = Object.keys(reflection).filter((name) => typeof reflection[name] === "function");
+  await channel.send({ [REFLECT_METHODS]: announced });
   await channel.send({ $state: proc.state as Record<string, unknown> });
+
+  /** Call one announced reflection method and answer with what it said, or why not. */
+  async function answerCall(call: ReflectionCall): Promise<void> {
+    const reply = (body: Record<string, unknown>) =>
+      channel.send({ [`${REFLECT_RESULT}${call.name}`]: body });
+    const method = announced.includes(call.name) ? reflection[call.name] : undefined;
+    if (typeof method !== "function") {
+      await reply({ seq: call.seq, error: `no reflection method named ${call.name}` });
+      return;
+    }
+    try {
+      // A method may be written for a call that answers later; the wire has no
+      // opinion about that, it just waits for the frame.
+      const value = await method(...call.args);
+      const problem = jsonProblem(value);
+      if (problem !== null) {
+        await reply({
+          seq: call.seq,
+          error: `${call.name} returned ${problem}, which cannot cross a frame`,
+        });
+        return;
+      }
+      await reply({ seq: call.seq, value });
+    } catch (err) {
+      await reply({ seq: call.seq, error: err instanceof Error ? err.message : String(err) });
+    }
+  }
 
   // bridge channel input → actor
   channel.onMessage((frame) => {
     if (isMsg(frame)) {
       const { fromName, body } = frame.$msg;
       proc.send(body as InMsg, makeSender(fromName, parentName, parentId));
+      return;
     }
+    const call = asReflectionCall(frame);
+    if (call) void answerCall(call);
   });
 
   // await actor exit, announce it, close
@@ -87,6 +133,10 @@ export async function serveRemoteActor<
     console.error("server actor error:", err);
     code = 1;
   }
+  // Stop mirroring before saying goodbye: an actor that settles its state on the
+  // way out would otherwise try to write to a wire that is already closed.
+  stopMirroringMessage();
+  stopMirroringState();
   await channel.send({ $exit: { code, state: proc.state } });
   await channel.close();
 }

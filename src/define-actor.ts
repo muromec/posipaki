@@ -329,8 +329,16 @@ export function defineActor<
     proc: ReflectableProcess,
     reflectionMethods: ReflectionMethods | undefined,
   ): void {
-    if (!reflectionMethods) return;
     const self = actorCtxMap.get(proc.id);
+    if (self) {
+      // One object under two names: the surface the handle exposes as
+      // `$reflection` and the one the actor's own hooks see as `reflection`.
+      // Handing the same object to both is what lets a method be added after
+      // assembly — the first caller that needs that is a remote peer saying
+      // which methods it can answer.
+      proc.$reflection = self.reflection as unknown as Record<string, Function>;
+    }
+    if (!reflectionMethods) return;
     const refl = proc.$reflection as Record<string, Function>;
     for (const [k, m] of Object.entries(reflectionMethods)) {
       refl[k] = m.bind(self);

@@ -27,7 +27,7 @@ describe("inspect", () => {
       const proc = await Actor.spawn({});
       await proc.ready();
 
-      const tree = proc.$reflection["inspect.getTree"]();
+      const tree = await proc.$reflection["inspect.getTree"]();
       expect(tree.pname).toBe("test-actor");
       expect(tree.parentName).toBeNull();
       expect(tree.children).toEqual([]);
@@ -55,7 +55,7 @@ describe("inspect", () => {
       const proc = await Parent.spawn({});
       await proc.ready();
 
-      const tree = proc.$reflection["inspect.getTree"]();
+      const tree = await proc.$reflection["inspect.getTree"]();
       expect(tree.children.length).toBeGreaterThanOrEqual(1);
       const child = tree.children.find((c: TreeNode) => c.pname.includes("kid"));
       expect(child).toBeDefined();
@@ -84,7 +84,7 @@ describe("inspect", () => {
       const proc = await Parent.spawn({});
       await proc.ready();
 
-      const tree = proc.$reflection["inspect.getTree"]();
+      const tree = await proc.$reflection["inspect.getTree"]();
       expect(tree.children.length).toBeGreaterThanOrEqual(1);
       const child = tree.children[0];
       expect(child.status).toBe("no introspection");
@@ -114,14 +114,14 @@ describe("inspect", () => {
       await proc.ready();
 
       // No prefix — full tree
-      const full = proc.$reflection["inspect.getTree"]();
+      const full = await proc.$reflection["inspect.getTree"]();
       expect(full.pname).toBe("main");
       expect(full.children.length).toEqual(2);
       expect(full.children[0].pname).toBe("main:worker");
       expect(full.children[1].pname).toBe("main:w2");
 
       // Prefix that matches child
-      const filtered = proc.$reflection["inspect.getTree"]("main:worker");
+      const filtered = await proc.$reflection["inspect.getTree"]("main:worker");
       expect(filtered.pname).toBe("main");
       expect(filtered.children.length).toBe(1);
       expect(filtered.children[0].pname).toBe("main:worker");
@@ -141,8 +141,10 @@ describe("inspect", () => {
       await proc1.ready();
       await proc2.ready();
 
-      const t1 = proc1.$reflection["inspect.getTree"]();
-      const t2 = proc2.$reflection["inspect.getTree"]();
+      const [t1, t2] = await Promise.all([
+        proc1.$reflection["inspect.getTree"](),
+        proc2.$reflection["inspect.getTree"](),
+      ]);
       expect(t1.pname).toBe("clobber-test");
       expect(t2.pname).toBe("clobber-test");
 

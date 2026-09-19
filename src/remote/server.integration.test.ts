@@ -8,7 +8,7 @@ import { randomUUID } from "node:crypto";
 import { unlink, writeFile } from "node:fs/promises";
 import { FifoUtf8NlineTransport } from "./transports/fifo.js";
 import { encode, decode, VERSION } from "./protocols/json1.js";
-import { isProto, isState, isMsg, isExit } from "./channel.js";
+import { isProto, isReflectionMethods, isState, isMsg, isExit } from "./channel.js";
 import { makeWaiter } from "../util.js";
 import type { Message } from "../types.js";
 
@@ -66,6 +66,13 @@ describe("serveRemoteActor — FIFO integration", () => {
         tools: [],
       } }),
     );
+
+    // What the far side can be asked comes first, before it says anything else.
+    const announceLine = await new Promise<string>((resolve) => {
+      client.onMessage((line) => resolve(line));
+    });
+    expect(isReflectionMethods(decode(announceLine))).toBe(true);
+    client.removeHandler();
 
     const stateLine = await new Promise<string>((resolve) => {
       client.onMessage((line) => resolve(line));
