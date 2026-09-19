@@ -1,7 +1,7 @@
 import { mergeConfigs } from "../hooks.js";
 import type { ActorPlugin, ActorReflection as AR } from "../hooks.js";
 import { AnyProcessCtx } from "../types.js";
-import type { AnyProcess } from "../process.async.js";
+import { isProcess, type AnyProcess } from "../process.async.js";
 
 declare module "../index" {
   interface ActorReflection {
@@ -23,6 +23,7 @@ export interface FarProcess {
   state: unknown;
   $reflection: Record<string, (...args: unknown[]) => Promise<unknown>>;
   stop: (opts?: { force?: boolean }) => Promise<unknown>;
+  release: () => void;
 }
 
 /** What a search answers with: a process of this side's own, or a handle on one that
@@ -53,6 +54,28 @@ function findHeld(procs: Iterable<AnyProcess>, pname: string): AnyProcess | null
     if (found) return found;
   }
   return null;
+}
+
+/**
+ * Let go of a process a search obtained and is not handing back.  The far side would
+ * otherwise go on holding a reference open for a caller that never asked for it, and the
+ * handle here would stay bound for the life of the connection.  A process of this side's
+ * own is an object rather than a reference, and naming it holds nothing open.
+ */
+function letGo(process: FoundProcess): void {
+  if (isProcess(process)) return;
+  process.release();
+}
+
+/**
+ * What a child says it holds under a name: asked where it can answer, looked at where it
+ * cannot, since a process with no methods still holds its own children as objects.
+ */
+async function askChild(child: AnyProcess, pname: string): Promise<FoundProcess | null> {
+  const surface = (child as { $reflection?: Record<string, unknown> }).$reflection;
+  const ask = surface?.["inspect.find"];
+  if (typeof ask === "function") return (await ask(pname)) as FoundProcess | null;
+  return findHeld(child.children, pname);
 }
 
 export function inspect(): ActorPlugin {
@@ -108,19 +131,18 @@ export function inspect(): ActorPlugin {
          */
         "inspect.find": async function (pname: string): Promise<FoundProcess | null> {
           const selfCtx = this.ctx as AnyProcessCtx;
+          let answer: FoundProcess | null = null;
+          // Every child is asked, the way the walk asks every child: what a child holds is
+          // its own to answer for, so a level does not get to decide that none of them has
+          // it.  The first answer is the one handed back, and anything else that answered
+          // is let go of — a search that keeps nothing must leave nothing held.
           for (const child of selfCtx.children) {
-            if (child.pname === pname) return child;
-            const surface = (child as { $reflection?: Record<string, unknown> }).$reflection;
-            const ask = surface?.["inspect.find"];
-            if (typeof ask === "function") {
-              const found = (await ask(pname)) as FoundProcess | null;
-              if (found) return found;
-              continue;
-            }
-            const under = findHeld(child.children, pname);
-            if (under) return under;
+            const found = child.pname === pname ? child : await askChild(child, pname);
+            if (!found) continue;
+            if (answer === null) answer = found;
+            else letGo(found);
           }
-          return null;
+          return answer;
         },
         "inspect.exit": async function () {
           this.exit("inspector");

@@ -198,11 +198,12 @@ describe("inspect", () => {
 
   describe("find", () => {
     /** What a proxy child answers with: a name, what it holds, what it can answer. */
-    const farProcess = (pname: string) => ({
+    const farProcess = (pname: string, letGoOf: string[] = []) => ({
       pname,
       state: null,
       $reflection: {},
       stop: async () => undefined,
+      release: () => void letGoOf.push(pname),
     });
 
     /** Make a child answer a search as a proxy does, and say what it was asked. */
@@ -333,7 +334,7 @@ describe("inspect", () => {
       await proc.stop();
     });
 
-    it("asks each child that can answer, in order, and stops at the first that has it", async () => {
+    it("asks every child, hands the first answer back, and lets go of the rest", async () => {
       const First = defineActor({ name: "first", plugins: [], handlers: {} });
       const Second = defineActor({ name: "second", plugins: [], handlers: {} });
       const Parent = defineActor({
@@ -350,16 +351,22 @@ describe("inspect", () => {
       const proc = await Parent.spawn({});
       await proc.ready();
 
-      const far = farProcess("parent:second:kid");
+      const letGoOf: string[] = [];
+      const firstAnswer = farProcess("parent:first:kid");
+      const secondAnswer = farProcess("parent:second:kid", letGoOf);
       const firstAsked: string[] = [];
       const secondAsked: string[] = [];
       const [first, second] = proc.children;
-      announceFind(first, () => null, firstAsked);
-      announceFind(second, () => far, secondAsked);
+      announceFind(first, () => firstAnswer, firstAsked);
+      announceFind(second, () => secondAnswer, secondAsked);
 
-      expect(await proc.$reflection["inspect.find"]("parent:second:kid")).toBe(far);
-      expect(firstAsked).toEqual(["parent:second:kid"]);
-      expect(secondAsked).toEqual(["parent:second:kid"]);
+      // Both are asked, as the walk asks both: a child's subtree is its own to answer for.
+      expect(await proc.$reflection["inspect.find"]("parent:first:kid")).toBe(firstAnswer);
+      expect(firstAsked).toEqual(["parent:first:kid"]);
+      expect(secondAsked).toEqual(["parent:first:kid"]);
+      // One process cannot be under two children, so an answer that is not the one handed
+      // back is a reference the search obtained and must not leave open.
+      expect(letGoOf).toEqual(["parent:second:kid"]);
 
       await proc.stop();
     });
