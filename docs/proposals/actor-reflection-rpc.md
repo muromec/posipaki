@@ -146,9 +146,10 @@ A process is not JSON, so a method that returns one answers with a reference:
 - Ids belong to a connection and to the side that holds the process. One per
   process — handed over twice, it is the same id both times — monotonic, and
   never reused, so a stale reference cannot come to mean another process.
-- Ids start at 1. Id 0 is the connection's own root, bound on both sides — the far
-  actor on one, the proxy that asked for it on the other — and never handed to
-  another process.
+- Ids come from one space split by parity, and each side's root takes the first id of
+  its own: 0 on the server, 1 on the client. The first id a side hands to a process it
+  crosses is two steps past its root, since the one in between belongs to the other
+  side's root. Neither root is ever handed to another process.
 - Containers are copied, never rewritten: the state an actor is still running on
   is not the wire's to edit.
 - Both sides parse references: a result on the caller's side, an argument on the
@@ -168,17 +169,20 @@ would sit in the way of.
 ```
 {"to": 3, "$msg": {"fromName": "main", "body": {"type": "PING"}}}
 {"to": 3, "$r.call.probe.add": {"seq": 1, "args": [1, 2]}}
-{"$msg": {"fromName": "main", "body": …}}          no address: the root
+{"to": 0, "$msg": {"fromName": "main", "body": …}}   the server's root, which is 0
+{"to": 1, "$msg": {"fromName": "main", "body": …}}   the client's root, which is 1
 ```
 
-- A frame that names no process is for the root of the connection, which is what
-  every frame meant before there were ids at all. Root traffic is therefore
-  unchanged on the wire: `to` is written only when it names something else.
-- Each side keeps one table for the connection — id → the process it knows by that
-  id, with its own root bound at 0. It is what a frame arriving with an id resolves
-  against, and what a frame leaving with a process in it looks that process up in.
-  A side numbers the processes it holds; an id is allocated the first time one
-  crosses, and never reused.
+- A frame that is about a process names it, the root of the connection included. A
+  frame that names nothing is nothing this connection can deliver, and is dropped.
+- The two roots are numbered apart, each being the first id of its own side's parity:
+  0 on the server, 1 on the client. The number therefore says whose root it names, and
+  a reference to a root needs no name to be read.
+- Each side keeps one table for the connection: id → the process it knows by that id,
+  whether this side holds it or reaches it as a handle, its own root included. It is what a frame arriving
+  with an id resolves against, and what a frame leaving with a process in it looks
+  that process up in. A side numbers the processes it holds; an id is allocated the
+  first time one crosses, and never reused.
 - Every frame is walked once on the way out (processes → references) and once on
   the way in (references → what this side knows). One rule per frame, not one per
   payload kind: a process on the state, in a message body, in a call argument or in
@@ -284,10 +288,10 @@ kid.hasEnded();                  // true once that exit has arrived
 - `stop()` resolves when the exit has crossed back; there is no deadline, so a
   process that refuses to stop leaves it pending, exactly as a call that is never
   answered does.
-- Stopping the **root** of a connection is the one case that does not go this way:
-  it stays the STOP message plus the far side's `$exit` it has always been, because
-  the root is not a handle — it is the process this side is talking through. That is
-  what the proxy's own `stop()` does.
+- Stopping the root of a connection goes this way too. A proxy asks the far root to
+  end with `$stop` and waits for the same `$exit` every other `stop()` waits for. A
+  served actor can still be stopped by the STOP message its own runtime understands,
+  which is posipaki's own protocol and no business of the seam's.
 - An ended process can be asked nothing of itself — `send`, `pause`, `resume` and
   `stop` all throw, since there is nothing there to receive — while the handle on it
   stays a handle: reaching it and it being over are two answers, and they are
@@ -356,20 +360,21 @@ kid.tune("silent");                    // nothing at all: the empty list
   side's table keeps that id, as it does for every process that ends: an id is never
   handed out again (2b), so a process that ends and one that was let go of both leave a
   number that means nothing.
-- **The root of a connection is the exception.** It is not a process that was handed over
-  but the one the handing over is done through: what is said about it — `$r.methods`, its
-  state, its messages — is the connection's own, as it always was, and a `$tune` addressed
-  to it finds no stream and says nothing.
+- **The root of a connection is streamed like anything else.** It is registered under the
+  id its own side gave it the moment the connection opens, so what is said about it is the
+  same three categories, asked for in the same tune: what it can answer, what it holds,
+  what it says, that it is over. A proxy asks for all three at once, since what the far
+  root holds is its own state and its end is the connection's end. One thing differs: the
+  side that owns the wire says that end, and awaits it, because the wire closes after it.
 - One side's asking is the other side's stream: a tune addresses the process it is about,
   and is acted on by the side that holds it.  An id this side does not stream has nothing
   to tune, and a frame naming a category the vocabulary has no word for is dropped rather
   than guessed at.
 
-What is left: orphans, marked TBD in this document until they are thought through
-(2g) and left as undefined behaviour until they are. One gap beside them: a process
-handed over as *the root of a connection* is read by the far side as its own root,
-since id 0 means that on both ends. Nothing exercises it; making it work would mean
-numbering the root like any other process when it crosses.
+What is left: orphans, marked TBD in this document until they are thought through (2g)
+and left as undefined behaviour until they are. Nothing else. A process handed over as
+the root of a connection is a process like any other, since the roots are numbered
+apart: the far side binds a handle on it under the id its holder gave it.
 
 ### Orphans — TBD (2g)
 
@@ -416,8 +421,7 @@ declare module "posipaki" {
 14. Saying less about a process — done (2j): `$tune`, `tune()` on the handle, only the
     categories asked for crossing, and the state said the moment it is asked for
 15. Silence by default — done (2k): a process that crosses says nothing until the far
-    side asks, which a subscription, a `wait()` or a `tune()` does; the root of a
-    connection is the one thing that still says what it always said
+    side asks, which a subscription, a `wait()` or a `tune()` does
 16. Tests: local invocation, plugin registration, wire round-trip, concurrent
     calls, refusals, references over a real subprocess — done; and every carrier
     of a reference — a message body, a call argument, a state update that replaces
@@ -428,6 +432,13 @@ declare module "posipaki" {
     and the refusal of a call that cannot be answered.  The root is not a special
     case — its methods are announced and asked the same way, only over the
     connection's own frames
+18. The root on the general case — done: both ends number their own root, at the first
+    id of their parity (0 on the server, 1 on the client), so an id says whose root it
+    names and every frame can name the process it is about.  The far side's root is a
+    handle like any other of theirs and is streamed like any other process, stopped
+    with `$stop` like any other, and carries its state, messages, methods and end the
+    same way.  A proxy asks for all three the moment it connects, so a connection looks
+    the same from outside as it did
 
 ## Open questions
 
