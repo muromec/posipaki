@@ -11,10 +11,13 @@ import type { HookResult } from "../hooks.js";
 import type { ActorDefinition, HandlerOptions, MethodOptions, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
-import { ProcessHandles, decodeProcessRefs, encodeProcessRefs } from "./process-ref.js";
+import { ProcessTable, ROOT_ID } from "./process-ref.js";
 import {
   REFLECT_CALL,
   asReflectionResult,
+  decodeFrame,
+  encodeFrame,
+  frameTo,
   isExit,
   isMsg,
   isReflectionMethods,
@@ -39,7 +42,15 @@ export function remoteClient<
 ): ActorDefinition<Args, State, InMsg, OutMsg, R> {
   const proxyDef = defineActor<
     Args,
-    { public: State; private: { channel: Channel; exitPromise: Promise<{ code: number | null; state: State }>; fromName: string } },
+    {
+      public: State;
+      private: {
+        channel: Channel;
+        table: ProcessTable;
+        exitPromise: Promise<{ code: number | null; state: State }>;
+        fromName: string;
+      };
+    },
     InMsg,
     OutMsg,
     Methods,
@@ -49,11 +60,26 @@ export function remoteClient<
     name,
     handlers: {} as unknown as Handlers,
     async setup(args: Args) {
+      // This side's own end of the connection is the root, and id 0 is how both
+      // sides name it: the far actor on one end, this proxy on the other.  So
+      // the table starts with the root bound and nothing else in it.
+      const table = new ProcessTable();
+      const root = this.ctx;
+      table.bindRoot(root);
       const channel = await spawner(args);
       const fromName = name;
-      await channel.send({
-        $init: { ...(args as unknown as Record<string, unknown>), parentName: fromName, parentIdName: fromName },
-      });
+      await channel.send(
+        encodeFrame(
+          {
+            $init: {
+              ...(args as unknown as Record<string, unknown>),
+              parentName: fromName,
+              parentIdName: fromName,
+            },
+          },
+          table,
+        ),
+      );
 
       let currentState: Record<string, unknown> = {};
 
@@ -62,10 +88,6 @@ export function remoteClient<
       // this process's reflection surface.  `seq` belongs to this connection
       // and is never reused, so two calls to the same method in flight at once
       // stay apart; the answer names the one it belongs to.
-      // The ids this side hands out, for the processes it sends the other way;
-      // the far side has a table of its own and neither one means anything on
-      // the other connection.
-      const handles = new ProcessHandles();
       let calls = 0;
       const pending = new Map<
         number,
@@ -80,17 +102,18 @@ export function remoteClient<
               // Processes among the arguments become references first — mine,
               // with ids from my table, or the far side's own coming back — and
               // what is left has to be JSON, or nothing is sent at all.
-              const wireArgs = encodeProcessRefs(callArgs, handles);
-              const problem = jsonProblem(wireArgs);
+              const seq = ++calls;
+              const frame = encodeFrame(
+                { [`${REFLECT_CALL}${method}`]: { seq, args: callArgs } },
+                table,
+              );
+              const problem = jsonProblem(frame);
               if (problem !== null) {
                 reject(new Error(`cannot send ${problem} to ${method}`));
                 return;
               }
-              const seq = ++calls;
               pending.set(seq, { name: method, resolve, reject });
-              void Promise.resolve(
-                channel.send({ [`${REFLECT_CALL}${method}`]: { seq, args: wireArgs } }),
-              ).catch((error: unknown) => {
+              void Promise.resolve(channel.send(frame)).catch((error: unknown) => {
                 pending.delete(seq);
                 reject(error instanceof Error ? error : new Error(String(error)));
               });
@@ -101,7 +124,9 @@ export function remoteClient<
       // The announcement comes before the first $state, so both are gathered
       // here; a peer that says it later is still honoured, by the handler below.
       await new Promise<void>((resolve) => {
-        channel.onMessage((frame) => {
+        channel.onMessage((raw) => {
+          const frame = decodeFrame(raw);
+          if (frameTo(frame) !== ROOT_ID) return;
           if (isReflectionMethods(frame)) {
             install(frame["$r.methods"]);
             return;
@@ -119,12 +144,27 @@ export function remoteClient<
         exitResolver = resolve;
       });
 
-      channel.onMessage((frame) => {
+      channel.onMessage((raw) => {
+        const frame = decodeFrame(raw);
+        // Every frame is looked up once, by the process it addresses — the root
+        // when it addresses none — so which frames a connection accepts is the
+        // table's answer, not a rule per frame kind.
+        const to = frameTo(frame);
+        const target = to === null ? undefined : table.processFor(to);
+        // An id this connection does not hold: there is nothing to deliver to.
+        // (A side that hands out an id it then drops is worth telling, which is
+        // what a release will be.)
+        if (!target) return;
+        if (target !== root) {
+          // A process this side holds a handle on: what it does with its own
+          // frames is the handle's business, and there is no handle yet.
+          return;
+        }
         if (isState(frame)) {
           Object.assign(currentState, frame.$state);
           // $state frames arrive outside this actor's dispatch loop; notify
           // state subscribers so observers (Vue, nextState, …) see the change.
-          this.ctx.notify();
+          root.notify();
         } else if (isMsg(frame)) {
           this.emit(frame.$msg.body as OutMsg);
         } else if (isExit(frame)) {
@@ -140,7 +180,7 @@ export function remoteClient<
           const waiting = pending.get(result.seq);
           if (!waiting) return;
           pending.delete(result.seq);
-          if (result.error === undefined) waiting.resolve(decodeProcessRefs(result.value));
+          if (result.error === undefined) waiting.resolve(result.value);
           else waiting.reject(new Error(`${waiting.name}: ${result.error}`));
         }
       });
@@ -159,18 +199,22 @@ export function remoteClient<
 
       return {
         public: currentState as State,
-        private: { channel, exitPromise, fromName },
+        private: { channel, table, exitPromise, fromName },
       };
 
     },
     async onMessage(msg: InMsg): Promise<HookResult> {
-      this.state.private.channel?.send({ $msg: { fromName: this.state.private.fromName, body: msg } });
+      const { channel, table, fromName } = this.state.private;
+      // A message this side sends is for the root: that is the process the
+      // proxy stands for, and a frame that names no process means it.
+      channel?.send(encodeFrame({ $msg: { fromName, body: msg } }, table));
       return stopPropagation();
     },
     async onStopRequested() {
-      if (this.state.private.channel) {
-        this.state.private.channel.send({ $msg: { fromName: this.state.private.fromName, body: { type: "STOP" } } });
-        await this.state.private.exitPromise;
+      const { channel, table, exitPromise, fromName } = this.state.private;
+      if (channel) {
+        channel.send(encodeFrame({ $msg: { fromName, body: { type: "STOP" } } }, table));
+        await exitPromise;
       }
       this.agreeToStop();
     },

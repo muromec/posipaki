@@ -8,19 +8,27 @@
 // The id belongs to the connection and to the side that holds the process.
 // Allocated once per process — handed over twice, it is the same reference both
 // times — and never reused, so an id whose process is gone resolves to nothing
-// rather than to whatever came after it.  A frame that names no id addresses the
-// remote root, which is what every frame has always meant.
+// rather than to whatever came after it.
 //
-// A reference is not yet a handle.  Parsing one gives a process this side cannot
-// reach: it knows what the far side calls it, not how to talk to it.  That is
-// what parsing is worth on its own — the id is there, and what will resolve it
-// is not.
+// Every connection has a root: id 0, held on both sides — the far actor on one,
+// the proxy that asked for it on the other.  A frame that names no process
+// addresses it, which is what every frame has always meant, so traffic for the
+// root reads exactly as it did before there were ids at all.
+//
+// A reference for a process this side does not hold is not yet a handle.
+// Parsing one gives a process it cannot reach: it knows what the far side calls
+// it, not how to talk to it.  That is what parsing is worth on its own — the id
+// is there, and what will resolve it is not.
 
 import { isProcess } from "../process.async.js";
 import type { AnyProcess } from "../process.async.js";
 
 /** The key that marks a process reference inside an otherwise JSON value. */
 export const PROCESS_REF = "$p";
+
+/** The id a connection gives its own end: the root, named by carrying no id at
+ *  all as much as by naming this one. */
+export const ROOT_ID = 0;
 
 /** What crosses the wire in place of a process. */
 export interface ProcessRef {
@@ -43,25 +51,52 @@ export class UnreachableRemoteProcess {
   }
 }
 
+/** The little a table needs of a process to name it: what it is called, and the
+ *  symbol that identifies it in this build. */
+export interface ProcessHandle {
+  readonly pname: string;
+  readonly id: symbol;
+}
+
 /**
- * The ids one connection hands out.  One per process and never reused: a
- * reference the far side still holds can never come to mean a different
- * process.  The table holds the processes themselves, so it lives exactly as
- * long as the connection that owns it.
+ * The processes one connection knows, by the ids it hands out.  One table per
+ * connection, because an id means nothing on any other one, and it lives exactly
+ * as long as the connection that owns it.
+ *
+ * A side fills it from two ends: it binds its own root at 0, and it numbers
+ * every process it hands over.  So the table is both what an outgoing frame
+ * looks a process up in, and what an incoming frame's address resolves against.
+ * What goes in is whatever that side has: on the server the actor it spawned, on
+ * the client its own end of the connection.
  */
-export class ProcessHandles {
-  private pvtIds = new Map<AnyProcess, number>();
-  /** Starts at 1, so id 0 is never handed out: it stays free for the root, which
-   *  a frame names by carrying no id at all. */
+export class ProcessTable<P extends ProcessHandle = ProcessHandle> {
+  private pvtById = new Map<number, P>();
+  private pvtIds = new Map<P, number>();
+  /** Starts at 1: id 0 is the root's, and is never handed to anything else. */
   private pvtNext = 0;
 
+  /** Bind this side's own end of the connection — the root — to id 0. */
+  bindRoot(proc: P): void {
+    if (this.pvtById.has(ROOT_ID)) {
+      throw new Error("ProcessTable: the root is already bound");
+    }
+    this.pvtById.set(ROOT_ID, proc);
+    this.pvtIds.set(proc, ROOT_ID);
+  }
+
   /** The id this connection uses for `proc`, allocating one the first time. */
-  handleFor(proc: AnyProcess): number {
+  handleFor(proc: P): number {
     const known = this.pvtIds.get(proc);
     if (known !== undefined) return known;
     const id = ++this.pvtNext;
     this.pvtIds.set(proc, id);
+    this.pvtById.set(id, proc);
     return id;
+  }
+
+  /** The process this connection knows by `id`, or undefined when it holds none. */
+  processFor(id: number): P | undefined {
+    return this.pvtById.get(id);
   }
 }
 
@@ -92,7 +127,7 @@ export function asProcessRef(value: unknown): ProcessRef | null {
  */
 export function encodeProcessRefs(
   value: unknown,
-  handles: ProcessHandles,
+  table: ProcessTable,
   seen: Set<unknown> = new Set(),
 ): unknown {
   if (value instanceof UnreachableRemoteProcess) {
@@ -101,19 +136,19 @@ export function encodeProcessRefs(
     return { [PROCESS_REF]: { id: value.id, pname: value.pname } };
   }
   if (isProcess(value)) {
-    return { [PROCESS_REF]: { id: handles.handleFor(value), pname: value.pname } };
+    return { [PROCESS_REF]: { id: table.handleFor(value), pname: value.pname } };
   }
   if (Array.isArray(value)) {
     if (seen.has(value)) return value;
     seen.add(value);
-    return value.map((item) => encodeProcessRefs(item, handles, seen));
+    return value.map((item) => encodeProcessRefs(item, table, seen));
   }
   if (isPlainObject(value)) {
     if (seen.has(value)) return value;
     seen.add(value);
     const copy: Record<string, unknown> = {};
     for (const [key, item] of Object.entries(value)) {
-      copy[key] = encodeProcessRefs(item, handles, seen);
+      copy[key] = encodeProcessRefs(item, table, seen);
     }
     return copy;
   }
@@ -140,4 +175,3 @@ export function decodeProcessRefs(value: unknown, seen: Set<unknown> = new Set()
   }
   return value;
 }
-

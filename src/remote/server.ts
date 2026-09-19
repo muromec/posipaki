@@ -7,11 +7,14 @@
 import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
-import { ProcessHandles, decodeProcessRefs, encodeProcessRefs } from "./process-ref.js";
+import { ProcessTable, encodeProcessRefs } from "./process-ref.js";
 import {
   REFLECT_METHODS,
   REFLECT_RESULT,
   asReflectionCall,
+  decodeFrame,
+  encodeFrame,
+  frameTo,
   isInit,
   isMsg,
   jsonProblem,
@@ -41,9 +44,11 @@ export async function serveRemoteActor<
   const channel = await spawner();
 
   // await $init
-  const initFrame = await new Promise<Record<string, unknown>>((resolve) => {
-    channel.onMessage((frame) => resolve(frame));
-  });
+  const initFrame = decodeFrame(
+    await new Promise<Record<string, unknown>>((resolve) => {
+      channel.onMessage((frame) => resolve(frame));
+    }),
+  );
   channel.removeHandler();
   if (!isInit(initFrame)) {
     throw new Error("serveRemoteActor: expected $init");
@@ -61,17 +66,28 @@ export async function serveRemoteActor<
     parentId,
   });
 
+  // This side's own end of the connection is the process it just spawned: id 0
+  // here, and on the other side the proxy that asked for it.  Everything else
+  // this side hands over is numbered as it goes, and the table is where a frame
+  // that arrives with an id — or leaves with a process in it — is resolved.
+  const table = new ProcessTable<typeof proc>();
+  table.bindRoot(proc);
+  /** Every frame that leaves this side: processes become references first. */
+  const sendFrame = (frame: Record<string, unknown>) => channel.send(encodeFrame(frame, table));
+
   // bridge actor output → channel
   const stopMirroringMessage = proc.subscribe("message", async (msg, sender) => {
     try {
-      await channel.send({ $msg: { fromName: sender.fromName, body: msg } });
+      // The root's own emissions, which is what this side's root is.  A message
+      // from another process on this side is that process's, and would say so.
+      await sendFrame({ $msg: { fromName: sender.fromName, body: msg } });
     } catch {
       console.error("Error sending out the message");
     }
   });
   const stopMirroringState = proc.subscribe("state", async () => {
     try {
-      await channel.send({ $state: proc.state as Record<string, unknown> });
+      await sendFrame({ $state: proc.state as Record<string, unknown> });
     } catch (e) {
       console.error("Error sending out the message", e);
     }
@@ -83,19 +99,25 @@ export async function serveRemoteActor<
   // $state.  The client installs its call side from this list, and a name that
   // was never announced is never dispatched: the list is the whole surface, so
   // no frame can reach a property the actor did not offer.
-  // What this connection uses for the processes it hands over. One table per
-  // connection, because an id means nothing on any other one.
-  const handles = new ProcessHandles();
   const reflection = proc.$reflection as unknown as Record<string, Function>;
   const announced = Object.keys(reflection).filter((name) => typeof reflection[name] === "function");
-  await channel.send({ [REFLECT_METHODS]: announced });
-  await channel.send({ $state: proc.state as Record<string, unknown> });
+  await sendFrame({ [REFLECT_METHODS]: announced });
+  await sendFrame({ $state: proc.state as Record<string, unknown> });
 
   /** Call one announced reflection method and answer with what it said, or why not. */
-  async function answerCall(call: ReflectionCall): Promise<void> {
+  async function answerCall(call: ReflectionCall, target: typeof proc | undefined): Promise<void> {
     const reply = (body: Record<string, unknown>) =>
-      channel.send({ [`${REFLECT_RESULT}${call.name}`]: body });
-    const method = announced.includes(call.name) ? reflection[call.name] : undefined;
+      sendFrame({ [`${REFLECT_RESULT}${call.name}`]: body });
+    if (!target) {
+      await reply({ seq: call.seq, error: "no process with that id on this connection" });
+      return;
+    }
+    // Only what a process announced can be reached.  The root announced its own
+    // methods before its first $state; a process that crossed later has not
+    // announced anything yet, so there is nothing to dispatch against.
+    const methods = target === proc ? announced : [];
+    const surface = target.$reflection as unknown as Record<string, Function>;
+    const method = methods.includes(call.name) ? surface[call.name] : undefined;
     if (typeof method !== "function") {
       await reply({ seq: call.seq, error: `no reflection method named ${call.name}` });
       return;
@@ -107,8 +129,7 @@ export async function serveRemoteActor<
       // the id is there, resolving it is not yet — and processes in the answer
       // become references.  What is left has to be JSON, or the call is refused
       // rather than half-written.
-      const args = decodeProcessRefs(call.args) as unknown[];
-      const value = encodeProcessRefs(await method(...args), handles);
+      const value = encodeProcessRefs(await method(...call.args), table);
       const problem = jsonProblem(value);
       if (problem !== null) {
         await reply({
@@ -124,14 +145,18 @@ export async function serveRemoteActor<
   }
 
   // bridge channel input → actor
-  channel.onMessage((frame) => {
+  channel.onMessage((raw) => {
+    const frame = decodeFrame(raw);
+    const to = frameTo(frame);
+    const target = to === null ? undefined : table.processFor(to);
     if (isMsg(frame)) {
+      if (!target) return;
       const { fromName, body } = frame.$msg;
-      proc.send(body as InMsg, makeSender(fromName, parentName, parentId));
+      target.send(body as InMsg, makeSender(fromName, parentName, parentId));
       return;
     }
     const call = asReflectionCall(frame);
-    if (call) void answerCall(call);
+    if (call) void answerCall(call, target);
   });
 
   // await actor exit, announce it, close
@@ -146,6 +171,6 @@ export async function serveRemoteActor<
   // way out would otherwise try to write to a wire that is already closed.
   stopMirroringMessage();
   stopMirroringState();
-  await channel.send({ $exit: { code, state: proc.state } });
+  await sendFrame({ $exit: { code, state: proc.state } });
   await channel.close();
 }

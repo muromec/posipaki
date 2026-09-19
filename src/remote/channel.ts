@@ -7,6 +7,12 @@
 // transport.
 
 import type { Message } from "../types.js";
+import {
+  ROOT_ID,
+  decodeProcessRefs,
+  encodeProcessRefs,
+  type ProcessTable,
+} from "./process-ref.js";
 
 export interface StringTransport {
   send(frame: string): void | Promise<void>;
@@ -24,6 +30,47 @@ export interface Channel {
   /** Fires when the peer disconnects (transport closes from the other side). */
   onClose(handler: () => void): void;
   close(): Promise<void>;
+}
+
+// ── the address on a frame ─────────────────────────────────────────────────
+//
+// A frame that is about a process carries that process's id as `to`, at the top
+// level of the frame rather than inside its body: the frame is the envelope, and
+// the address says who it is for whatever kind it turns out to be.  A frame that
+// carries no address is for the root of the connection.
+
+/**
+ * The id a frame addresses, or null when what it carries is not an id.  Naming
+ * no process and naming the root are the same thing, so both answer ROOT_ID.
+ */
+export function frameTo(frame: Record<string, unknown>): number | null {
+  const to = frame.to;
+  if (to === undefined) return ROOT_ID;
+  return typeof to === "number" ? to : null;
+}
+
+/**
+ * A frame on its way out: every process in it becomes the reference this
+ * connection uses for that process, and the process the frame addresses is
+ * written down as `to` — unless it is the root, which is named by carrying no
+ * address at all.
+ */
+export function encodeFrame(
+  frame: Record<string, unknown>,
+  table: ProcessTable,
+  to: number = ROOT_ID,
+): Record<string, unknown> {
+  const encoded = encodeProcessRefs(frame, table) as Record<string, unknown>;
+  return to === ROOT_ID ? encoded : { ...encoded, to };
+}
+
+/**
+ * A frame just read: every reference in it becomes what this side knows of that
+ * process.  Nothing resolves the id yet — what will is the handle a process
+ * arrives as.
+ */
+export function decodeFrame(frame: Record<string, unknown>): Record<string, unknown> {
+  return decodeProcessRefs(frame) as Record<string, unknown>;
 }
 
 // ── frame guards ──────────────────────────────────────────────────────────

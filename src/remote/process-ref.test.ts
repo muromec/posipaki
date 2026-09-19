@@ -11,7 +11,8 @@ import type { AsyncProcess } from "../process.async.js";
 import type { Message } from "../types.js";
 import {
   PROCESS_REF,
-  ProcessHandles,
+  ROOT_ID,
+  ProcessTable,
   UnreachableRemoteProcess,
   asProcessRef,
   decodeProcessRefs,
@@ -33,9 +34,9 @@ afterEach(async () => {
   for (const proc of spawned.splice(0)) await proc.stop();
 });
 
-describe("ProcessHandles", () => {
+describe("ProcessTable", () => {
   it("hands out one id per process, and never the same id for two", async () => {
-    const handles = new ProcessHandles();
+    const handles = new ProcessTable();
     const first = await makeProcess("first");
     const second = await makeProcess("second");
 
@@ -51,7 +52,7 @@ describe("ProcessHandles", () => {
 describe("encodeProcessRefs", () => {
   it("writes a process as a reference, and leaves other values alone", async () => {
     const proc = await makeProcess("kid");
-    const handles = new ProcessHandles();
+    const handles = new ProcessTable();
 
     expect(encodeProcessRefs(proc, handles)).toEqual({
       [PROCESS_REF]: { id: 1, pname: "kid" },
@@ -66,7 +67,7 @@ describe("encodeProcessRefs", () => {
   it("walks objects and arrays, and writes the same id for the same process", async () => {
     const kid = await makeProcess("kid");
     const other = await makeProcess("other");
-    const handles = new ProcessHandles();
+    const handles = new ProcessTable();
 
     const encoded = encodeProcessRefs({ kids: [kid, { deep: other }], again: kid }, handles);
     expect(encoded).toEqual({
@@ -77,7 +78,7 @@ describe("encodeProcessRefs", () => {
 
   it("copies the containers it walks: the actor's own objects are not rewritten", async () => {
     const proc = await makeProcess("kid");
-    const handles = new ProcessHandles();
+    const handles = new ProcessTable();
     const state = { child: proc };
 
     const encoded = encodeProcessRefs(state, handles);
@@ -88,7 +89,7 @@ describe("encodeProcessRefs", () => {
   });
 
   it("survives a cycle in a value that holds no process", async () => {
-    const handles = new ProcessHandles();
+    const handles = new ProcessTable();
     const loop: Record<string, unknown> = { name: "loop" };
     loop.self = loop;
 
@@ -127,7 +128,7 @@ describe("decodeProcessRefs", () => {
 
 describe("a reference going back", () => {
   it("is written as the same reference, with the far side's own id", async () => {
-    const handles = new ProcessHandles();
+    const handles = new ProcessTable();
     const ref = new UnreachableRemoteProcess({ id: 3, pname: "tools:kid" });
 
     // Not a process of mine, so my table has no say in it: the id travels back
