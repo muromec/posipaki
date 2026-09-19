@@ -46,3 +46,7 @@ over a real fifo payload — a host that forks the client finds `host:tools:watc
 proxy, the handle answers `inspect.getState`, and its state arrives once it has been tuned for.
 The payload fixture grew an inspected child (`watcher`) so a handle found over the seam has
 something to answer with.
+
+Fixed in 0.38.0 (`73a26d9` and the commits after it), which also carries the reference counting a
+search needs to be able to let go of what it does not hand back (see
+`docs/proposals/remote-reference-ownership.md`).
