@@ -135,8 +135,13 @@ describe("reflection across a process boundary", () => {
     expect(kid?.pname).toBe("remote:kid");
     expect(kid?.isConnected()).toBe(true);
 
-    // It crossed, so it was streamed: what it holds is here without anyone asking.
-    await waitUntil(() => kid?.state !== null, "the state it streamed");
+    // Nothing about it crossed with it: a process crosses silent, and says what it
+    // holds only once it is asked to.
+    expect(kid?.state).toBeNull();
+
+    const states: Array<Record<string, unknown>> = [];
+    kid?.subscribe("state", () => states.push({ ...(kid.state ?? {}) }));
+    await waitUntil(() => kid?.state !== null, "the state it asked for");
     expect(kid?.state).toEqual({ pings: 0 });
 
     const heard: Array<{ type?: string }> = [];
@@ -145,7 +150,8 @@ describe("reflection across a process boundary", () => {
 
     await waitUntil(() => heard.length > 0, "the far side's answer");
     expect(heard[0]).toEqual({ type: "PONG" });
-    expect(kid?.state).toEqual({ pings: 1 });
+    // Both categories were asked for, so both go on crossing.
+    await waitUntil(() => states.some((state) => state.pings === 1), "the state it settled on");
 
     await proc.stop();
   }, 20000);
@@ -170,7 +176,10 @@ describe("reflection across a process boundary", () => {
     const { proc } = await spawnPayload();
 
     const kid = (proc.state as unknown as { kid?: RemoteProcess }).kid!;
-    await waitUntil(() => kid.state !== null, "the state it streamed");
+    // Asked for the state first: the handle has to be a live one before it is worth
+    // asking it to end, and nothing has been said about it until it is asked.
+    kid.tune(["state"]);
+    await waitUntil(() => kid.state !== null, "the state it asked for");
 
     await kid.stop();
 
@@ -185,7 +194,8 @@ describe("reflection across a process boundary", () => {
     const { proc, surface } = await spawnPayload();
 
     const kid = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
-    await waitUntil(() => kid.state !== null, "the state it streamed");
+    kid.tune(["state"]);
+    await waitUntil(() => kid.state !== null, "the state it asked for");
     const id = kid.ref.id;
 
     kid.release();
@@ -207,7 +217,10 @@ describe("reflection across a process boundary", () => {
     const { proc } = await spawnPayload();
 
     const kid = (proc.state as unknown as { kid?: RemoteProcess }).kid!;
-    await waitUntil(() => kid.state !== null, "the state it streamed");
+    // What it holds is what this test reads to see whether a message got through,
+    // so it asks for it before it starts pausing and sending.
+    kid.tune(["state"]);
+    await waitUntil(() => kid.state !== null, "the state it asked for");
 
     kid.pause();
     kid.send({ type: "PING" });

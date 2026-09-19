@@ -30,7 +30,9 @@ import {
   isStop,
   isReflectionMethods,
   isState,
+  isTune,
   jsonProblem,
+  tuneFrame,
 } from "./channel.js";
 
 export type ClientSpawner<Args> = (args: Args) => Promise<Channel>;
@@ -221,6 +223,12 @@ export function remoteClient<
             } else if (isStop(frame)) void target.stop({ from: makeSender(name, null, null) });
             else if (isPause(frame)) target.pause();
             else if (isResume(frame)) target.resume();
+            else if (isTune(frame) && to !== null) {
+              // How much the far side hears about a process of this side's own is
+              // its to ask, and this is where the asking lands.
+              const kinds = tuneFrame(frame);
+              if (kinds !== null) streams.tune(to, kinds);
+            }
           }
           return;
         }

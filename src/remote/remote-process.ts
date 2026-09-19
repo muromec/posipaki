@@ -13,6 +13,7 @@
 
 import type { Message } from "../types.js";
 import { makeWaiter, type Waiter } from "../util.js";
+import { STREAM_KINDS, type StreamKind } from "./channel.js";
 import type { ProcessRef } from "./process-ref.js";
 
 /** What a process left behind when it ended. */
@@ -59,6 +60,11 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   private pvtExitWaiter: Waiter<RemoteExit> | null = null;
   private pvtMessageSubs: Array<RemoteMessage<OutMsg>> = [];
   private pvtStateSubs: Array<() => void> = [];
+  /** What this side has asked to be told about it.  A process that crosses is
+   *  silent, so a handle starts out having asked for nothing and hears nothing
+   *  until something here wants it — which is the same rule the far side holds,
+   *  written from the other end. */
+  private pvtWanted: Set<StreamKind> = new Set();
 
   constructor(ref: ProcessRef, send: FrameSink, fromName: string, letGo?: ReleaseHook) {
     this.ref = ref;
@@ -125,6 +131,9 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
     if (this.pvtExit !== null) return Promise.resolve(this.pvtExit);
     const why = this.pvtUnreachable();
     if (why !== null) return Promise.reject(new Error(why));
+    // Waiting for it to end is a subscription to its end: nothing here hears an
+    // exit that was never asked for, so asking to wait asks for it.
+    this.pvtWant("exit");
     this.pvtExitWaiter ??= makeWaiter<RemoteExit>();
     return this.pvtExitWaiter.promise;
   }
@@ -136,6 +145,10 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
    */
   stop(): Promise<void> {
     this.pvtReachable();
+    // Ask for the end before asking it to stop: whether an exit is sent is decided
+    // by what the far side has been asked for when it comes, so a stop ordered ahead
+    // of the asking could leave nothing to wait for.
+    this.pvtWant("exit");
     this.pvtSend({ $stop: {} }, this.ref.id);
     return this.wait().then(() => undefined);
   }
@@ -165,22 +178,64 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
     this.pvtSend({ $resume: {} }, this.ref.id);
   }
 
+  /**
+   * What to be told about it from now on: any of `message`, `state` and `exit`,
+   * or `"silent"` for none of it.
+   *
+   * A process that crossed is silent to begin with, so this is how a handle asks
+   * to hear anything at all — and what is heard is only ever what was asked for.
+   * An exit nobody asked for is not sent: silence is silence, which makes this the
+   * one way to leave a handle that will not answer a `wait()`, and the far side's
+   * books the one place an end can go unrecorded.
+   */
+  tune(kinds: StreamKind[] | "silent"): void {
+    this.pvtReachable();
+    this.pvtTune(kinds === "silent" ? [] : kinds);
+  }
+
+  /** Ask the far side to say exactly this much, and nothing when it is already
+   *  saying it.  The list goes in the order the three are named in, so asking for
+   *  the same thing twice sends the same frame twice. */
+  private pvtTune(wanted: StreamKind[]): void {
+    const kinds = STREAM_KINDS.filter((kind) => wanted.includes(kind));
+    if (kinds.length === this.pvtWanted.size && kinds.every((kind) => this.pvtWanted.has(kind))) {
+      return;
+    }
+    this.pvtWanted = new Set(kinds);
+    this.pvtSend({ $tune: { streams: kinds } }, this.ref.id);
+  }
+
+  /** Ask for one more category, because something here now wants it.  A handle
+   *  that is gone asks nothing: there is no far side left to hear it, and nothing
+   *  was asked for, so what was wanted stays what it was. */
+  private pvtWant(kind: StreamKind): void {
+    if (this.pvtWanted.has(kind)) return;
+    if (!this.pvtConnected || this.pvtReleased) return;
+    this.pvtTune([...this.pvtWanted, kind]);
+  }
+
   /** Hand the far process a message. */
   send(msg: InMsg): void {
     this.pvtReachable();
     this.pvtSend({ $msg: { fromName: this.pvtFromName, body: msg } }, this.ref.id);
   }
 
+  /** Subscribe to what it says, or to what it holds.  Asking here is asking the far
+   *  side: a subscription is the first thing that wants the category, so it is what
+   *  turns it on, and unsubscribing leaves it on — the far side is not told to stop
+   *  saying something that another subscriber may still want. */
   subscribe(channel: "message", cb: RemoteMessage<OutMsg>): () => void;
   subscribe(channel: "state", cb: () => void): () => void;
   subscribe(channel: "message" | "state", cb: RemoteMessage<OutMsg> | (() => void)): () => void {
     if (channel === "message") {
       const fn = cb as RemoteMessage<OutMsg>;
       this.pvtMessageSubs.push(fn);
+      this.pvtWant("message");
       return () => this.pvtUnsubscribe(this.pvtMessageSubs, fn);
     }
     const fn = cb as () => void;
     this.pvtStateSubs.push(fn);
+    this.pvtWant("state");
     return () => this.pvtUnsubscribe(this.pvtStateSubs, fn);
   }
 

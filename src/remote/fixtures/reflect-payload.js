@@ -67,6 +67,9 @@ const reflector = defineActor({
       // method can answer at all.
       const heard = [];
       const stop = handle.subscribe("message", (msg) => heard.push(msg.type));
+      // Subscribing to what it says is half of it: a process that crossed is silent
+      // about what it holds too, and this method reads that as well.
+      handle.tune(["message", "state"]);
       handle.send({ type: "PING" });
       // Both of them: what it holds and what it says are two frames, and either
       // can be the one that arrives first.

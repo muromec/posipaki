@@ -113,7 +113,12 @@ describe("RemoteProcess", () => {
     const { handle, sent } = makeHandle();
     const stopping = handle.stop();
 
-    expect(sent).toEqual([[{ $stop: {} }, 2]]);
+    // Stopping waits for the end, and waiting is a subscription to the end: the
+    // exit has to be asked for first, or there is nothing to resolve it.
+    expect(sent).toEqual([
+      [{ $tune: { streams: ["exit"] } }, 2],
+      [{ $stop: {} }, 2],
+    ]);
     expect(handle.hasEnded()).toBe(false);
 
     handle.receiveExit({ code: 0, state: {} });
@@ -136,8 +141,12 @@ describe("RemoteProcess", () => {
     const { handle, sent, letGo } = makeHandle();
     const seen: Array<Record<string, unknown>> = [];
     handle.subscribe("state", () => seen.push({ ...(handle.state ?? {}) }));
-    handle.receiveState({ pings: 0 });
+    // Subscribing is asking: a process that crossed is silent until something here
+    // says what it wants to hear.
+    expect(sent).toEqual([[{ $tune: { streams: ["state"] } }, 2]]);
 
+    handle.receiveState({ pings: 0 });
+    sent.length = 0;
     handle.release();
 
     expect(sent).toEqual([[{ $release: {} }, 2]]);
@@ -155,6 +164,7 @@ describe("RemoteProcess", () => {
     expect(() => handle.pause()).toThrow(/was released/);
     expect(() => handle.resume()).toThrow(/was released/);
     expect(() => handle.stop()).toThrow(/was released/);
+    expect(() => handle.tune(["state"])).toThrow(/was released/);
     await expect(handle.wait()).rejects.toThrow(/was released/);
 
     // And what still arrives for it is not news.
@@ -170,6 +180,8 @@ describe("RemoteProcess", () => {
     const { handle, sent } = makeHandle();
     let told = 0;
     handle.subscribe("state", () => told++);
+    expect(sent).toEqual([[{ $tune: { streams: ["state"] } }, 2]]);
+    sent.length = 0;
 
     handle.disconnect();
     handle.disconnect();
@@ -180,6 +192,57 @@ describe("RemoteProcess", () => {
     expect(() => handle.pause()).toThrow(/cannot be reached/);
     expect(() => handle.resume()).toThrow(/cannot be reached/);
     expect(() => handle.stop()).toThrow(/cannot be reached/);
+    // Asking over a wire that is gone asks nothing: there is no far side to hear
+    // it and no answer coming, so the handle does not pretend it asked.
+    handle.subscribe("message", () => {});
     expect(sent).toEqual([]);
+  });
+
+  it("asks the far side for less, and for nothing at all", () => {
+    const { handle, sent } = makeHandle();
+
+    handle.tune(["state"]);
+    handle.tune(["state", "message"]);
+    handle.tune("silent");
+
+    // Named in the one order the three are ever named in, so asking for the same
+    // thing twice looks the same on the wire.
+    expect(sent).toEqual([
+      [{ $tune: { streams: ["state"] } }, 2],
+      [{ $tune: { streams: ["message", "state"] } }, 2],
+      [{ $tune: { streams: [] } }, 2],
+    ]);
+  });
+
+  it("asks once for what it is already being told", () => {
+    const { handle, sent } = makeHandle();
+
+    handle.tune(["message", "message"]);
+    handle.tune(["message"]);
+    handle.subscribe("message", () => {});
+    handle.subscribe("message", () => {});
+
+    expect(sent).toEqual([[{ $tune: { streams: ["message"] } }, 2]]);
+  });
+
+  it("asks again when something here wants what silence turned off", () => {
+    const { handle, sent } = makeHandle();
+    handle.tune("silent");
+    sent.length = 0;
+
+    handle.subscribe("state", () => {});
+
+    expect(sent).toEqual([[{ $tune: { streams: ["state"] } }, 2]]);
+  });
+
+  it("asks for the end when something waits for it", async () => {
+    const { handle, sent } = makeHandle();
+
+    const waiting = handle.wait();
+
+    expect(sent).toEqual([[{ $tune: { streams: ["exit"] } }, 2]]);
+
+    handle.receiveExit({ code: 0, state: { pings: 3 } });
+    await expect(waiting).resolves.toEqual({ code: 0, state: { pings: 3 } });
   });
 });

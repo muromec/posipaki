@@ -7,7 +7,8 @@
 // rather than once per side.
 
 import { isProcess, type AnyProcess } from "../process.async.js";
-import { REFLECT_METHODS } from "./channel.js";
+import { REFLECT_METHODS, STREAM_KINDS, type StreamKind } from "./channel.js";
+import { ROOT_ID } from "./process-ref.js";
 import type { FrameSink } from "./remote-process.js";
 
 /** What a process can be asked over the wire: the functions on its reflection
@@ -33,11 +34,29 @@ export function reflectionNames(target: { $reflection?: unknown }): string[] {
  * process while that frame is being written, so the numbering is queued here and
  * let out by `flush` right after the frame goes — which is the only thing a
  * caller has to remember.
+ *
+ * What a stream says is what the far side asked for.  A process that crosses is
+ * silent, and stays silent until something over there asks to hear it: `tune` is
+ * that asking, and only the categories it names cross.  The root of the
+ * connection is the one exception — it is not a process that was handed over but
+ * the one the handing over is done through, and it says what it always said.
  */
+
+/** One process that crossed, and what is said about it now. */
+interface StreamRecord {
+  target: AnyProcess;
+  /** The categories that cross, out of the three. */
+  kinds: Set<StreamKind>;
+  /** How to stop hearing one that is armed.  `exit` is not among them: a stream
+   *  has to hear the end to know it is over, and what it does with the news is
+   *  the question `kinds` answers. */
+  stops: Map<StreamKind, () => void>;
+}
+
 export class ProcessStreams {
   private pvtSink: FrameSink;
   private pvtPending: Array<[AnyProcess, number]> = [];
-  private pvtStops = new Map<number, Array<() => void>>();
+  private pvtRecords = new Map<number, StreamRecord>();
   private pvtFlushing = false;
 
   constructor(sink: FrameSink) {
@@ -67,55 +86,121 @@ export class ProcessStreams {
   }
 
   /**
+   * What to say about it from now on: the categories named, and none of the
+   * others.  Asking for its state says it there and then — a handle that has just
+   * asked what it holds should not have to wait for it to change.
+   *
+   * An id with no stream here is not this side's to tune, and the frame is
+   * dropped: both sides tune only what they hold, so an id names a stream on the
+   * side that numbered it.
+   */
+  tune(id: number, kinds: StreamKind[]): void {
+    const record = this.pvtRecords.get(id);
+    if (!record) return;
+    const wanted = new Set(kinds);
+    for (const kind of STREAM_KINDS) {
+      const isOn = record.kinds.has(kind);
+      const want = wanted.has(kind);
+      if (want === isOn) continue;
+      if (want) {
+        record.kinds.add(kind);
+        this.pvtArm(record, id, kind);
+      } else {
+        record.kinds.delete(kind);
+        this.pvtDisarm(record, kind);
+      }
+    }
+  }
+
+  /**
    * Say nothing more about this one.  It is not that the process ended — the far
    * side asked to be left out of it, so its exit is nobody's news over here, and
    * dropping the subscription is what keeps it from being sent.
    */
   stop(id: number): void {
-    const stops = this.pvtStops.get(id);
-    if (!stops) return;
-    for (const stop of stops) stop();
-    this.pvtStops.delete(id);
+    const record = this.pvtRecords.get(id);
+    if (!record) return;
+    for (const stop of record.stops.values()) stop();
+    this.pvtRecords.delete(id);
   }
 
   /** Nothing more is said about any of them: the connection is done. */
   stopAll(): void {
-    for (const stops of this.pvtStops.values()) {
-      for (const stop of stops) stop();
-    }
-    this.pvtStops.clear();
+    for (const id of [...this.pvtRecords.keys()]) this.stop(id);
     this.pvtPending.length = 0;
   }
 
+  /** What a process starts out saying: nothing, unless it is the root of the
+   *  connection, which is not a process that crossed but the one it crossed
+   *  through. */
+  private pvtDefault(id: number): StreamKind[] {
+    return id === ROOT_ID ? STREAM_KINDS : [];
+  }
+
   private pvtStream(target: AnyProcess, id: number): void {
-    const sink = this.pvtSink;
-    this.pvtStops.set(id, [
-      target.subscribe("message", (msg, sender) => {
-        sink({ $msg: { fromName: sender.fromName, body: msg } }, id);
-      }),
-      target.subscribe("state", () => {
-        sink({ $state: target.state as Record<string, unknown> }, id);
-      }),
-    ]);
+    const record: StreamRecord = {
+      target,
+      kinds: new Set(this.pvtDefault(id)),
+      stops: new Map(),
+    };
+    this.pvtRecords.set(id, record);
     // What it can answer comes first: a handle that hears from a process it cannot
-    // name yet has nowhere to put the news.
-    sink({ [REFLECT_METHODS]: reflectionNames(target) }, id);
-    sink({ $state: target.state as Record<string, unknown> }, id);
-    // Its end is the last thing said about it.  A process that fails to run takes
-    // the same road as one that finishes: the holder of the handle is told that it
-    // is gone, and why, rather than left waiting for news that cannot come.
+    // name yet has nowhere to put the news.  It is not one of the three categories
+    // — a handle with no methods can do nothing with the process however much it
+    // is told about it — so it crosses even in silence.
+    this.pvtSink({ [REFLECT_METHODS]: reflectionNames(target) }, id);
+    for (const kind of record.kinds) this.pvtArm(record, id, kind);
+    // Its end is the last thing ever said about it, and the one thing a stream has
+    // to hear to know it is over, whether or not the far side is told.  A process
+    // that fails to run takes the same road as one that finishes.
     void target.wait().then(
-      () => this.pvtEnded(target, id, 0),
-      () => this.pvtEnded(target, id, 1),
+      () => this.pvtEnded(id, 0),
+      () => this.pvtEnded(id, 1),
     );
   }
 
-  /** It has ended: say so once, and say nothing more about it. */
-  private pvtEnded(target: AnyProcess, id: number, code: number): void {
-    const stops = this.pvtStops.get(id);
-    if (!stops) return;
-    for (const stop of stops) stop();
-    this.pvtStops.delete(id);
-    this.pvtSink({ $exit: { code, state: target.state } }, id);
+  /** Start saying this much about it, and say what there is to say now. */
+  private pvtArm(record: StreamRecord, id: number, kind: StreamKind): void {
+    if (kind === "message") {
+      record.stops.set(
+        "message",
+        record.target.subscribe("message", (msg, sender) => {
+          this.pvtSink({ $msg: { fromName: sender.fromName, body: msg } }, id);
+        }),
+      );
+      return;
+    }
+    if (kind === "state") {
+      record.stops.set(
+        "state",
+        record.target.subscribe("state", () => {
+          this.pvtSink({ $state: record.target.state as Record<string, unknown> }, id);
+        }),
+      );
+      // Asked for, so said now: in silence the far side has heard nothing about
+      // its state, and this is the first word rather than a repeat.
+      this.pvtSink({ $state: record.target.state as Record<string, unknown> }, id);
+    }
+    // `exit` needs no subscription: the end is watched from the moment the process
+    // crosses, since a stream has to know when it is over.  Whether it is sent is
+    // read from `kinds` when it comes.
+  }
+
+  private pvtDisarm(record: StreamRecord, kind: StreamKind): void {
+    const stop = record.stops.get(kind);
+    if (!stop) return;
+    stop();
+    record.stops.delete(kind);
+  }
+
+  /** It has ended: say so once, if that is among the categories asked for, and say
+   *  nothing more about it either way. */
+  private pvtEnded(id: number, code: number): void {
+    const record = this.pvtRecords.get(id);
+    if (!record) return;
+    const told = record.kinds.has("exit");
+    const state = record.target.state;
+    this.stop(id);
+    if (told) this.pvtSink({ $exit: { code, state } }, id);
   }
 }

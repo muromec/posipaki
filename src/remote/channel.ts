@@ -99,6 +99,25 @@ export function isExit(
   return "$exit" in msg;
 }
 
+// ── what is said about a crossed process ────────────────────────────────────
+//
+// A process that crossed can be asked for less than everything, or for nothing at
+// all: what crosses about it is three categories, and only the ones asked for are
+// sent.  Silence is the empty list, so a handle that asks for nothing hears
+// nothing — not its state, not its messages, and not that it is gone.
+//
+//   {"$tune": {"streams": ["state"]}, "to": 3}   this much about it, and no more
+
+export type StreamKind = "message" | "state" | "exit";
+
+/** The three, in the one order they are ever named in — the order a tune frame
+ *  carries them in, so two ways of asking for the same thing look the same. */
+export const STREAM_KINDS: StreamKind[] = ["message", "state", "exit"];
+
+export function isStreamKind(value: unknown): value is StreamKind {
+  return typeof value === "string" && (STREAM_KINDS as string[]).includes(value);
+}
+
 // ── control frames ─────────────────────────────────────────────────────────
 //
 // What the holder of a handle can ask of a process on the far side, beside
@@ -110,6 +129,10 @@ export function isExit(
 //   {"$resume": {}, "to": 3}    feed it again
 //   {"$release": {}, "to": 3}   let it go: forget this id, and stop telling me
 //                               about the process behind it
+//   {"$tune": {"streams": [...]}, "to": 3}
+//                               say this much about it and no more: a subset of
+//                               message, state and exit, or the empty list for
+//                               silence
 //
 // They address the process they are about, so they are answered by whoever holds
 // that process — the side that can act on it.  Stopping the *root* of a connection
@@ -127,6 +150,24 @@ export function isResume(msg: Record<string, unknown>): msg is { $resume: Record
 }
 export function isRelease(msg: Record<string, unknown>): msg is { $release: Record<string, unknown> } {
   return "$release" in msg;
+}
+
+export function isTune(msg: Record<string, unknown>): msg is { $tune: Record<string, unknown> } {
+  return "$tune" in msg;
+}
+
+/**
+ * The categories a tune frame asks for, in the order they are named in — or null
+ * when the frame says something this vocabulary has no word for, which is a frame
+ * to ignore rather than to guess at.
+ */
+export function tuneFrame(frame: { $tune: unknown }): StreamKind[] | null {
+  const body = frame.$tune;
+  if (typeof body !== "object" || body === null) return null;
+  const streams = (body as { streams?: unknown }).streams;
+  if (!Array.isArray(streams)) return null;
+  if (!streams.every(isStreamKind)) return null;
+  return STREAM_KINDS.filter((kind) => (streams as StreamKind[]).includes(kind));
 }
 
 // ── reflection frames ──────────────────────────────────────────────────────

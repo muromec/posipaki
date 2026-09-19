@@ -34,7 +34,9 @@ import {
   isResume,
   isState,
   isStop,
+  isTune,
   jsonProblem,
+  tuneFrame,
   type ReflectionCall,
 } from "./channel.js";
 
@@ -191,6 +193,18 @@ export async function serveRemoteActor<
       if (to !== null) {
         streams.stop(to);
         table.release(to);
+      }
+      return;
+    }
+    if (isTune(frame)) {
+      // How much the far side is told about a process of this side's own is that
+      // side's to ask, and this is where the asking lands: what it names is what
+      // crosses from now on.  The root has no stream here — what is said about it
+      // is the connection's own, not a subscription — so a tune addressed to it
+      // finds nothing and says nothing.
+      if (to !== null) {
+        const kinds = tuneFrame(frame);
+        if (kinds !== null) streams.tune(to, kinds);
       }
       return;
     }
