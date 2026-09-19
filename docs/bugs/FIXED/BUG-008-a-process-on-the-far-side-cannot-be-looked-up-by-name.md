@@ -12,12 +12,19 @@ children here, its far subtree is not part of this side's object graph, and its 
 never asked.  The method was installed and reachable the whole time — `inspect.getTree` crossed
 the same boundary all along, because it *asks* each child, while `find` only *looked*.
 
-**Fix:** `find` is written the way the walk is: a level knows its own children and answers
-for them one at a time.  A child that is the name is the answer, since it is held here.  A
-child that can answer is asked and its answer is the answer — what is under it is its own
-business, and when it lives on the far side of a seam the asking is the only way across.  A
-child that announces nothing is searched where it is, as a process with no methods still
-holds its own children as objects.
+**Fix:** `find` is written the way the walk is: a level knows its own children and answers for
+them one at a time.  A child that is the name is the answer, since it is held here.  Every
+other child is asked, as the walk asks every child — what a child holds is its own to answer
+for, and when it lives on the far side of a seam the asking is the only way across.  A child
+that announces nothing is searched where it is, as a process with no methods still holds its
+own children as objects.
+
+The first answer is the one handed back, and anything else that answered is let go of: a search
+that keeps nothing must leave nothing held, and a reference obtained for a caller who never
+asked for it is one the far side would otherwise go on holding open for the life of the
+connection.  What is handed back is a handle that stays silent — nothing is streamed for it
+until its caller tunes for it — and releasing that one is the caller's business, not the
+search's.
 
 Nothing has to be agreed about plugins over the wire: a child announces what the process
 behind it can answer on the frames it already sends, so the far side serves what its own
@@ -31,9 +38,10 @@ how a consumer reads state on a handle is its own decision, not something a sear
 for it.
 
 **Tests:** `src/plugins/tree-introspection.test.ts` — a child that announced the method is
-asked and its answer is returned; each child that can answer is asked in order, and the first
-answer wins; what a child that announced nothing keeps of its own is still searched; a child
-that is the name is handed back without anyone being asked.  `src/remote/reflection.integration.test.ts`,
+asked and its answer is returned; every child that can answer is asked and the first answer is
+the one handed back; an answer that is not the one handed back is released; what a child that
+announced nothing keeps of its own is still searched; a child that is the name is handed back.
+`src/remote/reflection.integration.test.ts`,
 over a real fifo payload — a host that forks the client finds `host:tools:watcher` through the
 proxy, the handle answers `inspect.getState`, and its state arrives once it has been tuned for.
 The payload fixture grew an inspected child (`watcher`) so a handle found over the seam has
