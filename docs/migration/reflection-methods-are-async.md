@@ -71,7 +71,12 @@ A helper that wrapped a synchronous `inspect.find` becomes `async` with it.
 A reflection method may return a process. Over a wire it travels as a reference —
 an id this connection handed out and the name the far side knows it by — and
 parses into a `RemoteProcess`, which is a handle rather than the process itself:
-`send`, `subscribe`, `state`, `$reflection` and `isConnected()`. It is not a node
-in this side's tree (`getTree` walks the far side and gives that tree), and
-`wait`, `stop` and `pause` on a handle are still to come. Code that found a process
-by walking a tree and then called into it has to go through the handle.
+`send`, `subscribe`, `state`, `$reflection`, `wait`, `stop`, `pause`, `resume`,
+`release`, `tune` and `isConnected()`. It is not a node in this side's tree
+(`getTree` walks the far side and gives that tree), and a method call *into* a
+process of your own that the far side holds is still to come. Code that found a
+process by walking a tree and then called into it has to go through the handle.
+
+Nothing is said about a process that crossed until something here asks: subscribing
+to what it says or what it holds is what starts that category crossing, `wait()`
+asks for its end, and `tune()` asks for any of the three outright.
