@@ -24,6 +24,9 @@ import {
   frameTo,
   isExit,
   isMsg,
+  isPause,
+  isResume,
+  isStop,
   isReflectionMethods,
   isState,
   jsonProblem,
@@ -188,6 +191,7 @@ export function remoteClient<
           // own, and they go to whoever subscribed to this handle.
           if (isState(frame)) target.receiveState(frame.$state);
           else if (isMsg(frame)) target.receiveMessage(frame.$msg.body as OutMsg, frame.$msg.fromName);
+          else if (isExit(frame)) target.receiveExit(frame.$exit);
           else if (isReflectionMethods(frame)) {
             target.receiveMethods(frame["$r.methods"], (method, callArgs) =>
               callMethod(method, callArgs, target.ref.id),
@@ -197,10 +201,15 @@ export function remoteClient<
         }
         if (target !== root) {
           // A process of this side's own, handed over and now spoken to from over
-          // there: the message goes where it lives.  The wire says who sent it by
-          // name alone, so nobody here can be recognised as its parent.
-          if (isMsg(frame) && isProcess(target)) {
-            target.send(frame.$msg.body as InMsg, makeSender(frame.$msg.fromName, null, null));
+          // there: the message goes where it lives, and control is this side's to
+          // act on.  The wire says who sent a message by name alone, so nobody
+          // here can be recognised as its parent.
+          if (isProcess(target)) {
+            if (isMsg(frame)) {
+              target.send(frame.$msg.body as InMsg, makeSender(frame.$msg.fromName, null, null));
+            } else if (isStop(frame)) void target.stop({ from: makeSender(name, null, null) });
+            else if (isPause(frame)) target.pause();
+            else if (isResume(frame)) target.resume();
           }
           return;
         }

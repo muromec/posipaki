@@ -12,7 +12,14 @@
 // on the far side is talked to, not where it sits here.
 
 import type { Message } from "../types.js";
+import { makeWaiter, type Waiter } from "../util.js";
 import type { ProcessRef } from "./process-ref.js";
+
+/** What a process left behind when it ended. */
+export interface RemoteExit {
+  code: number;
+  state: unknown;
+}
 
 /** How a handle gets a frame onto the connection it belongs to, addressed to a
  *  process the far side holds. */
@@ -38,6 +45,9 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   private pvtSend: FrameSink;
   private pvtFromName: string;
   private pvtConnected = true;
+  /** What the far side said when it ended, or null while it is running. */
+  private pvtExit: RemoteExit | null = null;
+  private pvtExitWaiter: Waiter<RemoteExit> | null = null;
   private pvtMessageSubs: Array<RemoteMessage<OutMsg>> = [];
   private pvtStateSubs: Array<() => void> = [];
 
@@ -64,13 +74,69 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
     if (!this.pvtConnected) return;
     this.pvtConnected = false;
     this.pvtStateSubs.forEach((fn) => fn());
+    // Whoever is waiting for it to end is waiting for news that can no longer come.
+    this.pvtExitWaiter?.reject(new Error(`${this.pname} cannot be reached: the connection is closed`));
+  }
+
+  /** Whether the process it names has ended, as far as this side has been told. */
+  hasEnded(): boolean {
+    return this.pvtExit !== null;
+  }
+
+  /** Why nothing can be asked of it, or nothing when it can still be reached. */
+  private pvtUnreachable(): string | null {
+    if (this.pvtExit !== null) return `${this.pname} has ended`;
+    if (!this.pvtConnected) return `${this.pname} cannot be reached: the connection is closed`;
+    return null;
+  }
+
+  private pvtReachable(): void {
+    const why = this.pvtUnreachable();
+    if (why !== null) throw new Error(why);
+  }
+
+  /**
+   * Wait for the process to end.  Its exit crosses back like everything else it
+   * does, and what it left behind is the answer.
+   *
+   * A handle whose connection is gone rejects instead: what is left to wait for
+   * after that is nothing, and a process that keeps running is not something this
+   * side can tell from one that died with the wire.
+   */
+  wait(): Promise<RemoteExit> {
+    if (this.pvtExit !== null) return Promise.resolve(this.pvtExit);
+    const why = this.pvtUnreachable();
+    if (why !== null) return Promise.reject(new Error(why));
+    this.pvtExitWaiter ??= makeWaiter<RemoteExit>();
+    return this.pvtExitWaiter.promise;
+  }
+
+  /**
+   * Ask the far side to stop it.  Stops the way it always does there, and this
+   * resolves when its exit has crossed back — which is all this side can know.
+   * There is no deadline, so a process that refuses to stop leaves this pending.
+   */
+  stop(): Promise<void> {
+    this.pvtReachable();
+    this.pvtSend({ $stop: {} }, this.ref.id);
+    return this.wait().then(() => undefined);
+  }
+
+  /** Stop feeding it messages.  It is still there: `send` still reaches it. */
+  pause(): void {
+    this.pvtReachable();
+    this.pvtSend({ $pause: {} }, this.ref.id);
+  }
+
+  /** Feed it messages again. */
+  resume(): void {
+    this.pvtReachable();
+    this.pvtSend({ $resume: {} }, this.ref.id);
   }
 
   /** Hand the far process a message. */
   send(msg: InMsg): void {
-    if (!this.pvtConnected) {
-      throw new Error(`${this.pname} cannot be reached: the connection is closed`);
-    }
+    this.pvtReachable();
     this.pvtSend({ $msg: { fromName: this.pvtFromName, body: msg } }, this.ref.id);
   }
 
@@ -105,6 +171,14 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   /** A message it emitted. */
   receiveMessage(msg: OutMsg, fromName: string): void {
     this.pvtMessageSubs.forEach((fn) => fn(msg, fromName));
+  }
+
+  /** It has ended, and this is what it left behind.  The last thing said about a
+   *  process: nothing more about it crosses after its exit. */
+  receiveExit(exit: RemoteExit): void {
+    if (this.pvtExit !== null) return;
+    this.pvtExit = exit;
+    this.pvtExitWaiter?.resolve(exit);
   }
 
   /** The methods it can answer, as functions that ask it for an answer.  `call`

@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { defineActor } from "../index.js";
 import { ProcessStreams, reflectionNames } from "./process-streams.js";
-import { REFLECT_METHODS, isMsg, isState } from "./channel.js";
+import { REFLECT_METHODS, isExit, isMsg, isState } from "./channel.js";
 import { RemoteProcess } from "./remote-process.js";
 import type { Message } from "../types.js";
 import { sleep } from "../util.js";
@@ -30,6 +30,17 @@ const Echo = defineActor({
       this.state.pings += 1;
       this.ctx.notify();
       await this.emit({ type: "PONG" });
+    },
+  },
+});
+
+/** A process that fails while doing its work: what a handle hears about that is
+ *  that it is gone, and that it did not finish. */
+const Breaks = defineActor({
+  name: "breaks",
+  handlers: {
+    async BOOM() {
+      throw new Error("no");
     },
   },
 });
@@ -90,6 +101,37 @@ describe("ProcessStreams", () => {
     expect(state?.$state).toEqual({ pings: 1 });
 
     await mine.stop();
+  });
+
+  it("says it ended once, as the last thing it says about it", async () => {
+    const { streams, sent } = makeStreams();
+    const mine = await Echo.spawn({});
+    streams.crossed(mine, 1);
+    streams.flush();
+    sent.length = 0;
+
+    await mine.stop();
+    await sleep(20);
+
+    // Exactly one exit, and nothing after it: what it settles on the way out is
+    // said first, and then it is gone.
+    expect(sent.filter(([frame]) => isExit(frame))).toEqual([
+      [{ $exit: { code: 0, state: { pings: 0 } } }, 1],
+    ]);
+    expect(isExit(sent[sent.length - 1][0])).toBe(true);
+  });
+
+  it("says it ended badly when it fails to run", async () => {
+    const { streams, sent } = makeStreams();
+    const breaking = await Breaks.spawn({});
+    streams.crossed(breaking, 5);
+    streams.flush();
+
+    breaking.send({ type: "BOOM" } as Message);
+    await sleep(20);
+
+    const exits = sent.filter(([frame, to]) => to === 5 && isExit(frame));
+    expect(exits).toEqual([[{ $exit: { code: 1, state: null } }, 5]]);
   });
 
   it("has nothing to stream for a handle travelling back to its holder", () => {

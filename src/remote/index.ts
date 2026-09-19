@@ -19,7 +19,7 @@ export type { ProcessRef } from "./process-ref.js";
 
 // frame vocabulary (shared, pure)
 export type { Channel, StringTransport } from "./channel.js";
-export { isProto, isInit, isState, isMsg, isExit } from "./channel.js";
+export { isProto, isInit, isState, isMsg, isExit, isStop, isPause, isResume } from "./channel.js";
 
 // json1 protocol
 export { VERSION, encode, decode, json1Channel } from "./protocols/json1.js";

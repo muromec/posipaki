@@ -83,6 +83,12 @@ const reflector = defineActor({
     async "probe.refusing"() {
       return () => 1;
     },
+    async "probe.finish"(handle) {
+      // Asked from over there to end a process of its own: the exit crosses back
+      // the way everything else about it does, which is what this waits for.
+      await handle.stop();
+      return { ended: handle.hasEnded() };
+    },
     async "probe.kept"() {
       // What the last message carried, said by what it can do.
       return kept ? { pname: kept.pname, canSend: typeof kept.send === "function" } : null;

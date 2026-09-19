@@ -99,6 +99,31 @@ export function isExit(
   return "$exit" in msg;
 }
 
+// ── control frames ─────────────────────────────────────────────────────────
+//
+// What the holder of a handle can ask of a process on the far side, beside
+// sending it a message.  Each is a frame of its own rather than a message, so
+// nothing an actor reads is ever a control signal by accident:
+//
+//   {"$stop": {}, "to": 3}      stop it; it ends, and its `$exit` crosses back
+//   {"$pause": {}, "to": 3}     stop feeding it messages
+//   {"$resume": {}, "to": 3}    feed it again
+//
+// They address the process they are about, so they are answered by whoever holds
+// that process — the side that can act on it.  Stopping the *root* of a connection
+// is not one of these: that stays the STOP message it always was, since the root
+// is not a handle but the process this side is talking through.
+
+export function isStop(msg: Record<string, unknown>): msg is { $stop: Record<string, unknown> } {
+  return "$stop" in msg;
+}
+export function isPause(msg: Record<string, unknown>): msg is { $pause: Record<string, unknown> } {
+  return "$pause" in msg;
+}
+export function isResume(msg: Record<string, unknown>): msg is { $resume: Record<string, unknown> } {
+  return "$resume" in msg;
+}
+
 // ── reflection frames ──────────────────────────────────────────────────────
 //
 // A reflection call crosses the seam as one frame and its answer as another:

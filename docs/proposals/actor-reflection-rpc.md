@@ -1,10 +1,11 @@
 # Actor Reflection RPC
 
 **Status:** increments 1, 2a (process references both ways), 2b (addressing a
-process by its reference), 2c (a handle on a process the far side holds) and 2d (a
-process of this side passed to the far one, and dispatched from there) are
-implemented.  What a handle still cannot do — `wait`, `stop`, `pause`, `release` —
-is listed below.
+process by its reference), 2c (a handle on a process the far side holds), 2d (a
+process of this side passed to the far one, and dispatched from there) and 2f
+(control: what a handle can ask of a process, and the exit that answers it) are
+implemented.  What is left — `release()`, orphans, method calls into a process
+this side holds — is listed below.
 
 ## Summary
 
@@ -95,6 +96,10 @@ Three frames, in the `$r` family:
 {"$r.result.<name>": {seq, value}}         server → client
 {"$r.result.<name>": {seq, error}}         server → client
 ```
+
+Beside those, a frame that asks something of a process rather than of its methods —
+`$stop`, `$pause`, `$resume` — carries no answer of its own: what answers them is
+the process itself, saying that it ended (see *Control and the end of a process*).
 
 The method name is in the frame key, so a frame says what it is without a table.
 
@@ -234,17 +239,52 @@ await surface["probe.poke"](myChild);   // myChild is numbered 1 here, and a han
   side turns the name back into a sender, and uses the parent's stable id when the
   name is the one the receiving process was told is its parent.
 - A method call *into* a process this side holds is not answered yet: the
-  announcement arrives, and the call side of it is 2f.
+  announcement arrives, and the call side of it is still to come.
 
-What is left for 2e and after: a process of this side's own passed to the far one
-and dispatched from there (2d), handles in messages, arguments and state updates
-(2e), `wait`, `stop`, `pause` and subscriptions both ways (2f), orphans (2g), and
-`release()` with `isConnected()` as the one answer about liveness (2h), and method
-calls from the far side into a process this side holds, both ways for `subscribe`
-and `wait`.  Stopping
-is where the root differs and keeps what it does today: asking the root to stop
-is the STOP message plus the far side's exit, while stopping any other process is
-a frame of its own (`$stop`, with `$pause` and `$resume` beside it).
+### Control and the end of a process — done (2f)
+
+A handle can ask the far side for the three things a local process can be asked:
+`wait()`, `stop()`, `pause()`, `resume()`.
+
+```ts
+const kid = proc.state.kid;      // RemoteProcess
+kid.pause();                     // stop feeding it messages
+kid.resume();                    // feed it again
+await kid.stop();                // ends it there, and answers when its exit is back
+await kid.wait();                // {code, state} — what it left behind
+kid.hasEnded();                  // true once that exit has arrived
+```
+
+- Control crosses as frames of its own — `{"$stop": {}, "to": 3}` and its two
+  siblings — not as messages, so nothing an actor reads is ever a control signal by
+  accident. Each addresses the process it is about, and is acted on by the side that
+  holds that process, which is also the side that can act on it.
+- A streamed process's **end is the last thing said about it**: `{"$exit": {code,
+  state}, "to": 3}`, after which nothing more about it crosses and its stream is
+  dropped. A process that fails to run takes the same road with `code: 1`, so a
+  handle is never left waiting for news that cannot come.
+- `wait()` answers with what the process left behind. A handle whose *connection*
+  is gone rejects instead: after the wire, a process that keeps running cannot be
+  told from one that died with it.
+- `stop()` resolves when the exit has crossed back; there is no deadline, so a
+  process that refuses to stop leaves it pending, exactly as a call that is never
+  answered does.
+- Stopping the **root** of a connection is the one case that does not go this way:
+  it stays the STOP message plus the far side's `$exit` it has always been, because
+  the root is not a handle — it is the process this side is talking through. That is
+  what the proxy's own `stop()` does.
+- A handle that has ended is not merely out of reach: `send`, `pause`, `resume` and
+  `stop` all throw, since there is nothing there to ask.
+
+What is left: `release()` on a handle, which drops it from the table on the far
+side so that everything that needs it there fails rather than reaching a process
+nobody wants (2h), and orphans, marked TBD in this document until they are thought
+through (2g). Two gaps beside those: a method call from the far side into a process
+this side holds is still not answered — the announcement arrives, the call side of
+it does not — and a process handed over as *the root of a connection* is read by
+the far side as its own root, since id 0 means that on both ends. Nothing exercises
+the second one; making it work would mean numbering the root like any other process
+when it crosses.
 
 ### TypeScript
 
@@ -273,11 +313,13 @@ declare module "posipaki" {
 9. Addressing a process by reference — done (2b): the connection's table, `to` on
    the frames that name a process, and one walk per frame in each direction
 10. A handle a caller can use — done (2c): `send`, `state`, `subscribe`,
-    `$reflection` and `isConnected()`; `wait`, `stop`, `pause` and `release()`
-    follow
+    `$reflection` and `isConnected()`; `release()` follows
 11. A process of this side's passed to the far one, and dispatched from there —
     done (2d): the same table, reference and stream, used from the other end
-12. Tests: local invocation, plugin registration, wire round-trip, concurrent
+13. Control and the end of a process — done (2f): `$stop`, `$pause`, `$resume`, a
+    streamed `$exit`, and `wait`, `stop`, `pause`, `resume` and `hasEnded()` on the
+    handle; both directions, over a real subprocess as well
+14. Tests: local invocation, plugin registration, wire round-trip, concurrent
     calls, refusals, references over a real subprocess — done; and every carrier
     of a reference — a message body, a call argument, a state update that replaces
     one process with another — tested in both directions (2e)

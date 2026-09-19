@@ -26,9 +26,13 @@ import {
   decodeFrame,
   encodeFrame,
   frameTo,
+  isExit,
   isInit,
   isMsg,
+  isPause,
+  isResume,
   isState,
+  isStop,
   jsonProblem,
   type ReflectionCall,
 } from "./channel.js";
@@ -184,6 +188,23 @@ export async function serveRemoteActor<
       // about a process of this side's own is this side's to publish, not the
       // far side's to tell it.
       if (isRemoteProcess(target)) target.receiveState(frame.$state);
+      return;
+    }
+    if (isExit(frame)) {
+      // A process the far side holds, gone.  Nothing more will be said about it,
+      // so this is the last thing a handle can be told.
+      if (isRemoteProcess(target)) target.receiveExit(frame.$exit);
+      return;
+    }
+    if (isStop(frame) || isPause(frame) || isResume(frame)) {
+      // Control, addressed to the process it is about: acted on by whoever holds
+      // that process, which is this side.
+      if (isProcess(target)) {
+        const sender = makeSender(ROOT_NAME, parentName, parentId);
+        if (isStop(frame)) void target.stop({ from: sender });
+        else if (isPause(frame)) target.pause();
+        else target.resume();
+      }
       return;
     }
     if (isMsg(frame)) {

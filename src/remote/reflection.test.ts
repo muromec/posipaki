@@ -20,8 +20,11 @@ import {
   frameTo,
   isExit,
   isMsg,
+  isPause,
   isReflectionMethods,
+  isResume,
   isState,
+  isStop,
   jsonProblem,
 } from "./channel.js";
 import type { Channel } from "./channel.js";
@@ -445,6 +448,69 @@ describe("a process of this side, handed over", () => {
     const second = (proc.state as { kid?: RemoteProcess }).kid;
     expect(second).not.toBe(first);
     expect(second?.ref.id).toBe(4);
+
+    await endProxy(channel, proc);
+  });
+  it("stops a process of mine when the far side asks, and tells it that it ended", async () => {
+    const { channel, proc, surface } = await spawnProxy(["probe.use"]);
+
+    const mine = await Echo.spawn({});
+    const answer = surface["probe.use"]!(mine);
+    await waitUntil(() => channel.sent.some((f) => frameKey(f, REFLECT_CALL)), "the call");
+    channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
+    await answer;
+
+    channel.handler!({ to: 1, $stop: {} });
+    await mine.wait();
+
+    // Its exit crosses back like everything else it does: the far side asked, so
+    // it is the one that has to be told.
+    await waitUntil(() => channel.sent.some((f) => f.to === 1 && isExit(f)), "its exit");
+    const exit = channel.sent.find((f) => f.to === 1 && isExit(f));
+    expect(exit?.$exit).toEqual({ code: 0, state: { pings: 0 } });
+
+    await endProxy(channel, proc);
+  });
+
+  it("holds a process of mine back while the far side has it paused", async () => {
+    const { channel, proc, surface } = await spawnProxy(["probe.use"]);
+
+    const mine = await Echo.spawn({});
+    const answer = surface["probe.use"]!(mine);
+    await waitUntil(() => channel.sent.some((f) => frameKey(f, REFLECT_CALL)), "the call");
+    channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
+    await answer;
+
+    channel.handler!({ to: 1, $pause: {} });
+    channel.handler!({ to: 1, $msg: { fromName: "remote", body: { type: "PING" } } });
+    await sleep(20);
+    expect((mine.state as unknown as { pings: number }).pings).toBe(0);
+
+    channel.handler!({ to: 1, $resume: {} });
+    await waitUntil(() => (mine.state as unknown as { pings: number }).pings === 1, "the message it took");
+
+    await mine.stop();
+    await endProxy(channel, proc);
+  });
+
+  it("takes the far side's word that a handle it gave is gone", async () => {
+    const channel = new FakeChannel();
+    const actor = remoteClient<Record<string, unknown>, { kid?: RemoteProcess }, Message, Message>(
+      "probe",
+      () => Promise.resolve(channel),
+    );
+    const proc = await actor.spawn({}, { awaitReady: false });
+    await waitUntil(() => channel.handler !== null, "the handshake handler");
+    channel.handler!({ $state: { kid: { [PROCESS_REF]: { id: 2, pname: "remote:kid" } } } });
+    await proc.ready();
+
+    const kid = (proc.state as { kid?: RemoteProcess }).kid!;
+    const waiting = kid.wait();
+    channel.handler!({ to: 2, $exit: { code: 0, state: { pings: 2 } } });
+
+    expect(await waiting).toEqual({ code: 0, state: { pings: 2 } });
+    expect(kid.hasEnded()).toBe(true);
+    expect(() => kid.send({ type: "PING" })).toThrow(/has ended/);
 
     await endProxy(channel, proc);
   });
@@ -906,6 +972,36 @@ describe("serveRemoteActor reflection", () => {
       seq: 23,
       value: { pname: "mine", state: null },
     });
+
+    await endServer(channel, served);
+  });
+
+  it("stops a process it holds when the far side asks, and says that it ended", async () => {
+    const { channel, served } = await serveProbe();
+
+    channel.handler!({ [`${REFLECT_CALL}probe.expose`]: { seq: 40, args: [] } });
+    await waitUntil(() => rootStates(channel).some((f) => "child" in f.$state), "the child it put out");
+
+    channel.handler!({ to: 2, $stop: {} });
+    await waitUntil(() => channel.sent.some((f) => f.to === 2 && isExit(f)), "its exit");
+    expect(channel.sent.find((f) => f.to === 2 && isExit(f))?.$exit).toEqual({ code: 0, state: null });
+
+    await endServer(channel, served);
+  });
+
+  it("leaves a process it holds alone when the far side only pauses it", async () => {
+    const { channel, served } = await serveProbe();
+
+    channel.handler!({ [`${REFLECT_CALL}probe.expose`]: { seq: 41, args: [] } });
+    await waitUntil(() => rootStates(channel).some((f) => "child" in f.$state), "the child it put out");
+
+    channel.handler!({ to: 2, $pause: {} });
+    channel.handler!({ to: 2, $msg: { fromName: "client", body: { type: "PING" } } });
+    await sleep(20);
+    expect(channel.sent.some((f) => f.to === 2 && isMsg(f))).toBe(false);
+
+    channel.handler!({ to: 2, $resume: {} });
+    await waitUntil(() => channel.sent.some((f) => f.to === 2 && isMsg(f)), "its answer");
 
     await endServer(channel, served);
   });

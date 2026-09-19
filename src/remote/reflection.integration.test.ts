@@ -166,6 +166,51 @@ describe("reflection across a process boundary", () => {
     await proc.stop();
   }, 20000);
 
+  it("stops a process on the far side, and knows when it is gone", async () => {
+    const { proc } = await spawnPayload();
+
+    const kid = (proc.state as unknown as { kid?: RemoteProcess }).kid!;
+    await waitUntil(() => kid.state !== null, "the state it streamed");
+
+    await kid.stop();
+
+    expect(kid.hasEnded()).toBe(true);
+    // Gone, not merely out of reach: there is nothing to send to any more.
+    expect(() => kid.send({ type: "PING" })).toThrow(/has ended/);
+
+    await proc.stop();
+  }, 20000);
+
+  it("holds a process on the far side back while it is paused", async () => {
+    const { proc } = await spawnPayload();
+
+    const kid = (proc.state as unknown as { kid?: RemoteProcess }).kid!;
+    await waitUntil(() => kid.state !== null, "the state it streamed");
+
+    kid.pause();
+    kid.send({ type: "PING" });
+    await sleep(50);
+    expect(kid.state).toEqual({ pings: 0 });
+
+    kid.resume();
+    await waitUntil(() => (kid.state as { pings?: number }).pings === 1, "the message it took after resuming");
+
+    await proc.stop();
+  }, 20000);
+
+  it("hands a process of mine over, and the far side ends it and waits for that", async () => {
+    const { proc, surface } = await spawnPayload();
+
+    const mine = await worker.spawn({});
+    expect(await surface["probe.finish"](mine)).toEqual({ ended: true });
+
+    // The far side is not guessing: the exit it waited for is the one this side's
+    // process really reached.
+    await mine.wait();
+
+    await proc.stop();
+  }, 20000);
+
   it("carries a process of mine inside a message, and the far side reads it as a handle", async () => {
     const { proc, surface } = await spawnPayload();
 

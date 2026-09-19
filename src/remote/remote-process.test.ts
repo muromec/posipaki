@@ -82,6 +82,54 @@ describe("RemoteProcess", () => {
     expect(asked).toEqual([["probe.add", [1, 2]]]);
   });
 
+  it("waits for the far side to say it ended, and hands back what it left", async () => {
+    const { handle } = makeHandle();
+    const waiting = handle.wait();
+    expect(handle.hasEnded()).toBe(false);
+
+    handle.receiveExit({ code: 0, state: { pings: 1 } });
+
+    expect(await waiting).toEqual({ code: 0, state: { pings: 1 } });
+    expect(handle.hasEnded()).toBe(true);
+    // Nothing more can be asked of it: it is gone, not merely out of reach.
+    expect(await handle.wait()).toEqual({ code: 0, state: { pings: 1 } });
+    expect(() => handle.send({ type: "PING", n: 1 })).toThrow(/has ended/);
+    expect(() => handle.pause()).toThrow(/has ended/);
+    expect(() => handle.stop()).toThrow(/has ended/);
+  });
+
+  it("stops waiting when the connection goes, rather than waiting for ever", async () => {
+    const { handle } = makeHandle();
+    const waiting = handle.wait();
+    handle.disconnect();
+
+    await expect(waiting).rejects.toThrow(/cannot be reached/);
+    await expect(handle.wait()).rejects.toThrow(/cannot be reached/);
+  });
+
+  it("asks the far side to stop it, and answers when its exit comes back", async () => {
+    const { handle, sent } = makeHandle();
+    const stopping = handle.stop();
+
+    expect(sent).toEqual([[{ $stop: {} }, 2]]);
+    expect(handle.hasEnded()).toBe(false);
+
+    handle.receiveExit({ code: 0, state: {} });
+    await expect(stopping).resolves.toBeUndefined();
+  });
+
+  it("pauses and resumes it by asking the far side to", () => {
+    const { handle, sent } = makeHandle();
+
+    handle.pause();
+    handle.resume();
+
+    expect(sent).toEqual([
+      [{ $pause: {} }, 2],
+      [{ $resume: {} }, 2],
+    ]);
+  });
+
   it("says it is not connected once the connection is gone, and refuses to send", () => {
     const { handle, sent } = makeHandle();
     let told = 0;
@@ -93,6 +141,9 @@ describe("RemoteProcess", () => {
     expect(handle.isConnected()).toBe(false);
     expect(told).toBe(1);
     expect(() => handle.send({ type: "PING", n: 1 })).toThrow(/cannot be reached/);
+    expect(() => handle.pause()).toThrow(/cannot be reached/);
+    expect(() => handle.resume()).toThrow(/cannot be reached/);
+    expect(() => handle.stop()).toThrow(/cannot be reached/);
     expect(sent).toEqual([]);
   });
 });

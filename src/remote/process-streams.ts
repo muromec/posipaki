@@ -89,5 +89,21 @@ export class ProcessStreams {
     // name yet has nowhere to put the news.
     sink({ [REFLECT_METHODS]: reflectionNames(target) }, id);
     sink({ $state: target.state as Record<string, unknown> }, id);
+    // Its end is the last thing said about it.  A process that fails to run takes
+    // the same road as one that finishes: the holder of the handle is told that it
+    // is gone, and why, rather than left waiting for news that cannot come.
+    void target.wait().then(
+      () => this.pvtEnded(target, id, 0),
+      () => this.pvtEnded(target, id, 1),
+    );
+  }
+
+  /** It has ended: say so once, and say nothing more about it. */
+  private pvtEnded(target: AnyProcess, id: number, code: number): void {
+    const stops = this.pvtStops.get(id);
+    if (!stops) return;
+    for (const stop of stops) stop();
+    this.pvtStops.delete(id);
+    this.pvtSink({ $exit: { code, state: target.state } }, id);
   }
 }
