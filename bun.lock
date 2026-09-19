@@ -14,23 +14,23 @@
     },
     "packages/remote-bwrap": {
       "name": "posipaki-remote-bwrap",
-      "version": "0.35.0",
+      "version": "0.37.0",
       "dependencies": {
-        "posipaki": "^0.35.0",
+        "posipaki": "^0.37.0",
       },
     },
     "packages/remote-podman": {
       "name": "posipaki-remote-podman",
-      "version": "0.35.0",
+      "version": "0.37.0",
       "dependencies": {
-        "posipaki": "^0.35.0",
+        "posipaki": "^0.37.0",
       },
     },
     "packages/remote-ssh": {
       "name": "posipaki-remote-ssh",
-      "version": "0.35.0",
+      "version": "0.37.0",
       "dependencies": {
-        "posipaki": "^0.35.0",
+        "posipaki": "^0.37.0",
       },
     },
   },
