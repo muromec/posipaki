@@ -30,17 +30,22 @@ const reflector = defineActor({
   name: "reflector",
   plugins: [inspect()],
   $reflectionMethods: {
-    "probe.add"(a, b) {
+    async "probe.add"(a, b) {
       return a + b;
     },
     "probe.late"(ms) {
       return new Promise((resolve) => setTimeout(() => resolve(`late:${ms}`), ms));
     },
-    "probe.boom"() {
+    async "probe.boom"() {
       throw new Error("probe said no");
     },
-    "probe.refusing"() {
+    async "probe.refusing"() {
       return () => 1;
+    },
+    async "probe.whatItGot"(value) {
+      // What arrived, named by what it is: over a wire the reference is parsed
+      // here, so this says whether the far side did that.
+      return { name: value?.constructor?.name ?? typeof value, pname: value?.pname };
     },
   },
   async setup() {

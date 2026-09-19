@@ -85,7 +85,9 @@ export class AsyncProcess<
   OutMessage extends Message,
   ReflectionMethods extends object,
 > {
-  /** Reflection methods.  Empty by default — defineActor fills in configured methods. */
+  /** Reflection methods.  Empty by default — defineActor fills in configured
+   *  methods, each wrapped so calling one answers with a promise whatever the
+   *  method was written as. */
   $reflection: ReflectionMethods = {} as ReflectionMethods;
   pgenerator: AsyncProcessFn<Args, State, InMessage, OutMessage>;
   pname: string;
@@ -709,6 +711,24 @@ export class AsyncProcess<
   }
 }
 export type AnyProcess = AsyncProcess<unknown, unknown, Message, Message, {}>;
+
+/**
+ * Whether a value is a process, judged by what it holds rather than by which
+ * class built it.  `instanceof` would answer about the bundle, not the value: a
+ * build that inlines its own copy of this class per entry point (one dist file
+ * importing the core, another doing the same) has two constructors for one kind
+ * of thing, and a process from one is not an instance of the other.
+ */
+export function isProcess(value: unknown): value is AnyProcess {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as Partial<AnyProcess>;
+  return (
+    typeof candidate.pname === "string" &&
+    typeof candidate.id === "symbol" &&
+    typeof candidate.send === "function" &&
+    typeof candidate.fork === "function"
+  );
+}
 // ---- spawnAsync -------------------------------------------------------------
 
 /**

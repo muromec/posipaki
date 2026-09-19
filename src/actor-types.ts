@@ -25,8 +25,21 @@ export type HandlerOptions<InMsg extends Message> = Omit<
   },
   "STOP"
 >;
-export type ReflectionMethod = (...args: unknown[]) => unknown;
-export interface ReflectionOptions {}
+/**
+ * A reflection method, async by contract: it answers with a promise, even when
+ * it has the answer already.  The same call has to read the same way whether the
+ * actor is here or behind a wire, and a caller that had to know which of the two
+ * it was holding would be reading the shape of the deployment, not the answer.
+ *
+ * The parameters are `never` because nothing is called through this type — it is
+ * the contract every declared method is checked against.
+ */
+export type ReflectionMethod = (...args: never[]) => Promise<unknown>;
+/** The reflection surface a process exposes: named methods, each of them async
+ *  by {@link ReflectionMethod}'s contract. */
+export interface ReflectionOptions {
+  [name: string]: ReflectionMethod;
+}
 export type Paired<Priv, Pub> = { public: Pub; private: Priv };
 export type HidePrivate<T> = T extends Paired<unknown, unknown> ? T["public"] : T;
 

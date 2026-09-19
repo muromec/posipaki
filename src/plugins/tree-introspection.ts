@@ -13,15 +13,10 @@ declare module "../index" {
 }
 
 interface TreeReflectionMethods {
-  /**
-   * The subtree under this process, filtered by `prefix`.  A child reached over
-   * a wire answers later, so this is the one method here whose answer may be a
-   * promise; the others read what this process already holds.
-   */
-  "inspect.getTree": (prefix?: string) => TreeNode | Promise<TreeNode>;
-  "inspect.getState": () => unknown;
-  "inspect.find": (pname: string) => AnyProcess | null;
-  "inspect.exit": () => void;
+  "inspect.getTree": (prefix?: string) => Promise<TreeNode>;
+  "inspect.getState": () => Promise<unknown>;
+  "inspect.find": (pname: string) => Promise<AnyProcess | null>;
+  "inspect.exit": () => Promise<void>;
 }
 
 export interface TreeNode {
@@ -51,8 +46,6 @@ export function inspect(): ActorPlugin {
           for (const child of this.ctx.children) {
             const cr = child.$reflection as AR;
             if (typeof cr["inspect.getTree"] === "function") {
-              // Awaiting a local child costs a turn of the loop; a child behind
-              // a seam answers with a promise, and its subtree is the point.
               const sub = await cr["inspect.getTree"](prefix);
               if (!prefix || sub.pname.startsWith(prefix)) children.push(sub);
             } else {
@@ -74,15 +67,15 @@ export function inspect(): ActorPlugin {
             status: "running" as const,
           } satisfies TreeNode;
         },
-        "inspect.getState": function () {
+        "inspect.getState": async function () {
           const state = this.state as unknown;
           return state;
         },
-        "inspect.find": function (pname: string) {
+        "inspect.find": async function (pname: string) {
           const selfCtx = this.ctx as AnyProcessCtx;
           return findProcess(selfCtx.children, pname);
         },
-        "inspect.exit": function () {
+        "inspect.exit": async function () {
           this.exit("inspector");
         },
       },

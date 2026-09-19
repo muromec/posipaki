@@ -172,7 +172,7 @@ describe("inspect", () => {
       proc.send({ type: "POKE" });
       expect(await nextState(proc)).toBe(null);
 
-      const state = proc.$reflection["inspect.getState"]();
+      const state = await proc.$reflection["inspect.getState"]();
       expect(state).toEqual({ private: { count: 1 }, public: null });
 
       await proc.stop();
@@ -215,7 +215,7 @@ describe("inspect", () => {
       const proc = await Parent.spawn({});
       await proc.ready();
 
-      const found = proc.$reflection["inspect.find"]("parent:kid");
+      const found = await proc.$reflection["inspect.find"]("parent:kid");
       expect(found).not.toBeNull();
       expect(found!.pname).toBe("parent:kid");
       expect(found!.id).toBe(proc.children[0].id);
@@ -242,7 +242,7 @@ describe("inspect", () => {
       const proc = await Parent.spawn({});
       await proc.ready();
 
-      const found = proc.$reflection["inspect.find"]("root:plain-child");
+      const found = await proc.$reflection["inspect.find"]("root:plain-child");
       expect(found).not.toBeNull();
       expect(found!.pname).toBe("root:plain-child");
 
@@ -259,7 +259,7 @@ describe("inspect", () => {
       const proc = await Actor.spawn({});
       await proc.ready();
 
-      expect(proc.$reflection["inspect.find"]("nope")).toBeNull();
+      expect(await proc.$reflection["inspect.find"]("nope")).toBeNull();
 
       await proc.stop();
     });

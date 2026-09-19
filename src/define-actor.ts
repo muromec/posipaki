@@ -340,8 +340,16 @@ export function defineActor<
     }
     if (!reflectionMethods) return;
     const refl = proc.$reflection as Record<string, Function>;
-    for (const [k, m] of Object.entries(reflectionMethods)) {
-      refl[k] = m.bind(self);
+    // The declared contract is `ReflectionMethod`, whose parameters are `never`
+    // because nothing is called through it; this is the one place that calls
+    // what it describes.
+    const written = Object.entries(reflectionMethods) as Array<
+      [string, (...args: unknown[]) => unknown]
+    >;
+    for (const [k, m] of written) {
+      // A promise whatever the method was written as, so a caller reads the same
+      // call the same way whether the actor is here or behind a wire.
+      refl[k] = async (...args: unknown[]) => await m.apply(self, args);
     }
   }
 

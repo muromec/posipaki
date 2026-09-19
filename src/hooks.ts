@@ -16,6 +16,7 @@ import type {
   PluginTransform,
   AnyConfig,
   ActorContextOf,
+  ReflectionOptions,
 } from "./actor-types.js";
 
 // ── stop propagation sentinel ────────────────────────────────────────────
@@ -39,7 +40,9 @@ export type { HookResult, ActorPlugin, PluginTransform };
  *   }
  */
 export interface ActorDecorated {}
-export interface ActorReflection {}
+/** Reflection methods plugins and the framework add to every actor.  Merged by
+ *  declaration, and held to {@link ReflectionOptions}' contract: async. */
+export interface ActorReflection extends ReflectionOptions {}
 
 // ── chainHook ────────────────────────────────────────────────────────────
 

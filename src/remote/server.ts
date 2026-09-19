@@ -7,6 +7,7 @@
 import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
+import { ProcessHandles, decodeProcessRefs, encodeProcessRefs } from "./process-ref.js";
 import {
   REFLECT_METHODS,
   REFLECT_RESULT,
@@ -82,6 +83,9 @@ export async function serveRemoteActor<
   // $state.  The client installs its call side from this list, and a name that
   // was never announced is never dispatched: the list is the whole surface, so
   // no frame can reach a property the actor did not offer.
+  // What this connection uses for the processes it hands over. One table per
+  // connection, because an id means nothing on any other one.
+  const handles = new ProcessHandles();
   const reflection = proc.$reflection as unknown as Record<string, Function>;
   const announced = Object.keys(reflection).filter((name) => typeof reflection[name] === "function");
   await channel.send({ [REFLECT_METHODS]: announced });
@@ -99,7 +103,12 @@ export async function serveRemoteActor<
     try {
       // A method may be written for a call that answers later; the wire has no
       // opinion about that, it just waits for the frame.
-      const value = await method(...call.args);
+      // References in the arguments become processes this side cannot reach —
+      // the id is there, resolving it is not yet — and processes in the answer
+      // become references.  What is left has to be JSON, or the call is refused
+      // rather than half-written.
+      const args = decodeProcessRefs(call.args) as unknown[];
+      const value = encodeProcessRefs(await method(...args), handles);
       const problem = jsonProblem(value);
       if (problem !== null) {
         await reply({

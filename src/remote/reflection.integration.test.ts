@@ -7,8 +7,10 @@
 
 import { describe, it, expect } from "vitest";
 import { dirname, join } from "node:path";
+import { defineActor } from "../index.js";
 import { remoteClient } from "./client.js";
 import { commandSpawner } from "./spawners/fifo-command.js";
+import { UnreachableRemoteProcess } from "./process-ref.js";
 import type { TreeNode } from "../plugins/tree-introspection.js";
 import type { Message } from "../types.js";
 
@@ -49,6 +51,43 @@ describe("reflection across a process boundary", () => {
     await expect(surface["probe.boom"]()).rejects.toThrow("probe said no");
     await expect(surface["probe.refusing"]()).rejects.toThrow(/cannot cross a frame/);
     expect(surface["probe.nope"]).toBeUndefined();
+
+    await proc.stop();
+  }, 20000);
+
+  it("hands back a reference for a process it cannot send", async () => {
+    const { proc, surface } = await spawnPayload();
+
+    const first = (await surface["inspect.find"]("remote:kid")) as UnreachableRemoteProcess;
+    const second = (await surface["inspect.find"]("remote:kid")) as UnreachableRemoteProcess;
+
+    expect(first).toBeInstanceOf(UnreachableRemoteProcess);
+    expect(first.pname).toBe("remote:kid");
+    expect(first.id).toBeGreaterThan(0);
+    // Handed over twice, it is the same reference both times.
+    expect(second.id).toBe(first.id);
+
+    // And a process the far side does not have is still just null.
+    expect(await surface["inspect.find"]("remote:nope")).toBeNull();
+
+    await proc.stop();
+  }, 20000);
+
+  it("takes a reference back as an argument, parsed on the far side", async () => {
+    const { proc, surface } = await spawnPayload();
+
+    const found = (await surface["inspect.find"]("remote:kid")) as UnreachableRemoteProcess;
+    const seen = (await surface["probe.whatItGot"](found)) as { name: string; pname: string };
+    expect(seen.name).toBe("UnreachableRemoteProcess");
+    expect(seen.pname).toBe("remote:kid");
+
+    // A process of mine goes the other way: numbered on this side, and parsed
+    // into a reference there.
+    const mine = await defineActor({ name: "mine", handlers: {} }).spawn({});
+    const seenMine = (await surface["probe.whatItGot"](mine)) as { name: string; pname: string };
+    expect(seenMine.name).toBe("UnreachableRemoteProcess");
+    expect(seenMine.pname).toBe("mine");
+    await mine.stop();
 
     await proc.stop();
   }, 20000);

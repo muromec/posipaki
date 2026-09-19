@@ -11,6 +11,7 @@ import type { HookResult } from "../hooks.js";
 import type { ActorDefinition, HandlerOptions, MethodOptions, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
+import { ProcessHandles, decodeProcessRefs, encodeProcessRefs } from "./process-ref.js";
 import {
   REFLECT_CALL,
   asReflectionResult,
@@ -18,9 +19,11 @@ import {
   isMsg,
   isReflectionMethods,
   isState,
+  jsonProblem,
 } from "./channel.js";
 
 export type ClientSpawner<Args> = (args: Args) => Promise<Channel>;
+
 
 export function remoteClient<
   Args,
@@ -59,6 +62,10 @@ export function remoteClient<
       // this process's reflection surface.  `seq` belongs to this connection
       // and is never reused, so two calls to the same method in flight at once
       // stay apart; the answer names the one it belongs to.
+      // The ids this side hands out, for the processes it sends the other way;
+      // the far side has a table of its own and neither one means anything on
+      // the other connection.
+      const handles = new ProcessHandles();
       let calls = 0;
       const pending = new Map<
         number,
@@ -70,10 +77,19 @@ export function remoteClient<
         for (const method of methods) {
           surface[method] = (...callArgs: unknown[]) =>
             new Promise((resolve, reject) => {
+              // Processes among the arguments become references first — mine,
+              // with ids from my table, or the far side's own coming back — and
+              // what is left has to be JSON, or nothing is sent at all.
+              const wireArgs = encodeProcessRefs(callArgs, handles);
+              const problem = jsonProblem(wireArgs);
+              if (problem !== null) {
+                reject(new Error(`cannot send ${problem} to ${method}`));
+                return;
+              }
               const seq = ++calls;
               pending.set(seq, { name: method, resolve, reject });
               void Promise.resolve(
-                channel.send({ [`${REFLECT_CALL}${method}`]: { seq, args: callArgs } }),
+                channel.send({ [`${REFLECT_CALL}${method}`]: { seq, args: wireArgs } }),
               ).catch((error: unknown) => {
                 pending.delete(seq);
                 reject(error instanceof Error ? error : new Error(String(error)));
@@ -124,7 +140,7 @@ export function remoteClient<
           const waiting = pending.get(result.seq);
           if (!waiting) return;
           pending.delete(result.seq);
-          if (result.error === undefined) waiting.resolve(result.value);
+          if (result.error === undefined) waiting.resolve(decodeProcessRefs(result.value));
           else waiting.reject(new Error(`${waiting.name}: ${result.error}`));
         }
       });
