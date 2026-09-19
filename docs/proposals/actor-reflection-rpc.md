@@ -312,6 +312,13 @@ the far side as its own root, since id 0 means that on both ends. Nothing exerci
 the second one; making it work would mean numbering the root like any other process
 when it crosses.
 
+### Orphans — TBD (2g)
+
+An orphan in posipaki is a process whose parent is gone before it finished.  What a
+handle on one should see — whether it is still reachable, what it is handed to, and
+whether an orphan counts as crossing at all — is not decided here, and nothing about
+it is implemented.  Marked TBD rather than guessed at.
+
 ### TypeScript
 
 Config-defined methods are typed from the config; plugin methods through
