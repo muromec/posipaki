@@ -3,7 +3,8 @@
 import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "../define-actor.js";
 import type { Message } from "../types.js";
-import { inspect, type TreeNode } from "./tree-introspection.js";
+import { inspect, type FoundProcess, type TreeNode } from "./tree-introspection.js";
+import type { AnyProcess } from "../process.async.js";
 import { nextState } from "../testing/tick-utils.js";
 
 // ── messages ─────────────────────────────────────────────────────────────
@@ -196,6 +197,23 @@ describe("inspect", () => {
   });
 
   describe("find", () => {
+    /** What a proxy child answers with: a name, what it holds, what it can answer. */
+    const farProcess = (pname: string) => ({
+      pname,
+      state: null,
+      $reflection: {},
+      stop: async () => undefined,
+    });
+
+    /** Make a child answer a search as a proxy does, and say what it was asked. */
+    function announceFind(proc: AnyProcess, answer: (pname: string) => unknown, asked: string[]) {
+      const surface = proc.$reflection as unknown as Record<string, unknown>;
+      surface["inspect.find"] = async (pname: string) => {
+        asked.push(pname);
+        return answer(pname);
+      };
+    }
+
     it("returns a descendant process by full pname", async () => {
       const Child = defineActor({
         name: "leaf",
@@ -218,7 +236,8 @@ describe("inspect", () => {
       const found = await proc.$reflection["inspect.find"]("parent:kid");
       expect(found).not.toBeNull();
       expect(found!.pname).toBe("parent:kid");
-      expect(found!.id).toBe(proc.children[0].id);
+      // A name that is here is found here, so what comes back is this side's own process.
+      expect((found as AnyProcess).id).toBe(proc.children[0].id);
 
       await proc.stop();
     });
@@ -260,6 +279,88 @@ describe("inspect", () => {
       await proc.ready();
 
       expect(await proc.$reflection["inspect.find"]("nope")).toBeNull();
+
+      await proc.stop();
+    });
+
+    it("asks a child whose name the target sits under, and answers with what it said", async () => {
+      const Proxy = defineActor({
+        name: "proxy",
+        plugins: [], // nothing of this side's own is announced here
+        handlers: {},
+      });
+      const Parent = defineActor({
+        name: "parent",
+        plugins: [inspect()],
+        async setup(this: any) {
+          await this.fork(Proxy);
+          return {};
+        },
+        handlers: {},
+      });
+
+      const proc = await Parent.spawn({});
+      await proc.ready();
+
+      const far = farProcess("parent:proxy:kid");
+      const asked: string[] = [];
+      announceFind(proc.children[0], (pname) => (pname === "parent:proxy:kid" ? far : null), asked);
+
+      const found = await proc.$reflection["inspect.find"]("parent:proxy:kid");
+      expect(found).toBe(far);
+      expect(asked).toEqual(["parent:proxy:kid"]);
+
+      await proc.stop();
+    });
+
+    it("skips a child that announced nothing, and answers null", async () => {
+      const Plain = defineActor({ name: "plain", plugins: [], handlers: {} });
+      const Parent = defineActor({
+        name: "parent",
+        plugins: [inspect()],
+        async setup(this: any) {
+          await this.fork(Plain);
+          return {};
+        },
+        handlers: {},
+      });
+
+      const proc = await Parent.spawn({});
+      await proc.ready();
+
+      expect(await proc.$reflection["inspect.find"]("parent:plain:kid")).toBeNull();
+
+      await proc.stop();
+    });
+
+    it("does not ask a child the name is not under", async () => {
+      const Elsewhere = defineActor({ name: "elsewhere", plugins: [], handlers: {} });
+      const Proxy = defineActor({ name: "proxy", plugins: [], handlers: {} });
+      const Parent = defineActor({
+        name: "parent",
+        plugins: [inspect()],
+        async setup(this: any) {
+          await this.fork(Elsewhere);
+          await this.fork(Proxy);
+          return {};
+        },
+        handlers: {},
+      });
+
+      const proc = await Parent.spawn({});
+      await proc.ready();
+
+      const elsewhereAsked: string[] = [];
+      const proxyAsked: string[] = [];
+      const [elsewhere, proxy] = proc.children;
+      announceFind(elsewhere, () => farProcess("nobody"), elsewhereAsked);
+      announceFind(proxy, () => null, proxyAsked);
+
+      // `parent:elsewhere` is not above `parent:proxy:kid`, so the only child asked is
+      // the one the name says it is under.
+      expect(await proc.$reflection["inspect.find"]("parent:proxy:kid")).toBeNull();
+      expect(proxyAsked).toEqual(["parent:proxy:kid"]);
+      expect(elsewhereAsked).toEqual([]);
 
       await proc.stop();
     });

@@ -50,6 +50,14 @@ const leaf = defineActor({
   },
 });
 
+// A child that inherits the inspect plugin, so a search for it from the far side can
+// answer with a handle whose methods are worth asking for.
+const watcher = defineActor({
+  name: "watcher",
+  setup: () => ({ ticks: 0 }),
+  handlers: {},
+});
+
 const reflector = defineActor({
   name: "reflector",
   plugins: [inspect()],
@@ -120,6 +128,7 @@ const reflector = defineActor({
     // A child on the public state: a process on the state crosses as a reference,
     // and the other side gets a handle on it without being told anything else.
     const kid = await this.fork(leaf, undefined, { name: "kid" });
+    await this.fork(watcher, undefined, { name: "watcher" });
     return { kid };
   },
   handlers: {

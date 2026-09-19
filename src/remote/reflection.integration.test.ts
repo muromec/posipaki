@@ -11,7 +11,7 @@ import { defineActor } from "../index.js";
 import { remoteClient } from "./client.js";
 import { commandSpawner } from "./spawners/fifo-command.js";
 import { RemoteProcess } from "./remote-process.js";
-import type { TreeNode } from "../plugins/tree-introspection.js";
+import type { FarProcess, TreeNode } from "../plugins/tree-introspection.js";
 import { inspect } from "../plugins/tree-introspection.js";
 import type { Message } from "../types.js";
 import { sleep } from "../util.js";
@@ -324,7 +324,85 @@ describe("reflection across a process boundary", () => {
     // `host:tools` and `host:tools:kid` — the same names a process of this side's own would
     // have, and the same ones `inspect.find` answers to.  Nothing renames them on the way in.
     expect(tree.children.map((child) => child.pname)).toEqual(["host:tools"]);
-    expect(tree.children[0].children.map((child) => child.pname)).toEqual(["host:tools:kid"]);
+    expect(tree.children[0].children.map((child) => child.pname)).toEqual([
+      "host:tools:kid",
+      "host:tools:watcher",
+    ]);
+
+    await proc.stop();
+  }, 20000);
+
+  /**
+   * A search that has to leave this side.  The client is a child of the host, so a name
+   * under the client belongs to a process this side does not hold: what is here is a
+   * proxy, and what it holds is over a wire it speaks on.  Nothing is handed over for
+   * the purpose — the far side simply has the plugin installed, and a child announces
+   * what it can answer the same way it announces anything.
+   */
+  async function spawnHostAndWaitFor(name: string): Promise<{
+    found: FarProcess | null;
+    proc: Awaited<ReturnType<ReturnType<typeof remoteClient>["spawn"]>>;
+  }> {
+    const Remote = remoteClient<Record<string, unknown>, Record<string, unknown>, Message, Message>(
+      "reflector",
+      commandSpawner([process.argv[0], fixture]),
+    );
+    const Host = defineActor({
+      name: "host",
+      plugins: [inspect()],
+      async setup(this: any) {
+        await this.fork(Remote, {}, { name: "tools" });
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Host.spawn({});
+    await proc.ready();
+
+    // The payload answers before its own setup has finished, so the far child is waited
+    // for rather than assumed to be there the moment the connection is.
+    let found: FarProcess | null = null;
+    for (let waited = 0; waited < 3000 && found === null; waited += 10) {
+      found = (await proc.$reflection["inspect.find"](name)) as FarProcess | null;
+      if (!found) await sleep(10);
+    }
+    return { found, proc };
+  }
+
+  it("finds a process over the seam by the name this side spells it with", async () => {
+    const { found, proc } = await spawnHostAndWaitFor("host:tools:watcher");
+
+    expect(found).not.toBeNull();
+    expect(found!.pname).toBe("host:tools:watcher");
+    // A handle is what a far process is here: not an object of this side's tree, but
+    // the one way of talking to it.  The search crossed; the process did not move.
+    expect(found).toBeInstanceOf(RemoteProcess);
+
+    // Nothing here holds that name either way, and the search still says so.
+    expect(await proc.$reflection["inspect.find"]("host:tools:nope")).toBeNull();
+    expect(await proc.$reflection["inspect.find"]("host:nope:kid")).toBeNull();
+
+    await proc.stop();
+  }, 20000);
+
+  it("asks what it found over there, and hears its state only once it asks", async () => {
+    const { found, proc } = await spawnHostAndWaitFor("host:tools:watcher");
+    const handle = found as RemoteProcess;
+
+    // What it can answer is announced on its own frame, which comes after the one that
+    // carried the reference.
+    await waitUntil(
+      () => typeof handle.$reflection["inspect.getState"] === "function",
+      "the announcement of the far method",
+    );
+    expect(await handle.$reflection["inspect.getState"]()).toEqual({ ticks: 0 });
+
+    // A process that crossed is silent, so what it holds is asked for and then heard.
+    expect(handle.state).toBeNull();
+    handle.tune(["state"]);
+    await waitUntil(() => handle.state !== null, "the state it streamed");
+    expect(handle.state).toEqual({ ticks: 0 });
 
     await proc.stop();
   }, 20000);
@@ -336,7 +414,7 @@ describe("reflection across a process boundary", () => {
     // `$init` — so what it says about itself is spelled the way this side spells it.
     const tree = (await surface["inspect.getTree"]()) as TreeNode;
     expect(tree.status).toBe("running");
-    expect(tree.children.map((child) => child.pname)).toEqual(["reflector:kid"]);
+    expect(tree.children.map((child) => child.pname)).toEqual(["reflector:kid", "reflector:watcher"]);
     expect(tree.children[0].status).toBe("no introspection");
 
     await proc.stop();
