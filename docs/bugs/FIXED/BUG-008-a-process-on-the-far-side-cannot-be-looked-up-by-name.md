@@ -12,23 +12,28 @@ children here, its far subtree is not part of this side's object graph, and its 
 never asked.  The method was installed and reachable the whole time — `inspect.getTree` crossed
 the same boundary all along, because it *asks* each child, while `find` only *looked*.
 
-**Fix:** `find` asks now.  The walk over this side's own processes stays — a name that is here
-is found here, and the walk costs nothing — and a name that is not here is asked for of the
-child it sits under: the one whose `pname` is a prefix of the target (`…:tools` is not above
-`…:toolshed`), through the `inspect.find` that child announced on the connection.  Nothing has
-to be agreed about plugins over the wire: the far side serves what its own plugins installed, a
-child announces that surface on the frames it already sends, and one that announced nothing is
-skipped without a word spent on it.
+**Fix:** `find` is written the way the walk is: a level knows its own children and answers
+for them one at a time.  A child that is the name is the answer, since it is held here.  A
+child that can answer is asked and its answer is the answer — what is under it is its own
+business, and when it lives on the far side of a seam the asking is the only way across.  A
+child that announces nothing is searched where it is, as a process with no methods still
+holds its own children as objects.
+
+Nothing has to be agreed about plugins over the wire: a child announces what the process
+behind it can answer on the frames it already sends, so the far side serves what its own
+plugins installed, and a child that installed nothing is looked at instead of asked.
 
 What a far side hands back is a handle, not an object of this side's tree, so the declared
-return type is `FoundProcess` (`AnyProcess | FarProcess`).  A handle is a name, what the process
-holds, the methods it announced and a way to end it.  Reading `.state` on one reports nothing
-until `tune(["state"])` has been asked for, because a process that crossed is silent: how the
-consumer reads state on a handle is its own decision, not something a search decides for it.
+return type is `FoundProcess` (`AnyProcess | FarProcess`).  A handle is a name, what the
+process holds, the methods it announced and a way to end it.  Reading `.state` on one reports
+nothing until `tune(["state"])` has been asked for, because a process that crossed is silent:
+how a consumer reads state on a handle is its own decision, not something a search decides
+for it.
 
-**Tests:** `src/plugins/tree-introspection.test.ts` — a child that announced the method is asked
-and its answer is returned; a child that announced nothing is skipped and the answer is null; a
-child the name is not under is not asked at all.  `src/remote/reflection.integration.test.ts`,
+**Tests:** `src/plugins/tree-introspection.test.ts` — a child that announced the method is
+asked and its answer is returned; each child that can answer is asked in order, and the first
+answer wins; what a child that announced nothing keeps of its own is still searched; a child
+that is the name is handed back without anyone being asked.  `src/remote/reflection.integration.test.ts`,
 over a real fifo payload — a host that forks the client finds `host:tools:watcher` through the
 proxy, the handle answers `inspect.getState`, and its state arrives once it has been tuned for.
 The payload fixture grew an inspected child (`watcher`) so a handle found over the seam has

@@ -55,19 +55,6 @@ function findHeld(procs: Iterable<AnyProcess>, pname: string): AnyProcess | null
   return null;
 }
 
-/**
- * The children the name could sit under.  Every name states where it is, so the child a
- * target begins with is the only one that can hold it, and nothing else is asked.  The
- * separator is part of the test: `…:tools` is not above `…:toolshed`.
- */
-function childrenThatCouldHold(children: Iterable<AnyProcess>, pname: string): AnyProcess[] {
-  const could: AnyProcess[] = [];
-  for (const child of children) {
-    if (pname.startsWith(`${child.pname}:`)) could.push(child);
-  }
-  return could;
-}
-
 export function inspect(): ActorPlugin {
   return async function inspectPlugin(config) {
     return mergeConfigs(config, {
@@ -106,28 +93,32 @@ export function inspect(): ActorPlugin {
         /**
          * A process by its full `pname`, wherever it is.
          *
-         * This side's own are walked as objects: a name that is here is found here, and
-         * the walk over children costs nothing.  What is not here may still exist — a
-         * child can be a proxy for a process on the far side of a seam, and what that
-         * process holds is not part of this side's object graph, so the walking stops at
-         * the wire and no amount of it will help.
+         * Written the way the walk is written: a level knows its own children and nothing
+         * else, and answers for them one at a time.  A child that is the name is the
+         * answer, since it is held here.  A child that can answer is asked and its answer
+         * is the answer — what is under it is its own business, and when it lives on the
+         * far side of a seam the asking is the only way across.  A child that announces
+         * nothing is searched where it is, as a process with no methods still holds its
+         * own children as objects.
          *
-         * So the search leaves by asking.  A child announces what the process behind it
-         * can answer on the connection's own frames, and a name among them is a function
-         * that reaches over there, so nothing has to be agreed about plugins: the far
-         * side installs what it installs, and a child that announced `inspect.find` is
-         * asked while one that did not is skipped without a word spent on it.
+         * So a search never walks past a child that can speak for itself, and nothing has
+         * to be agreed about plugins: a child announces what the process behind it can
+         * answer, so the far side serves what its own plugins installed, and a child that
+         * installed nothing is simply looked at.
          */
         "inspect.find": async function (pname: string): Promise<FoundProcess | null> {
           const selfCtx = this.ctx as AnyProcessCtx;
-          const held = findHeld(selfCtx.children, pname);
-          if (held) return held;
-          for (const child of childrenThatCouldHold(selfCtx.children, pname)) {
+          for (const child of selfCtx.children) {
+            if (child.pname === pname) return child;
             const surface = (child as { $reflection?: Record<string, unknown> }).$reflection;
             const ask = surface?.["inspect.find"];
-            if (typeof ask !== "function") continue;
-            const found = (await ask(pname)) as FoundProcess | null;
-            if (found) return found;
+            if (typeof ask === "function") {
+              const found = (await ask(pname)) as FoundProcess | null;
+              if (found) return found;
+              continue;
+            }
+            const under = findHeld(child.children, pname);
+            if (under) return under;
           }
           return null;
         },

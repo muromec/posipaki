@@ -333,15 +333,15 @@ describe("inspect", () => {
       await proc.stop();
     });
 
-    it("does not ask a child the name is not under", async () => {
-      const Elsewhere = defineActor({ name: "elsewhere", plugins: [], handlers: {} });
-      const Proxy = defineActor({ name: "proxy", plugins: [], handlers: {} });
+    it("asks each child that can answer, in order, and stops at the first that has it", async () => {
+      const First = defineActor({ name: "first", plugins: [], handlers: {} });
+      const Second = defineActor({ name: "second", plugins: [], handlers: {} });
       const Parent = defineActor({
         name: "parent",
         plugins: [inspect()],
         async setup(this: any) {
-          await this.fork(Elsewhere);
-          await this.fork(Proxy);
+          await this.fork(First);
+          await this.fork(Second);
           return {};
         },
         handlers: {},
@@ -350,17 +350,49 @@ describe("inspect", () => {
       const proc = await Parent.spawn({});
       await proc.ready();
 
-      const elsewhereAsked: string[] = [];
-      const proxyAsked: string[] = [];
-      const [elsewhere, proxy] = proc.children;
-      announceFind(elsewhere, () => farProcess("nobody"), elsewhereAsked);
-      announceFind(proxy, () => null, proxyAsked);
+      const far = farProcess("parent:second:kid");
+      const firstAsked: string[] = [];
+      const secondAsked: string[] = [];
+      const [first, second] = proc.children;
+      announceFind(first, () => null, firstAsked);
+      announceFind(second, () => far, secondAsked);
 
-      // `parent:elsewhere` is not above `parent:proxy:kid`, so the only child asked is
-      // the one the name says it is under.
-      expect(await proc.$reflection["inspect.find"]("parent:proxy:kid")).toBeNull();
-      expect(proxyAsked).toEqual(["parent:proxy:kid"]);
-      expect(elsewhereAsked).toEqual([]);
+      expect(await proc.$reflection["inspect.find"]("parent:second:kid")).toBe(far);
+      expect(firstAsked).toEqual(["parent:second:kid"]);
+      expect(secondAsked).toEqual(["parent:second:kid"]);
+
+      await proc.stop();
+    });
+
+    it("searches where a child that announces nothing keeps its own children", async () => {
+      const Deep = defineActor({ name: "deep", plugins: [], handlers: {} });
+      const Plain = defineActor({
+        name: "plain",
+        plugins: [], // block inheritance: nothing to ask here
+        async setup(this: any) {
+          await this.fork(Deep);
+          return {};
+        },
+        handlers: {},
+      });
+      const Parent = defineActor({
+        name: "parent",
+        plugins: [inspect()],
+        async setup(this: any) {
+          await this.fork(Plain);
+          return {};
+        },
+        handlers: {},
+      });
+
+      const proc = await Parent.spawn({});
+      await proc.ready();
+
+      // A child with no methods is still an object of this side's tree, so what it holds
+      // is here to be looked at.
+      const found = await proc.$reflection["inspect.find"]("parent:plain:deep");
+      expect(found).not.toBeNull();
+      expect(found!.pname).toBe("parent:plain:deep");
 
       await proc.stop();
     });
