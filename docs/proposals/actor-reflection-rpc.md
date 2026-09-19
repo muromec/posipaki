@@ -1,8 +1,8 @@
 # Actor Reflection RPC
 
-**Status:** increment 1 (calling reflection methods over the seam) and increment
-2a (process references both ways) are implemented; 2b (addressing a process by
-its reference) is not.
+**Status:** increment 1 (calling reflection methods over the seam), increment 2a
+(process references both ways) and increment 2b (addressing a process by its
+reference) are implemented; a handle a caller can use — 2c — is not.
 
 ## Summary
 
@@ -136,8 +136,9 @@ A process is not JSON, so a method that returns one answers with a reference:
 - Ids belong to a connection and to the side that holds the process. One per
   process — handed over twice, it is the same id both times — monotonic, and
   never reused, so a stale reference cannot come to mean another process.
-- Ids start at 1. Id 0 is never handed out: it stays free for the remote root,
-  which a frame names by carrying no id at all.
+- Ids start at 1. Id 0 is the connection's own root, bound on both sides — the far
+  actor on one, the proxy that asked for it on the other — and never handed to
+  another process.
 - Containers are copied, never rewritten: the state an actor is still running on
   is not the wire's to edit.
 - Both sides parse references: a result on the caller's side, an argument on the
@@ -148,14 +149,45 @@ What makes a value a process is judged by what it holds, not by `instanceof`: a
 build inlines its own copy of `AsyncProcess` per entry point, so a process built
 by `posipaki` is not an instance of the class inside `posipaki/remote`.
 
-### What 2b adds
+### Addressing a process — done (2b)
 
-- `to: <id>` on the frames that address a process (`$msg`, calls, lifecycle), with
-  an absent id meaning the remote root.
-- Resolving an id against the connection's table, so a reference converges with
-  the process it names.
-- Telling the holder when a process behind a handed-out id dies, so a handle
-  cannot look alive forever without a subscription per handle.
+A frame that is about a process says so at the top level, beside its payload rather
+than inside it: the payload of a `$state` *is* the state, which a `to` inside it
+would sit in the way of.
+
+```
+{"to": 3, "$msg": {"fromName": "main", "body": {"type": "PING"}}}
+{"to": 3, "$r.call.probe.add": {"seq": 1, "args": [1, 2]}}
+{"$msg": {"fromName": "main", "body": …}}          no address: the root
+```
+
+- A frame that names no process is for the root of the connection, which is what
+  every frame meant before there were ids at all. Root traffic is therefore
+  unchanged on the wire: `to` is written only when it names something else.
+- Each side keeps one table for the connection — id → the process it knows by that
+  id, with its own root bound at 0. It is what a frame arriving with an id resolves
+  against, and what a frame leaving with a process in it looks that process up in.
+  A side numbers the processes it holds; an id is allocated the first time one
+  crosses, and never reused.
+- Every frame is walked once on the way out (processes → references) and once on
+  the way in (references → what this side knows). One rule per frame, not one per
+  payload kind: a process on the state, in a message body, in a call argument or in
+  a result is the same walk, and handing another process over needs no new code.
+- A frame addressed to an id the table does not hold has nothing to deliver it to
+  and is dropped; a call addressed that way is answered with an error rather than
+  left hanging.
+- Only what a process announced can be called: the announced list is the dispatch
+  table, and a process that has not announced anything answers nothing.
+
+What is left for 2c and after: a parsed reference still has no way to reach the
+process it names, so a handle — something with `send`, `wait`, `stop`, `pause` and
+a subscription — is what 2c adds, and a released or dropped one rejects and throws
+rather than waiting for a reconnect that does not exist. Stopping is where the root
+differs and keeps what it does today: asking the root to stop is the STOP message
+plus the far side's exit, while stopping any other process is a frame of its own
+(`$stop`, with `$pause` and `$resume` beside it). A handle does not need a node in
+the local tree: `getTree` is already proxied, so asking the proxy walks the far
+side's tree, and that is the tree.
 
 ### TypeScript
 
@@ -181,8 +213,11 @@ declare module "posipaki" {
 6. The seam (`client.ts` / `server.ts`) — done
 7. Capability advertisement — done, as `$r.methods` before the first `$state`
 8. Process references, both directions — done (2a)
-9. Addressing a process by reference — pending (2b)
-10. Tests: local invocation, plugin registration, wire round-trip, concurrent
+9. Addressing a process by reference — done (2b): the connection's table, `to` on
+   the frames that name a process, and one walk per frame in each direction
+10. A handle a caller can use — pending (2c): `send`, `wait`, `stop`, `pause`,
+    subscription, `release()` and `isConnected()`
+11. Tests: local invocation, plugin registration, wire round-trip, concurrent
     calls, refusals, references over a real subprocess — done
 
 ## Open questions
