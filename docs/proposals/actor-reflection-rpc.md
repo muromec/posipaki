@@ -1,8 +1,8 @@
 # Actor Reflection RPC
 
-**Status:** increment 1 (calling reflection methods over the seam), increment 2a
-(process references both ways) and increment 2b (addressing a process by its
-reference) are implemented; a handle a caller can use — 2c — is not.
+**Status:** increments 1, 2a (process references both ways), 2b (addressing a
+process by its reference) and 2c (a handle on a process the far side holds) are
+implemented; passing a process from this side to the far one — 2d — is not.
 
 ## Summary
 
@@ -179,15 +179,43 @@ would sit in the way of.
 - Only what a process announced can be called: the announced list is the dispatch
   table, and a process that has not announced anything answers nothing.
 
-What is left for 2c and after: a parsed reference still has no way to reach the
-process it names, so a handle — something with `send`, `wait`, `stop`, `pause` and
-a subscription — is what 2c adds, and a released or dropped one rejects and throws
-rather than waiting for a reconnect that does not exist. Stopping is where the root
-differs and keeps what it does today: asking the root to stop is the STOP message
-plus the far side's exit, while stopping any other process is a frame of its own
-(`$stop`, with `$pause` and `$resume` beside it). A handle does not need a node in
-the local tree: `getTree` is already proxied, so asking the proxy walks the far
-side's tree, and that is the tree.
+### A handle — done (2c)
+
+A reference this side receives is a process it can talk to: `RemoteProcess`, one
+per process per connection.
+
+```ts
+const kid = proc.state.kid;          // RemoteProcess
+kid.pname;                           // "remote:kid"
+kid.ref.id;                          // 2 — the id this connection knows it by
+kid.isConnected();                   // false once the connection is gone
+kid.state;                           // what the far side has published so far
+kid.$reflection["inspect.getTree"];  // what it announced it can answer
+kid.send({ type: "PING" });           // a message for it
+kid.subscribe("message", (msg) => …); // what it says
+kid.subscribe("state", () => …);      // what it holds
+```
+
+- A process that crosses is announced and streamed from that moment: what it can
+  answer, the state it holds, and what it emits.  The stream starts after the
+  frame that carried the reference, so a handle is named before it hears anything,
+  and the entry that carried it needs no code of its own.
+- A handle is not a node in this side's tree.  Asking the proxy for the tree walks
+  the far side and gives that tree; a handle is how a process there is talked to,
+  not where it sits here.
+- A reference handed back to the side that holds the process is that process
+  again, not a handle on itself.
+- A handle does not outlive its connection: when the wire goes, every handle on
+  it says so, and a `send` after that throws rather than disappearing.  There is
+  no reconnect to wait for, so nothing pretends there might be.
+
+What is left for 2d and after: a process of this side's own passed to the far one
+and dispatched from there (2d), handles in messages, arguments and state updates
+(2e), `wait`, `stop`, `pause` and subscriptions both ways (2f), orphans (2g), and
+`release()` with `isConnected()` as the one answer about liveness (2h).  Stopping
+is where the root differs and keeps what it does today: asking the root to stop
+is the STOP message plus the far side's exit, while stopping any other process is
+a frame of its own (`$stop`, with `$pause` and `$resume` beside it).
 
 ### TypeScript
 
@@ -215,8 +243,9 @@ declare module "posipaki" {
 8. Process references, both directions — done (2a)
 9. Addressing a process by reference — done (2b): the connection's table, `to` on
    the frames that name a process, and one walk per frame in each direction
-10. A handle a caller can use — pending (2c): `send`, `wait`, `stop`, `pause`,
-    subscription, `release()` and `isConnected()`
+10. A handle a caller can use — done (2c): `send`, `state`, `subscribe`,
+    `$reflection` and `isConnected()`; `wait`, `stop`, `pause` and `release()`
+    follow
 11. Tests: local invocation, plugin registration, wire round-trip, concurrent
     calls, refusals, references over a real subprocess — done
 
