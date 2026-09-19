@@ -40,10 +40,12 @@ import { CallSide, answerCall } from "./call-side.js";
 
 export type Spawner = () => Promise<Channel>;
 
-/** The name the served actor is spawned under, and the one it answers to as a
- *  sender when it talks to a process of the far side's.  A reference that names the
- *  root it serves is told apart from the far side's root by it. */
-const ROOT_NAME = SERVED_ROOT_NAME;
+/** The name the served actor is spawned under, and the one it answers to as a sender when
+ *  it talks to a process of the far side's: what the client states in `$init`, since the
+ *  process being served is the one its proxy was forked as over there.  The fallback is for
+ *  a connection that states none — an older client, or a hand-written `$init` — where the
+ *  far side's name for its own end is all there is to go on. */
+let rootName: string = SERVED_ROOT_NAME;
 
 export async function serveRemoteActor<
   Args,
@@ -94,7 +96,7 @@ export async function serveRemoteActor<
     if (held) return held;
     const known = table.farHandleFor(ref.id);
     if (isRemoteProcess(known)) return known;
-    const handle = new RemoteProcess(ref, sendTo, ROOT_NAME, (id) => table.release(id));
+    const handle = new RemoteProcess(ref, sendTo, rootName, (id) => table.release(id));
     table.bindFar(ref.id, handle);
     return handle;
   };
@@ -117,13 +119,15 @@ export async function serveRemoteActor<
   }
 
   const init = initFrame.$init;
+  const stated = init.rootName;
+  if (typeof stated === "string" && stated !== "") rootName = stated;
   const parentName = (init.parentName as string) ?? null;
   const parentIdName = (init.parentIdName as string) ?? null;
   const parentId = parentIdName ? Symbol.for(parentIdName) : null;
   const { parentName: _pn, parentIdName: _pid, ...initArgs } = init;
 
   const proc = await actor.spawn(initArgs as unknown as Args, {
-    name: ROOT_NAME,
+    name: rootName,
     parentName,
     parentId,
   });
@@ -206,7 +210,7 @@ export async function serveRemoteActor<
       // process, which is this side.  The root is one of those — stopping it stops
       // what the connection is for — and a handle has nothing here to act on.
       if (isProcess(mine)) {
-        const sender = makeSender(ROOT_NAME, parentName, parentId);
+        const sender = makeSender(rootName, parentName, parentId);
         if (isStop(frame)) void mine.stop({ from: sender });
         else if (isPause(frame)) mine.pause();
         else mine.resume();

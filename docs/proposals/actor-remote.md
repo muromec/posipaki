@@ -94,14 +94,14 @@ Five frames:
 | Frame | Direction | Purpose |
 | --- | --- | --- |
 | `$proto` | server → client | version handshake, once on connect |
-| `$init` | client → server | domain args + parent identity |
+| `$init` | client → server | domain args, the root's name, and parent identity |
 | `$state` | server → client | state snapshot (the first after `$init` signals ready) |
 | `$msg` | bidirectional | a posipaki message crossing the boundary |
 | `$exit` | server → client | graceful exit + final state |
 
 ```json
 { "$proto": "json.v1" }
-{ "$init": { "start": 0, "parentName": "host", "parentIdName": "host" } }
+{ "$init": { "start": 0, "rootName": "host:tools", "parentName": "host", "parentIdName": "host" } }
 { "$state": { "count": 1 } }
 { "$msg": { "fromName": "root", "body": { "type": "INCREMENT", "by": 1 } } }
 { "$exit": { "code": 0, "state": { "count": 42 } } }
@@ -204,8 +204,13 @@ string.
 Serves one actor over a `Channel` produced by the spawner:
 
 1. await the spawner's channel (the `$proto` handshake is already done)
-2. await `$init`, split domain args from parent identity
-3. spawn `actor` via `actor.spawn(args, { name: "remote", parentName, parentId })`
+2. await `$init`, split domain args from the names
+3. spawn `actor` via `actor.spawn(args, { name: rootName, parentName, parentId })`
+
+`rootName` is what the client calls the process it is serving — its own end of the connection,
+fully qualified — so the served root is named on that side the way the side that forked it names
+it, and everything under it is spelled off that.  A client that states none (an older one, or a
+hand-written `$init`) is served as `SERVED_ROOT_NAME`.
 4. bridge: channel-in → `proc.send`; `proc` emit → `$msg`/`$state`; on exit → `$exit`
 5. close the channel
 

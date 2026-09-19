@@ -314,7 +314,9 @@ describe("remoteClient process references", () => {
     });
     const farRoot = (await theirs) as RemoteProcess;
     expect(farRoot).toBeInstanceOf(RemoteProcess);
-    expect(farRoot.pname).toBe("remote");
+    // The handle this side already holds is the one it gets back — the connection's far end,
+    // named as this side named it when it asked (the name stated in `$init`).
+    expect(farRoot.pname).toBe("probe");
     expect(farRoot.ref.id).toBe(SERVER_ROOT);
 
     // And one of this side's own root — 1, the first odd id — comes back as the process

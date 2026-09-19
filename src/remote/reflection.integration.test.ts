@@ -12,6 +12,7 @@ import { remoteClient } from "./client.js";
 import { commandSpawner } from "./spawners/fifo-command.js";
 import { RemoteProcess } from "./remote-process.js";
 import type { TreeNode } from "../plugins/tree-introspection.js";
+import { inspect } from "../plugins/tree-introspection.js";
 import type { Message } from "../types.js";
 import { sleep } from "../util.js";
 
@@ -95,17 +96,17 @@ describe("reflection across a process boundary", () => {
   it("hands back a handle for a process on the far side", async () => {
     const { proc, surface } = await spawnPayload();
 
-    const first = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
-    const second = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
+    const first = (await surface["inspect.find"]("reflector:kid")) as RemoteProcess;
+    const second = (await surface["inspect.find"]("reflector:kid")) as RemoteProcess;
 
     expect(first).toBeInstanceOf(RemoteProcess);
-    expect(first.pname).toBe("remote:kid");
+    expect(first.pname).toBe("reflector:kid");
     expect(first.ref.id).toBeGreaterThan(0);
     // Handed over twice, it is one process, so it is one handle.
     expect(second).toBe(first);
 
     // And a process the far side does not have is still just null.
-    expect(await surface["inspect.find"]("remote:nope")).toBeNull();
+    expect(await surface["inspect.find"]("reflector:nope")).toBeNull();
 
     await proc.stop();
   }, 20000);
@@ -113,14 +114,14 @@ describe("reflection across a process boundary", () => {
   it("takes a reference back as an argument, parsed on the far side", async () => {
     const { proc, surface } = await spawnPayload();
 
-    const found = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
+    const found = (await surface["inspect.find"]("reflector:kid")) as RemoteProcess;
     const seen = (await surface["probe.whatItGot"](found)) as {
       name: string;
       pname: string;
       canFork: boolean;
     };
     // Handed back to the side that holds it, a reference is the process itself.
-    expect(seen.pname).toBe("remote:kid");
+    expect(seen.pname).toBe("reflector:kid");
     expect(seen.canFork).toBe(true);
 
     // A process of mine goes the other way: numbered on this side, and a handle
@@ -144,7 +145,7 @@ describe("reflection across a process boundary", () => {
 
     const kid = (proc.state as unknown as { kid?: RemoteProcess }).kid;
     expect(kid).toBeInstanceOf(RemoteProcess);
-    expect(kid?.pname).toBe("remote:kid");
+    expect(kid?.pname).toBe("reflector:kid");
     expect(kid?.isConnected()).toBe(true);
 
     // Nothing about it crossed with it: a process crosses silent, and says what it
@@ -222,7 +223,7 @@ describe("reflection across a process boundary", () => {
   it("lets a handle go, and the far side stops knowing the process by that id", async () => {
     const { proc, surface } = await spawnPayload();
 
-    const kid = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
+    const kid = (await surface["inspect.find"]("reflector:kid")) as RemoteProcess;
     kid.tune(["state"]);
     await waitUntil(() => kid.state !== null, "the state it asked for");
     const id = kid.ref.id;
@@ -234,8 +235,8 @@ describe("reflection across a process boundary", () => {
 
     // What the far side let go of is the id, not the process: asked again, the same
     // process is numbered afresh, and the handle that let it go is done.
-    const again = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
-    expect(again.pname).toBe("remote:kid");
+    const again = (await surface["inspect.find"]("reflector:kid")) as RemoteProcess;
+    expect(again.pname).toBe("reflector:kid");
     expect(again.ref.id).not.toBe(id);
     expect(again).not.toBe(kid);
 
@@ -293,12 +294,49 @@ describe("reflection across a process boundary", () => {
     await proc.stop();
   }, 20000);
 
+  it("is served under the name this side forked the client as, and spells its subtree off it", async () => {
+    const Remote = remoteClient<Record<string, unknown>, Record<string, unknown>, Message, Message>(
+      "reflector",
+      commandSpawner([process.argv[0], fixture]),
+    );
+    const Host = defineActor({
+      name: "host",
+      plugins: [inspect()],
+      async setup(this: any) {
+        await this.fork(Remote, {}, { name: "tools" });
+        return {};
+      },
+      handlers: {},
+    });
+
+    const proc = await Host.spawn({});
+    await proc.ready();
+
+    // A payload answers before its own setup has finished, so the far child's own child is
+    // waited for rather than assumed to be there the moment the connection is.
+    let tree = (await proc.$reflection["inspect.getTree"]()) as TreeNode;
+    for (let waited = 0; waited < 3000 && tree.children[0]?.children.length === 0; waited += 10) {
+      await sleep(10);
+      tree = (await proc.$reflection["inspect.getTree"]()) as TreeNode;
+    }
+
+    // What the far side says about itself is what this side forked it as, so a walk here reads
+    // `host:tools` and `host:tools:kid` — the same names a process of this side's own would
+    // have, and the same ones `inspect.find` answers to.  Nothing renames them on the way in.
+    expect(tree.children.map((child) => child.pname)).toEqual(["host:tools"]);
+    expect(tree.children[0].children.map((child) => child.pname)).toEqual(["host:tools:kid"]);
+
+    await proc.stop();
+  }, 20000);
+
   it("walks into the far side's tree instead of stopping at the boundary", async () => {
     const { proc, surface } = await spawnPayload();
 
+    // The far side serves its root under the name this side forked the client as — stated in
+    // `$init` — so what it says about itself is spelled the way this side spells it.
     const tree = (await surface["inspect.getTree"]()) as TreeNode;
     expect(tree.status).toBe("running");
-    expect(tree.children.map((child) => child.pname)).toEqual(["remote:kid"]);
+    expect(tree.children.map((child) => child.pname)).toEqual(["reflector:kid"]);
     expect(tree.children[0].status).toBe("no introspection");
 
     await proc.stop();

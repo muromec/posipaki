@@ -38,8 +38,10 @@ export function rootIdFor(parity: IdParity): number {
   return parity === "odd" ? 1 : 0;
 }
 
-/** The name a served root is spawned under: what a visitor's handle on the far root
- *  is called, since no frame about a root carries a name of its own. */
+/** What a served root is called when the client states no name for it.  A client that
+ *  states one — and the library's own does, in `$init` — is served under that name instead:
+ *  the process across the seam is the one its proxy was forked as, and it should be called
+ *  the same on both sides.  This is the name for a connection that says nothing. */
 export const SERVED_ROOT_NAME = "remote";
 
 /** What crosses the wire in place of a process. */

@@ -86,7 +86,14 @@ export function remoteClient<
       const root = this.ctx;
       table.bindRoot(root);
       const channel = await spawner(args);
-      const fromName = name;
+      // What this side calls the process it serves: the full name, not the short one the
+      // definition was written with.  A process is called here what it is called on the side
+      // that forked it, and the far side spells its own subtree off whatever it is told, so a
+      // short name would be a second spelling of one process — and the tree would show both.
+      const fromName = this.ctx.pname;
+      // And the process above it, which is who a message to the served root comes from: the
+      // far side is told the same thing a child here is told about its parent.
+      const parentName = this.ctx.parentName ?? this.ctx.pname;
       // Everything is in place to speak: the sink writes to the wire, and what the
       // table numbers crosses through it.  The sink is reached by a call rather
       // than handed over, because what it does is flush these streams.
@@ -109,8 +116,11 @@ export function remoteClient<
         {
           $init: {
             ...(args as unknown as Record<string, unknown>),
-            parentName: fromName,
-            parentIdName: fromName,
+            // Under what name the far side serves is this side's to state: it is serving the
+            // process this proxy stands in for, which is the one named here.
+            rootName: fromName,
+            parentName,
+            parentIdName: parentName,
           },
         },
         table.farRootId(),
@@ -150,7 +160,7 @@ export function remoteClient<
        * it is over and what it can answer reach it as they reach any handle.
        */
       const farRoot = new RemoteProcess<InMsg, OutMsg>(
-        { id: table.farRootId(), pname: SERVED_ROOT_NAME },
+        { id: table.farRootId(), pname: fromName },
         sendTo,
         fromName,
         (id) => table.release(id),
@@ -267,7 +277,7 @@ export function remoteClient<
           // it, which is this side.  Its own root is one of those.  A handle has nothing
           // here to act on.
           if (isProcess(mine)) {
-            if (isStop(frame)) void mine.stop({ from: makeSender(name, null, null) });
+            if (isStop(frame)) void mine.stop({ from: makeSender(fromName, null, null) });
             else if (isPause(frame)) mine.pause();
             else mine.resume();
           }

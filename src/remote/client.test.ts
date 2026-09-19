@@ -52,6 +52,10 @@ describe("remoteClient (unit)", () => {
 
     while (!channel.sent.some(isInit)) await sleep(1);
     expect(channel.sent.find(isInit)!.$init).toMatchObject({
+      // The names are the full ones this side knows the processes by, not the short name the
+      // definition was written with: the far side is serving this side's own end of the
+      // connection, and spells its subtree off what it is told here.
+      rootName: "counter",
       parentName: "counter",
       parentIdName: "counter",
     });
