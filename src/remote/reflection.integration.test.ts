@@ -10,11 +10,20 @@ import { dirname, join } from "node:path";
 import { defineActor } from "../index.js";
 import { remoteClient } from "./client.js";
 import { commandSpawner } from "./spawners/fifo-command.js";
-import { UnreachableRemoteProcess } from "./process-ref.js";
+import { RemoteProcess } from "./remote-process.js";
 import type { TreeNode } from "../plugins/tree-introspection.js";
 import type { Message } from "../types.js";
+import { sleep } from "../util.js";
 
 type Surface = Record<string, (...args: unknown[]) => Promise<unknown>>;
+
+async function waitUntil(predicate: () => boolean, what: string): Promise<void> {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`timeout waiting for ${what}`);
+    await sleep(5);
+  }
+}
 
 const fixture = join(dirname(import.meta.url.slice(7)), "./fixtures/reflect-payload.js");
 
@@ -55,17 +64,17 @@ describe("reflection across a process boundary", () => {
     await proc.stop();
   }, 20000);
 
-  it("hands back a reference for a process it cannot send", async () => {
+  it("hands back a handle for a process on the far side", async () => {
     const { proc, surface } = await spawnPayload();
 
-    const first = (await surface["inspect.find"]("remote:kid")) as UnreachableRemoteProcess;
-    const second = (await surface["inspect.find"]("remote:kid")) as UnreachableRemoteProcess;
+    const first = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
+    const second = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
 
-    expect(first).toBeInstanceOf(UnreachableRemoteProcess);
+    expect(first).toBeInstanceOf(RemoteProcess);
     expect(first.pname).toBe("remote:kid");
-    expect(first.id).toBeGreaterThan(0);
-    // Handed over twice, it is the same reference both times.
-    expect(second.id).toBe(first.id);
+    expect(first.ref.id).toBeGreaterThan(0);
+    // Handed over twice, it is one process, so it is one handle.
+    expect(second).toBe(first);
 
     // And a process the far side does not have is still just null.
     expect(await surface["inspect.find"]("remote:nope")).toBeNull();
@@ -76,18 +85,51 @@ describe("reflection across a process boundary", () => {
   it("takes a reference back as an argument, parsed on the far side", async () => {
     const { proc, surface } = await spawnPayload();
 
-    const found = (await surface["inspect.find"]("remote:kid")) as UnreachableRemoteProcess;
-    const seen = (await surface["probe.whatItGot"](found)) as { name: string; pname: string };
-    expect(seen.name).toBe("UnreachableRemoteProcess");
+    const found = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
+    const seen = (await surface["probe.whatItGot"](found)) as {
+      name: string;
+      pname: string;
+      canFork: boolean;
+    };
+    // Handed back to the side that holds it, a reference is the process itself.
     expect(seen.pname).toBe("remote:kid");
+    expect(seen.canFork).toBe(true);
 
-    // A process of mine goes the other way: numbered on this side, and parsed
-    // into a reference there.
+    // A process of mine goes the other way: numbered on this side, and a handle
+    // on that side — a process it cannot fork, only talk to.
     const mine = await defineActor({ name: "mine", handlers: {} }).spawn({});
-    const seenMine = (await surface["probe.whatItGot"](mine)) as { name: string; pname: string };
-    expect(seenMine.name).toBe("UnreachableRemoteProcess");
+    const seenMine = (await surface["probe.whatItGot"](mine)) as {
+      name: string;
+      pname: string;
+      canFork: boolean;
+    };
+    expect(seenMine.name).toBe("RemoteProcess");
     expect(seenMine.pname).toBe("mine");
+    expect(seenMine.canFork).toBe(false);
     await mine.stop();
+
+    await proc.stop();
+  }, 20000);
+
+  it("gets a handle on a process the far side put on its state, and is answered by it", async () => {
+    const { proc } = await spawnPayload();
+
+    const kid = (proc.state as unknown as { kid?: RemoteProcess }).kid;
+    expect(kid).toBeInstanceOf(RemoteProcess);
+    expect(kid?.pname).toBe("remote:kid");
+    expect(kid?.isConnected()).toBe(true);
+
+    // It crossed, so it was streamed: what it holds is here without anyone asking.
+    await waitUntil(() => kid?.state !== null, "the state it streamed");
+    expect(kid?.state).toEqual({ pings: 0 });
+
+    const heard: Array<{ type?: string }> = [];
+    kid?.subscribe("message", (msg) => heard.push(msg as { type?: string }));
+    kid?.send({ type: "PING" });
+
+    await waitUntil(() => heard.length > 0, "the far side's answer");
+    expect(heard[0]).toEqual({ type: "PONG" });
+    expect(kid?.state).toEqual({ pings: 1 });
 
     await proc.stop();
   }, 20000);

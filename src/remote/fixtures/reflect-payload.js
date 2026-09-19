@@ -23,7 +23,18 @@ try {
 const leaf = defineActor({
   name: "leaf",
   plugins: [], // block inheritance: the tree shows a child it cannot ask
-  handlers: {},
+  handlers: {
+    // What it holds and what it says: both are how the far side sees that a
+    // message reached it.
+    async PING() {
+      this.state.pings += 1;
+      this.ctx.notify();
+      await this.emit({ type: "PONG" });
+    },
+  },
+  async setup() {
+    return { pings: 0 };
+  },
 });
 
 const reflector = defineActor({
@@ -43,14 +54,20 @@ const reflector = defineActor({
       return () => 1;
     },
     async "probe.whatItGot"(value) {
-      // What arrived, named by what it is: over a wire the reference is parsed
-      // here, so this says whether the far side did that.
-      return { name: value?.constructor?.name ?? typeof value, pname: value?.pname };
+      // What arrived, said by what it can do: over a wire a reference is parsed
+      // here, and a process of this side's own comes back as itself.
+      return {
+        name: value?.constructor?.name ?? typeof value,
+        pname: value?.pname,
+        canFork: typeof value?.fork === "function",
+      };
     },
   },
   async setup() {
-    await this.fork(leaf, undefined, { name: "kid" });
-    return {};
+    // A child on the public state: a process on the state crosses as a reference,
+    // and the other side gets a handle on it without being told anything else.
+    const kid = await this.fork(leaf, undefined, { name: "kid" });
+    return { kid };
   },
   handlers: {},
 });

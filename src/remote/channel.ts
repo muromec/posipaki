@@ -12,6 +12,7 @@ import {
   decodeProcessRefs,
   encodeProcessRefs,
   type ProcessTable,
+  type RefResolver,
 } from "./process-ref.js";
 
 export interface StringTransport {
@@ -65,12 +66,15 @@ export function encodeFrame(
 }
 
 /**
- * A frame just read: every reference in it becomes what this side knows of that
- * process.  Nothing resolves the id yet — what will is the handle a process
- * arrives as.
+ * A frame just read: every reference in it becomes a handle on that process — or
+ * the handle this side already made for it, since the same process handed over
+ * twice is one process.
  */
-export function decodeFrame(frame: Record<string, unknown>): Record<string, unknown> {
-  return decodeProcessRefs(frame) as Record<string, unknown>;
+export function decodeFrame(
+  frame: Record<string, unknown>,
+  resolve: RefResolver,
+): Record<string, unknown> {
+  return decodeProcessRefs(frame, resolve) as Record<string, unknown>;
 }
 
 // ── frame guards ──────────────────────────────────────────────────────────
