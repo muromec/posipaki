@@ -197,6 +197,12 @@ describe("RemoteProcess", () => {
     expect(child.handle.refCount()).toBe(1);
     expect(() => child.handle.subscribe("state", () => {})).not.toThrow();
 
+    // The state said again is not the reference held again: one process is one handle, and
+    // holding the same one twice would be counting it twice for saying it twice.
+    parent.handle.receiveState({ leaf: child.handle, ticks: 1 });
+    expect(parent.handle.state).toEqual({ leaf: child.handle, ticks: 1 });
+    expect(child.handle.refCount()).toBe(1);
+
     parent.handle.release();
 
     expect(child.letGo).toEqual([4]);

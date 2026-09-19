@@ -5,6 +5,7 @@ import { remoteClient } from "./client.js";
 import { frameTo, isInit, isMsg, isStop } from "./channel.js";
 import type { Channel } from "./channel.js";
 import { rootIdFor } from "./process-ref.js";
+import type { RemoteProcess } from "./remote-process.js";
 import { sleep } from "../util.js";
 
 /** The id the server's root goes by: what every frame about it is addressed with, and
@@ -125,6 +126,40 @@ describe("remoteClient (unit)", () => {
     channel.handler!({ to: SERVER_ROOT, $state: { count: 5 } });
     while (seen.length === 0) await sleep(1);
     expect(seen[0]).toEqual({ count: 5 });
+  });
+
+
+  it("keeps one handle for a reference a state says again, and counts it once", async () => {
+    const channel = new FakeChannel();
+    const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
+      "counter",
+      () => Promise.resolve(channel),
+    );
+    const proc = await actor.spawn({ start: 0 }, { awaitReady: false });
+    while (!channel.handler) await sleep(1);
+
+    // The far side puts a process on its state: one reference, and a handle here for it,
+    // which the proxy holds because what holds it is here.
+    const kid = { $p: { id: 4, pname: "counter:kid" } };
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 0, kid } });
+    while ((proc.state as unknown as { kid?: RemoteProcess } | null)?.kid === undefined) {
+      await sleep(1);
+    }
+    const first = (proc.state as unknown as { kid: RemoteProcess }).kid;
+    expect(first.refCount()).toBe(1);
+
+    // Something else changes and the state is said again, the reference with it.  One
+    // process is one handle, and saying it twice is not holding it twice.
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 5, kid } });
+    while ((proc.state as unknown as { count?: number }).count !== 5) await sleep(1);
+
+    expect((proc.state as unknown as { kid: RemoteProcess }).kid).toBe(first);
+    expect(first.refCount()).toBe(1);
+
+    proc.send({ type: "STOP" });
+    while (!channel.sent.some(isStop)) await sleep(1);
+    channel.handler!({ to: SERVER_ROOT, $exit: { code: 0, state: { count: 5 } } });
+    await proc.wait();
   });
 
   it("closes the channel when the proxy stops", async () => {
