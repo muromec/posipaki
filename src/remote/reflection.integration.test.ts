@@ -294,6 +294,32 @@ describe("reflection across a process boundary", () => {
     await proc.stop();
   }, 20000);
 
+
+  it("lands a reference handed over with the spawn in the process that was spawned", async () => {
+    const Remote = remoteClient<Record<string, unknown>, Record<string, unknown>, Message, Message>(
+      "reflector",
+      commandSpawner([process.argv[0], fixture]),
+    );
+    const mine = await worker.spawn({});
+
+    // The argument is a process of this side's own: it crosses as a reference with the
+    // `$init`, and what the far side does with it is the far side's business.
+    const proc = await Remote.spawn({ handed: mine });
+
+    // From the far end it is a remote reference that landed in a real actor rather than a
+    // proxy, so nothing there holds it: sendable and askable, and nothing heard from it until
+    // something keeps it.  A reference nothing keeps is an unstable one, and says so.
+    expect(await proc.$reflection["probe.handed"]()).toEqual({
+      pname: "mine",
+      canSend: true,
+      refCount: 0,
+      hears: "refused",
+    });
+
+    await mine.stop();
+    await proc.stop();
+  }, 20000);
+
   it("is served under the name this side forked the client as, and spells its subtree off it", async () => {
     const Remote = remoteClient<Record<string, unknown>, Record<string, unknown>, Message, Message>(
       "reflector",

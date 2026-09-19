@@ -33,6 +33,10 @@ const until = async (predicate, what) => {
 // What arrived in the last message, kept so a call can ask about it later.
 let kept = null;
 
+// What the spawn handed this process, kept the same way: a reference that came with the
+// arguments is this side's to do something with or not.
+let handed = null;
+
 const leaf = defineActor({
   name: "leaf",
   plugins: [], // block inheritance: the tree shows a child it cannot ask
@@ -118,6 +122,24 @@ const reflector = defineActor({
       await handle.stop();
       return { ended: handle.hasEnded() };
     },
+    async "probe.handed"() {
+      // What the spawn handed over, said by what it can do.  From this end it is a remote
+      // reference, and this end is a real actor rather than a proxy, so nothing here holds
+      // it: it can be sent to and asked, and nothing can be heard from it until it is kept.
+      if (!handed) return null;
+      let hears = "asked";
+      try {
+        handed.tune(["state"]);
+      } catch {
+        hears = "refused";
+      }
+      return {
+        pname: handed.pname,
+        canSend: typeof handed.send === "function",
+        refCount: handed.refCount(),
+        hears,
+      };
+    },
     async "probe.kept"() {
       // What the last message carried, said by what it can do.
       return kept ? { pname: kept.pname, canSend: typeof kept.send === "function" } : null;
@@ -132,7 +154,8 @@ const reflector = defineActor({
       };
     },
   },
-  async setup() {
+  async setup(args) {
+    handed = args?.handed ?? null;
     // A child on the public state: a process on the state crosses as a reference,
     // and the other side gets a handle on it without being told anything else.
     const kid = await this.fork(leaf, undefined, { name: "kid" });
