@@ -30,6 +30,9 @@ const until = async (predicate, what) => {
   }
 };
 
+// What arrived in the last message, kept so a call can ask about it later.
+let kept = null;
+
 const leaf = defineActor({
   name: "leaf",
   plugins: [], // block inheritance: the tree shows a child it cannot ask
@@ -65,7 +68,12 @@ const reflector = defineActor({
       const heard = [];
       const stop = handle.subscribe("message", (msg) => heard.push(msg.type));
       handle.send({ type: "PING" });
-      await until(() => handle.state?.pings === 1, "the state it streamed");
+      // Both of them: what it holds and what it says are two frames, and either
+      // can be the one that arrives first.
+      await until(
+        () => handle.state?.pings === 1 && heard.length > 0,
+        "the state it streamed and the message it sent",
+      );
       stop();
       return { heard, pings: handle.state?.pings };
     },
@@ -74,6 +82,10 @@ const reflector = defineActor({
     },
     async "probe.refusing"() {
       return () => 1;
+    },
+    async "probe.kept"() {
+      // What the last message carried, said by what it can do.
+      return kept ? { pname: kept.pname, canSend: typeof kept.send === "function" } : null;
     },
     async "probe.whatItGot"(value) {
       // What arrived, said by what it can do: over a wire a reference is parsed
@@ -91,7 +103,14 @@ const reflector = defineActor({
     const kid = await this.fork(leaf, undefined, { name: "kid" });
     return { kid };
   },
-  handlers: {},
+  handlers: {
+    async KEEP(msg) {
+      // A process handed over inside a message body: the walk puts a handle in its
+      // place before the actor is given the message at all.
+      kept = msg.kid ?? null;
+      await this.emit({ type: "KEPT" });
+    },
+  },
 });
 
 serveRemoteActor(reflector, fifoArgvSpawner);

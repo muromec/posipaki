@@ -278,7 +278,9 @@ declare module "posipaki" {
 11. A process of this side's passed to the far one, and dispatched from there —
     done (2d): the same table, reference and stream, used from the other end
 12. Tests: local invocation, plugin registration, wire round-trip, concurrent
-    calls, refusals, references over a real subprocess — done
+    calls, refusals, references over a real subprocess — done; and every carrier
+    of a reference — a message body, a call argument, a state update that replaces
+    one process with another — tested in both directions (2e)
 
 ## Open questions
 

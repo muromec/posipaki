@@ -166,6 +166,24 @@ describe("reflection across a process boundary", () => {
     await proc.stop();
   }, 20000);
 
+  it("carries a process of mine inside a message, and the far side reads it as a handle", async () => {
+    const { proc, surface } = await spawnPayload();
+
+    const heard: Array<{ type?: string }> = [];
+    proc.subscribe("message", (msg) => heard.push(msg as { type?: string }));
+
+    const mine = await worker.spawn({});
+    proc.send({ type: "KEEP", kid: mine } as { type: "KEEP"; kid: unknown } & Message);
+
+    // The far side says so itself, once the message that carried the process has
+    // been through its handlers.
+    await waitUntil(() => heard.some((msg) => msg.type === "KEPT"), "the acknowledgement");
+    expect(await surface["probe.kept"]()).toEqual({ pname: "mine", canSend: true });
+
+    await mine.stop();
+    await proc.stop();
+  }, 20000);
+
   it("walks into the far side's tree instead of stopping at the boundary", async () => {
     const { proc, surface } = await spawnPayload();
 
