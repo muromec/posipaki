@@ -2,6 +2,29 @@
 
 > **Status**: implemented on `main`, unreleased.  The approximation below is what 0.38 carries.
 
+## The words this is written in
+
+One connection has two ends, and they are not interchangeable, so they get names rather than a
+point of view.
+
+- **client** — the end that made the connection: it called `remoteClient(...)` and spawned the
+  other end.  It numbers the processes it holds with odd ids.
+- **server** — the end that was spawned: it runs `serveRemoteActor` and serves one process, the
+  **served root**.  It numbers its own with even ids.
+- **own process** — a process an end holds and runs itself.  The client's own processes are
+  actors of the program that called `remoteClient`; the server's own start at its served root.
+- **handle** — a `RemoteProcess`: an end's object standing for a process the *other* end holds.
+  The client's handle for the served root is also the **proxy**, since it stands in for it — it
+  answers for it, mirrors the state it is told, and passes its messages on.
+- **receiver** — whoever a value is handed to: an own process, or a handle.
+- **owned** and **transient** — what a handle does with the references inside a value it
+  receives: a reference from a state is *owned* and counted, one on its way somewhere else is
+  *transient* and only remembered.
+
+The two ends use the same code for this, and the reason the wiring reads twice is that each end
+receives different frames: the client receives what the server says about its processes, and the
+server receives what the client says about its own, plus the `$init` that starts it.
+
 ## The problem
 
 A process that crossed the wire is a handle here: a name, the id one connection knows it by,
@@ -42,6 +65,21 @@ Two tables, filled by where a reference lands.
   proxy's own reflection installs).  They are not counted: nobody here asked for them, and
   whoever receives them is the one to deal with them.  They are remembered only so that one
   nobody ever keeps is let go of after all.
+
+Which handle each frame produces, end by end:
+
+| frame arriving at | handle | what happens |
+|---|---|---|
+| client, `$state` about a served process | the handle for it | the references in the state are owned, counted |
+| client, `$msg` from a served process | the handle for it | transient: dropped when the handle goes |
+| client, answer to a call it made | the handle it asked | transient |
+| server, `$msg` from a client process | the handle for it | transient |
+| server, answer to a call it made | the handle it asked | transient |
+| server, `$state` about a client process | the handle for it | the references in the state are owned, counted |
+
+Those are the frames that carry references across.  A frame that arrives at a process of this
+side's own — the arguments of a call into it, or a message addressed to it — has no handle at
+either end: what it carries is that process's to deal with, and nothing here remembers it.
 
 `release()` cascades: it gives back the counts of what it holds, and drops the transients that
 are still at zero while leaving the ones somebody kept to them.
