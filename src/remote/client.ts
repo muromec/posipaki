@@ -166,6 +166,10 @@ export function remoteClient<
         (id) => table.release(id),
       );
       table.bindFar(table.farRootId(), farRoot);
+      // The proxy is this side's stand-in for that process, so it is the one thing here
+      // that keeps it: the state it mirrors and the messages it passes on are heard because
+      // this handle is held, and it is let go of when the connection is.
+      farRoot.holdRef();
 
       // Setup is done when the far side has said what it holds; until then the
       // one handler below is what takes everything that arrives, so nothing

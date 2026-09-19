@@ -6,6 +6,7 @@
 // because of it.
 
 import { describe, it, expect } from "vitest";
+import { inspect as utilInspect } from "node:util";
 import { isRemoteProcess, PROCESS_REF } from "./process-ref.js";
 import { RemoteProcess } from "./remote-process.js";
 import type { Message } from "../types.js";
@@ -13,16 +14,32 @@ import type { Message } from "../types.js";
 type Ping = { type: "PING"; n: number } & Message;
 type Pong = { type: "PONG"; n: number } & Message;
 
-function makeHandle(sent: Array<[Record<string, unknown>, number]> = []) {
+function makeHandle(
+  sent: Array<[Record<string, unknown>, number]> = [],
+  ref: { id: number; pname: string } = { id: 2, pname: "remote:kid" },
+  kept = true,
+) {
   const letGo: number[] = [];
   const handle = new RemoteProcess<Ping, Pong>(
-    { id: 2, pname: "remote:kid" },
+    ref,
     (frame, to) => {
       sent.push([frame, to]);
     },
     "here",
     (id) => letGo.push(id),
   );
+  // A handle that is asked anything is one something here keeps, so these keep one by
+  // default; what an unkept reference does is its own set of tests.
+  if (kept) handle.holdRef();
+  return { handle, sent, letGo };
+}
+
+/** A reference nothing here keeps: nothing is heard from it, and it says so. */
+function makeUnheldHandle() {
+  const { handle, sent, letGo } = makeHandle();
+  handle.releaseRef();
+  sent.length = 0;
+  letGo.length = 0;
   return { handle, sent, letGo };
 }
 
@@ -120,6 +137,94 @@ describe("RemoteProcess", () => {
     handle.receiveMessage({ type: "PONG", n: 2 }, "remote:kid");
 
     expect(seen).toEqual([[{ type: "PONG", n: 1 }, "remote:kid"]]);
+  });
+
+
+  it("is nothing until something keeps it, and hearing from it says what to do", () => {
+    const { handle } = makeHandle([], { id: 2, pname: "remote:kid" }, false);
+
+    expect(handle.refCount()).toBe(0);
+    expect(() => handle.tune(["state"])).toThrow(/holdRef\(\) to keep this reference, or releaseRef\(\)/);
+    expect(() => handle.subscribe("state", () => {})).toThrow(/holdRef/);
+    expect(() => handle.ready()).toThrow(/holdRef/);
+
+    handle.holdRef();
+    expect(handle.refCount()).toBe(1);
+    expect(() => handle.tune(["state"])).not.toThrow();
+  });
+
+  it("counts what it is kept by, and lets go when the last count goes", () => {
+    const { handle, sent, letGo } = makeHandle();
+
+    expect(handle.holdRef()).toBe(handle);
+    expect(handle.refCount()).toBe(2);
+
+    handle.releaseRef();
+    expect(handle.refCount()).toBe(1);
+    expect(handle.isConnected()).toBe(true);
+    expect(sent).toEqual([]);
+
+    handle.releaseRef();
+    expect(handle.refCount()).toBe(0);
+    expect(letGo).toEqual([2]);
+    expect(handle.isConnected()).toBe(false);
+  });
+
+  it("keeps the references sitting in what it holds, and lets them go with it", () => {
+    const parent = makeHandle();
+    const child = makeHandle([], { id: 4, pname: "remote:kid:leaf" }, false);
+
+    parent.handle.receiveState({ leaf: child.handle });
+
+    // Being held is what lets a reference be heard from, and what a process holds is held
+    // here by the mere fact of sitting in it.
+    expect(child.handle.refCount()).toBe(1);
+    expect(() => child.handle.subscribe("state", () => {})).not.toThrow();
+
+    parent.handle.release();
+
+    expect(child.letGo).toEqual([4]);
+    expect(child.handle.refCount()).toBe(0);
+  });
+
+  it("does not count a reference that arrived to be passed on, and drops it with the handle", () => {
+    const parent = makeHandle();
+    const guest = makeHandle([], { id: 6, pname: "remote:guest" }, false);
+    const body = { type: "PONG", n: 1, guest: guest.handle } as unknown as Pong;
+
+    parent.handle.receiveMessage(body, "remote:kid");
+    expect(guest.handle.refCount()).toBe(0);
+
+    parent.handle.release();
+
+    expect(guest.letGo).toEqual([6]);
+  });
+
+  it("leaves a reference somebody kept to them when the one that carried it goes", () => {
+    const parent = makeHandle();
+    const guest = makeHandle([], { id: 6, pname: "remote:guest" }, false);
+    const body = { type: "PONG", n: 1, guest: guest.handle } as unknown as Pong;
+
+    parent.handle.receiveMessage(body, "remote:kid");
+    guest.handle.holdRef();
+
+    parent.handle.release();
+
+    expect(guest.letGo).toEqual([]);
+    expect(guest.handle.refCount()).toBe(1);
+    expect(guest.handle.isConnected()).toBe(true);
+  });
+
+  it("says what it is, and an unkept reference is an unstable one", () => {
+    const kept = makeHandle();
+    const loose = makeHandle([], { id: 4, pname: "remote:kid:leaf" }, false);
+
+    expect(JSON.stringify(loose.handle)).toBe('"UnstableReference"');
+    expect(utilInspect(loose.handle)).toBe("UnstableReference");
+
+    // A reference something keeps is the reference it is: the same one the wire carries.
+    expect(JSON.stringify(kept.handle)).toBe('{"$p":{"id":2,"pname":"remote:kid"}}');
+    expect(utilInspect(kept.handle)).toBe("RemoteProcess(2: remote:kid)");
   });
 
   it("asks the connection for a method the far side announced", async () => {

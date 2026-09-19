@@ -400,7 +400,11 @@ describe("reflection across a process boundary", () => {
 
     // A process that crossed is silent, so what it holds is asked for while it is waited
     // for: `ready` is both the asking and the waiting, and what it settles with is here.
+    // Only what something here keeps can be heard from, and a reference that arrived in an
+    // answer is nobody's until it is kept.
     expect(handle.state).toBeNull();
+    expect(() => handle.ready()).toThrow(/holdRef/);
+    handle.holdRef();
     await handle.ready();
     expect(handle.state).toEqual({ ticks: 0 });
 

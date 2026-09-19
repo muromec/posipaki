@@ -13,10 +13,48 @@
 
 import type { Message } from "../types.js";
 import { makeWaiter, type Waiter } from "../util.js";
+import { PROCESS_REF, isRemoteProcess } from "./process-ref.js";
 import { STREAM_KINDS, type StreamKind } from "./channel.js";
 import type { ProcessRef } from "./process-ref.js";
 
+/**
+ * What a reference with nothing keeping it amounts to.  It names a process this side can
+ * hear nothing from and ask nothing of, so it is not a process in any sense that matters
+ * here, and it is written as what it is wherever it turns up: a state somebody is reading,
+ * a log line, anything at all that stringifies.
+ */
+export const UNSTABLE_REFERENCE = "UnstableReference";
+
 /** What a process left behind when it ended. */
+/**
+ * The references inside a value that crossed.  A handle is the one thing in a frame that is
+ * not JSON, so wherever one sits, it came here on somebody else's frame and whoever is
+ * holding that value is holding it.  Plain objects and arrays only: a value of another kind
+ * is not a shape this walks, and its references are not found.
+ */
+function refsInside(value: unknown): RemoteProcess[] {
+  const found: RemoteProcess[] = [];
+  const seen = new Set<unknown>();
+  const walk = (node: unknown): void => {
+    if (isRemoteProcess(node)) {
+      found.push(node);
+      return;
+    }
+    if (typeof node !== "object" || node === null) return;
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const item of node) walk(item);
+      return;
+    }
+    const proto = Object.getPrototypeOf(node) as object | null;
+    if (proto !== Object.prototype && proto !== null) return;
+    for (const item of Object.values(node as Record<string, unknown>)) walk(item);
+  };
+  walk(value);
+  return found;
+}
+
 export interface RemoteExit {
   code: number;
   state: unknown;
@@ -63,6 +101,16 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   private pvtStateSubs: Array<() => void> = [];
   /** Whoever is waiting to hear what it holds, settled by the first word of it. */
   private pvtReadyWaiters: Array<() => void> = [];
+  /** How many times this reference has been kept.  Nothing is heard about a process
+   *  nothing here keeps, so the count is what makes a handle usable rather than a name. */
+  private pvtRefCount = 0;
+  /** The handles this one keeps because they sit in what it holds.  Counted, and given
+   *  back when this one is let go of: the thing holding them is here. */
+  private pvtOwnedRefs: RemoteProcess[] = [];
+  /** The handles that arrived here on their way somewhere else, in a message or an answer.
+   *  Not counted — nobody here asked for them, and whoever receives them is the one to deal
+   *  with them — but remembered, so that one nobody ever keeps is let go of after all. */
+  private pvtTransientRefs: RemoteProcess[] = [];
   /** What this side has asked to be told about it.  A process that crosses is
    *  silent, so a handle starts out having asked for nothing and hears nothing
    *  until something here wants it — which is the same rule the far side holds,
@@ -127,6 +175,96 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   }
 
   /**
+   * Keep this reference: from here it is counted, which is what lets anything be asked of
+   * it.  It returns the handle, so what is kept is written in one line —
+   * `this.pvtRemoteRefsHeld.push(ref.holdRef())` — and a table of them reads as what it is.
+   */
+  holdRef(): this {
+    this.pvtRefCount += 1;
+    return this;
+  }
+
+  /**
+   * Give the count back.  Whoever gives the last one back lets the reference go, which is
+   * what tells the far side that nothing here wants to hear about the process again.  A
+   * reference nobody ever kept is let go of by this too, which is how whoever receives one
+   * they do not want is rid of it.
+   */
+  releaseRef(): void {
+    if (this.pvtRefCount > 0) this.pvtRefCount -= 1;
+    if (this.pvtRefCount === 0 && !this.pvtReleased) this.release();
+  }
+
+  /** How many times this reference has been kept. */
+  refCount(): number {
+    return this.pvtRefCount;
+  }
+
+  /**
+   * What this is, as text: a handle nothing here keeps is an unstable reference and says
+   * so, and one that is kept says which process it names and by which id.
+   */
+  [Symbol.for("nodejs.util.inspect.custom")](): string {
+    return this.pvtRefCount === 0 ? UNSTABLE_REFERENCE : `RemoteProcess(${this.ref.id}: ${this.pname})`;
+  }
+
+  /**
+   * What this is, in JSON: the same reference the wire would carry, or the unstable thing
+   * it is when nothing keeps it.  Written so that an unheld reference cannot be mistaken
+   * for a process that merely looks odd in a state, and so that one that is kept reads as
+   * the reference it is rather than as whatever fields it happens to have.
+   */
+  toJSON(): unknown {
+    if (this.pvtRefCount === 0) return UNSTABLE_REFERENCE;
+    return { [PROCESS_REF]: { id: this.ref.id, pname: this.pname } };
+  }
+
+  /**
+   * Remember the references inside a value that arrived here to be passed on.  They are not
+   * counted — the receiver is the one to deal with them — and this is what keeps one from
+   * being nobody's for ever: when this handle is let go of, they are dropped with it.
+   */
+  markTransient(value: unknown): void {
+    for (const ref of refsInside(value)) {
+      if (ref.id === this.id || ref.pvtReleased) continue;
+      this.pvtDropTransient(ref);
+      if (this.pvtOwnedRefs.includes(ref) || this.pvtTransientRefs.includes(ref)) continue;
+      this.pvtTransientRefs.push(ref);
+    }
+  }
+
+  /** Stop treating a reference as one that was only passing through. */
+  private pvtDropTransient(ref: RemoteProcess): void {
+    const at = this.pvtTransientRefs.indexOf(ref);
+    if (at >= 0) this.pvtTransientRefs.splice(at, 1);
+  }
+
+  /**
+   * Keep the references sitting in what this process holds.  What it holds is here, so the
+   * thing keeping those references alive is this handle, and it holds them until it is let
+   * go of itself.
+   */
+  private pvtHoldOwned(value: unknown): void {
+    for (const ref of refsInside(value)) {
+      if (ref.id === this.id || ref.pvtReleased) continue;
+      if (this.pvtOwnedRefs.includes(ref)) continue;
+      this.pvtDropTransient(ref);
+      this.pvtOwnedRefs.push(ref.holdRef());
+    }
+  }
+
+  /** Nothing is heard about a process nothing here keeps.  A subscription, a tuning and a
+   *  wait for the state are all ways of hearing, so they are where a reference has to have
+   *  been kept first — and where the mistake says what to do about it. */
+  private pvtRequireHeld(what: string): void {
+    if (this.pvtRefCount > 0) return;
+    throw new Error(
+      `${this.pname} is not held by anyone here: call holdRef() to keep this reference, ` +
+        `or releaseRef() to let it go, before ${what}`,
+    );
+  }
+
+  /**
    * Wait until what it holds is here.
    *
    * A handle starts out knowing nothing about the process: the far side says what a
@@ -137,6 +275,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
    */
   ready(): Promise<void> {
     if (this.state !== null || this.pvtWhyNotAskable() !== null) return Promise.resolve();
+    this.pvtRequireHeld("waiting for what it holds");
     this.pvtWant("state");
     return new Promise<void>((resolve) => this.pvtReadyWaiters.push(resolve));
   }
@@ -191,6 +330,18 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   release(): void {
     this.pvtRequireAskable();
     this.pvtReleased = true;
+    const owned = this.pvtOwnedRefs;
+    this.pvtOwnedRefs = [];
+    for (const ref of owned) {
+      if (!ref.pvtReleased) ref.releaseRef();
+    }
+    const transient = this.pvtTransientRefs;
+    this.pvtTransientRefs = [];
+    for (const ref of transient) {
+      // One that was kept by whoever received it is theirs, and one that was never kept is
+      // nobody's: there is nothing else that would ever let go of it.
+      if (!ref.pvtReleased && ref.pvtRefCount === 0) ref.release();
+    }
     this.pvtLetGo?.(this.ref.id);
     this.pvtSend({ $release: {} }, this.ref.id);
     this.pvtSettleReady();
@@ -220,6 +371,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
    */
   tune(kinds: StreamKind[] | "silent"): void {
     this.pvtRequireAskable();
+    this.pvtRequireHeld("tuning what is heard about it");
     this.pvtTune(kinds === "silent" ? [] : kinds);
   }
 
@@ -257,6 +409,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   subscribe(channel: "message", cb: RemoteMessage<OutMsg>): () => void;
   subscribe(channel: "state", cb: () => void): () => void;
   subscribe(channel: "message" | "state", cb: RemoteMessage<OutMsg> | (() => void)): () => void {
+    this.pvtRequireHeld(`subscribing to what it ${channel === "message" ? "says" : "holds"}`);
     if (channel === "message") {
       const fn = cb as RemoteMessage<OutMsg>;
       this.pvtMessageSubs.push(fn);
@@ -282,6 +435,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   receiveState(state: Record<string, unknown>): void {
     if (this.pvtReleased) return;
     this.state = Object.assign(this.state ?? {}, state);
+    this.pvtHoldOwned(state);
     this.pvtStateSubs.forEach((fn) => fn());
     this.pvtSettleReady();
   }
@@ -289,6 +443,8 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   /** A message it emitted. */
   receiveMessage(msg: OutMsg, fromName: string): void {
     if (this.pvtReleased) return;
+    // Anything that came along in the message came here on its way somewhere else.
+    this.markTransient(msg);
     this.pvtMessageSubs.forEach((fn) => fn(msg, fromName));
   }
 
@@ -309,7 +465,13 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
    *  made or paired with its answer. */
   receiveMethods(names: string[], call: (name: string, args: unknown[]) => Promise<unknown>): void {
     for (const name of names) {
-      this.$reflection[name] = (...args: unknown[]) => call(name, args);
+      this.$reflection[name] = async (...args: unknown[]) => {
+        const value = await call(name, args);
+        // A reference in an answer was handed to whoever asked, which makes it theirs to
+        // deal with; this handle only remembers it, so that it is dropped with this one.
+        this.markTransient(value);
+        return value;
+      };
     }
   }
 }

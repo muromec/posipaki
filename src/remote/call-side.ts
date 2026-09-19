@@ -15,7 +15,12 @@ import {
   jsonProblem,
   type ReflectionCall,
 } from "./channel.js";
-import { encodeProcessRefs, type ProcessHandle, type ProcessTable } from "./process-ref.js";
+import {
+  encodeProcessRefs,
+  isRemoteProcess,
+  type ProcessHandle,
+  type ProcessTable,
+} from "./process-ref.js";
 import { reflectionNames } from "./process-streams.js";
 
 /** A frame on its way out: encoded, addressed, and written to this end's wire. */
@@ -67,10 +72,21 @@ export class CallSide {
     });
   }
 
-  /** One function per announced name, on the surface whoever calls reads. */
+  /**
+   * One function per announced name, on the surface whoever calls reads.
+   *
+   * An answer that carries a reference hands it to whoever asked, which makes it theirs to
+   * deal with: the handle that was asked is told about it, so that one nobody keeps is let
+   * go of with that handle rather than being nobody's for ever.
+   */
   install(surface: Record<string, unknown>, methods: string[], to: number): void {
     for (const method of methods) {
-      surface[method] = (...callArgs: unknown[]) => this.call(method, callArgs, to);
+      surface[method] = async (...callArgs: unknown[]) => {
+        const value = await this.call(method, callArgs, to);
+        const owner = this.pvtTable.farHandleFor(to);
+        if (isRemoteProcess(owner)) owner.markTransient(value);
+        return value;
+      };
     }
   }
 

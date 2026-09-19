@@ -73,6 +73,12 @@ const reflector = defineActor({
       // is a message going the other way, and what it does about it comes back on
       // the stream that started when it crossed — which is the only reason this
       // method can answer at all.
+      //
+      // Nothing here owns it yet: a reference that arrives to be passed on is nobody's
+      // until somebody keeps it, and only a kept one can be heard from.  Whoever receives
+      // it is the one to deal with it, so this keeps it for the length of the call and
+      // gives the count back at the end.
+      const mine = handle.holdRef();
       const heard = [];
       const stop = handle.subscribe("message", (msg) => heard.push(msg.type));
       // Subscribing to what it says is half of it: a process that crossed is silent
@@ -86,7 +92,9 @@ const reflector = defineActor({
         "the state it streamed and the message it sent",
       );
       stop();
-      return { heard, pings: handle.state?.pings };
+      const answer = { heard, pings: handle.state?.pings };
+      mine.releaseRef();
+      return answer;
     },
     async "probe.ask"(handle, method, args) {
       // A method of a process of the far side's own, asked from here.  What it can
