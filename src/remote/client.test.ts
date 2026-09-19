@@ -2,9 +2,14 @@
 
 import { describe, it, expect } from "vitest";
 import { remoteClient } from "./client.js";
-import { isInit, isMsg } from "./channel.js";
+import { frameTo, isInit, isMsg, isStop } from "./channel.js";
 import type { Channel } from "./channel.js";
+import { rootIdFor } from "./process-ref.js";
 import { sleep } from "../util.js";
+
+/** The id the server's root goes by: what every frame about it is addressed with, and
+ *  what this side asks of it. */
+const SERVER_ROOT = rootIdFor("even");
 
 class FakeChannel implements Channel {
   sent: Record<string, unknown>[] = [];
@@ -52,12 +57,12 @@ describe("remoteClient (unit)", () => {
     });
 
     while (!channel.handler) await sleep(1);
-    channel.handler!({ $state: { count: 0 } });
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 0 } });
     while (proc.state?.count !== 0) await sleep(1);
 
     const received: CounterOut[] = [];
     proc.subscribe("message", (msg) => received.push(msg as CounterOut));
-    channel.handler!({ $msg: { fromName: "server", body: { type: "COUNT_CHANGED", count: 1 } } });
+    channel.handler!({ to: SERVER_ROOT, $msg: { fromName: "server", body: { type: "COUNT_CHANGED", count: 1 } } });
     while (received.length !== 1) await sleep(1);
     expect(received[0]).toEqual({ type: "COUNT_CHANGED", count: 1 });
 
@@ -69,14 +74,10 @@ describe("remoteClient (unit)", () => {
     });
 
     proc.send({ type: "STOP" });
-    while (
-      !channel.sent.some(
-        (f) => isMsg(f) && (f as { $msg: { body: { type: string } } }).$msg.body.type === "STOP",
-      )
-    ) {
-      await sleep(1);
-    }
-    channel.handler!({ $exit: { code: 0, state: { count: 1 } } });
+    // A stop request is a request to the process the proxy stands for, so it goes out
+    // as the control frame every handle uses, addressed to the far root.
+    while (!channel.sent.some((f) => frameTo(f) === SERVER_ROOT && isStop(f))) await sleep(1);
+    channel.handler!({ to: SERVER_ROOT, $exit: { code: 0, state: { count: 1 } } });
     await proc.wait();
   });
 
@@ -111,13 +112,13 @@ describe("remoteClient (unit)", () => {
     // $state frame, which only arrives after spawn() has returned.
     const proc = await actor.spawn({ start: 0 }, { awaitReady: false });
     while (!channel.handler) await sleep(1);
-    channel.handler!({ $state: { count: 0 } });
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 0 } });
     while (proc.state?.count !== 0) await sleep(1);
 
     const seen: Array<{ count: number }> = [];
     proc.subscribe("state", () => seen.push(proc.state as { count: number }));
 
-    channel.handler!({ $state: { count: 5 } });
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 5 } });
     while (seen.length === 0) await sleep(1);
     expect(seen[0]).toEqual({ count: 5 });
   });
@@ -133,11 +134,11 @@ describe("remoteClient (unit)", () => {
     // $state frame, which only arrives after spawn() has returned.
     const proc = await actor.spawn({ start: 0 }, { awaitReady: false });
     while (!channel.handler) await sleep(1);
-    channel.handler!({ $state: { count: 0 } });
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 0 } });
 
     proc.send({ type: "STOP" });
-    while (!channel.sent.some((f) => isMsg(f))) await sleep(1);
-    channel.handler!({ $exit: { code: 0, state: { count: 0 } } });
+    while (!channel.sent.some(isStop)) await sleep(1);
+    channel.handler!({ to: SERVER_ROOT, $exit: { code: 0, state: { count: 0 } } });
     await proc.wait();
 
     expect(channel.closed).toBe(true);

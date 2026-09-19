@@ -14,7 +14,7 @@ export type { ClientSpawner } from "./client.js";
 // what a process on the far side is, once it is not just a reference
 export { RemoteProcess } from "./remote-process.js";
 export type { FrameSink, RemoteMessage } from "./remote-process.js";
-export { PROCESS_REF, ROOT_ID, isRemoteProcess } from "./process-ref.js";
+export { PROCESS_REF, rootIdFor, isRemoteProcess } from "./process-ref.js";
 export type { ProcessRef } from "./process-ref.js";
 
 // frame vocabulary (shared, pure)

@@ -11,7 +11,11 @@ import { describe, it, expect } from "vitest";
 import { defineActor } from "../index.js";
 import { ProcessStreams, reflectionNames } from "./process-streams.js";
 import { REFLECT_METHODS, isExit, isMsg, isState } from "./channel.js";
-import { ROOT_ID } from "./process-ref.js";
+import { rootIdFor } from "./process-ref.js";
+
+/** The id an odd side gives its own root, which is the one the streams do not watch:
+ *  its end is the connection's end, and the side that owns the wire says it. */
+const ROOT_ID = rootIdFor("odd");
 import { RemoteProcess } from "./remote-process.js";
 import type { Message } from "../types.js";
 import { sleep } from "../util.js";
@@ -50,7 +54,9 @@ const Breaks = defineActor({
 
 function makeStreams() {
   const sent: Array<[Record<string, unknown>, number]> = [];
-  const streams = new ProcessStreams((frame, to) => sent.push([frame, to]));
+  const streams = new ProcessStreams((frame, to) => {
+    sent.push([frame, to]);
+  }, ROOT_ID);
   return { streams, sent };
 }
 
@@ -75,14 +81,14 @@ describe("ProcessStreams", () => {
     const { streams, sent } = makeStreams();
     const mine = await Echo.spawn({});
 
-    streams.crossed(mine, 1);
+    streams.crossed(mine, 3);
     expect(sent).toEqual([]);
 
     streams.flush();
     // What it can answer is not one of the three categories: a handle that cannot
     // name a method can do nothing with the process however much it is told about
     // it, so this crosses even in silence.
-    expect(sent).toEqual([[{ [REFLECT_METHODS]: ["echo.pings"] }, 1]]);
+    expect(sent).toEqual([[{ [REFLECT_METHODS]: ["echo.pings"] }, 3]]);
 
     // And nothing it does is said until it is asked for.
     mine.send({ type: "PING" } as Ping);
@@ -95,16 +101,16 @@ describe("ProcessStreams", () => {
   it("says what it holds the moment it is asked for it", async () => {
     const { streams, sent } = makeStreams();
     const mine = await Echo.spawn({});
-    streams.crossed(mine, 1);
+    streams.crossed(mine, 3);
     streams.flush();
     sent.length = 0;
 
-    streams.tune(1, ["state"]);
+    streams.tune(3, ["state"]);
 
     // Asked for is said now rather than at the next change: in silence the far
     // side has heard nothing about its state, and a handle that has just asked
     // what it holds has waited long enough.
-    expect(sent).toEqual([[{ $state: { pings: 0 } }, 1]]);
+    expect(sent).toEqual([[{ $state: { pings: 0 } }, 3]]);
 
     await mine.stop();
   });
@@ -132,9 +138,9 @@ describe("ProcessStreams", () => {
   it("leaves out what was tuned away, and takes it up again where it stands", async () => {
     const { streams, sent } = makeStreams();
     const mine = await Echo.spawn({});
-    streams.crossed(mine, 1);
+    streams.crossed(mine, 3);
     streams.flush();
-    streams.tune(1, ["message", "state"]);
+    streams.tune(3, ["message", "state"]);
     sent.length = 0;
 
     mine.send({ type: "PING" } as Ping);
@@ -143,7 +149,7 @@ describe("ProcessStreams", () => {
     expect(sent.some(([frame]) => isState(frame))).toBe(true);
 
     // Silent: neither what it says nor what it holds crosses.
-    streams.tune(1, []);
+    streams.tune(3, []);
     sent.length = 0;
     mine.send({ type: "PING" } as Ping);
     await sleep(20);
@@ -151,8 +157,8 @@ describe("ProcessStreams", () => {
 
     // Asked for again, it is said from where the process stands now — two pings
     // in, not the state it was in when the stream went quiet.
-    streams.tune(1, ["state"]);
-    expect(sent).toEqual([[{ $state: { pings: 2 } }, 1]]);
+    streams.tune(3, ["state"]);
+    expect(sent).toEqual([[{ $state: { pings: 2 } }, 3]]);
 
     await mine.stop();
   });
@@ -160,9 +166,9 @@ describe("ProcessStreams", () => {
   it("says it ended once, when the end is one of the things asked for", async () => {
     const { streams, sent } = makeStreams();
     const mine = await Echo.spawn({});
-    streams.crossed(mine, 1);
+    streams.crossed(mine, 3);
     streams.flush();
-    streams.tune(1, ["exit"]);
+    streams.tune(3, ["exit"]);
     sent.length = 0;
 
     await mine.stop();
@@ -171,7 +177,7 @@ describe("ProcessStreams", () => {
     // Exactly one exit, and nothing after it: what it settles on the way out is
     // said first, and then it is gone.
     expect(sent.filter(([frame]) => isExit(frame))).toEqual([
-      [{ $exit: { code: 0, state: { pings: 0 } } }, 1],
+      [{ $exit: { code: 0, state: { pings: 0 } } }, 3],
     ]);
     expect(isExit(sent[sent.length - 1][0])).toBe(true);
   });
@@ -179,7 +185,7 @@ describe("ProcessStreams", () => {
   it("says nothing of an end nobody asked for", async () => {
     const { streams, sent } = makeStreams();
     const mine = await Echo.spawn({});
-    streams.crossed(mine, 1);
+    streams.crossed(mine, 3);
     streams.flush();
     sent.length = 0;
 
@@ -205,12 +211,17 @@ describe("ProcessStreams", () => {
     expect(exits).toEqual([[{ $exit: { code: 1, state: null } }, 5]]);
   });
 
-  it("says what it always said about the root of the connection", async () => {
+  it("says about the root of the connection what it is asked for, like anything else", async () => {
     const { streams, sent } = makeStreams();
     const mine = await Echo.spawn({});
     streams.crossed(mine, ROOT_ID);
     streams.flush();
 
+    // Announced, and nothing else: the root crosses silent as a process does, and a
+    // side that wants to hear it asks — which is what a visitor's proxy does.
+    expect(sent).toEqual([[{ [REFLECT_METHODS]: ["echo.pings"] }, ROOT_ID]]);
+
+    streams.tune(ROOT_ID, ["message", "state"]);
     expect(sent).toEqual([
       [{ [REFLECT_METHODS]: ["echo.pings"] }, ROOT_ID],
       [{ $state: { pings: 0 } }, ROOT_ID],
@@ -223,6 +234,29 @@ describe("ProcessStreams", () => {
     expect(sent.some(([frame, to]) => to === ROOT_ID && isState(frame))).toBe(true);
 
     await mine.stop();
+  });
+
+  it("leaves the root's end to the side that owns the wire, and watches no other", async () => {
+    const { streams, sent } = makeStreams();
+    const mine = await Echo.spawn({});
+    streams.crossed(mine, ROOT_ID);
+    streams.flush();
+    streams.tune(ROOT_ID, ["exit"]);
+
+    await mine.stop();
+    await sleep(20);
+
+    // No watch on it, so no exit on its own: the side that owns the wire says that,
+    // awaited, as it takes the wire down.
+    expect(sent.filter(([, to]) => to === ROOT_ID).some(([frame]) => isExit(frame))).toBe(false);
+
+    // And what it does say is said by `sayEnded`, once.
+    await streams.sayEnded(ROOT_ID, 0);
+    expect(sent.filter(([frame, to]) => to === ROOT_ID && isExit(frame))).toEqual([
+      [{ $exit: { code: 0, state: mine.state } }, ROOT_ID],
+    ]);
+    await streams.sayEnded(ROOT_ID, 0);
+    expect(sent.filter(([frame, to]) => to === ROOT_ID && isExit(frame))).toHaveLength(1);
   });
 
   it("has nothing to stream for a handle travelling back to its holder", () => {
@@ -245,10 +279,10 @@ describe("ProcessStreams", () => {
   it("says nothing more about one it is told to let go, and nothing of its end", async () => {
     const { streams, sent } = makeStreams();
     const mine = await Echo.spawn({});
-    streams.crossed(mine, 1);
+    streams.crossed(mine, 3);
     streams.flush();
-    streams.tune(1, ["message", "state", "exit"]);
-    streams.stop(1);
+    streams.tune(3, ["message", "state", "exit"]);
+    streams.stop(3);
     sent.length = 0;
 
     mine.send({ type: "PING" } as Ping);
@@ -263,9 +297,9 @@ describe("ProcessStreams", () => {
   it("says nothing more about any of them once it is stopped", async () => {
     const { streams, sent } = makeStreams();
     const mine = await Echo.spawn({});
-    streams.crossed(mine, 1);
+    streams.crossed(mine, 3);
     streams.flush();
-    streams.tune(1, ["message", "state", "exit"]);
+    streams.tune(3, ["message", "state", "exit"]);
     streams.stopAll();
     sent.length = 0;
 

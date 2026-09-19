@@ -12,7 +12,6 @@ import type { AsyncProcess } from "../process.async.js";
 import type { Message } from "../types.js";
 import {
   PROCESS_REF,
-  ROOT_ID,
   ProcessTable,
   asProcessRef,
   decodeProcessRefs,
@@ -48,34 +47,42 @@ describe("ProcessTable", () => {
     const first = await makeProcess("first");
     const second = await makeProcess("second");
 
-    expect(table.handleFor(first)).toBe(1);
-    expect(table.handleFor(first)).toBe(1);
-    expect(table.handleFor(second)).toBe(3);
+    expect(table.handleFor(first)).toBe(3);
+    expect(table.handleFor(first)).toBe(3);
+    expect(table.handleFor(second)).toBe(5);
 
-    // No process is ever handed out id 0: that one means the root.
-    expect(table.handleFor(await makeProcess("third"))).toBe(5);
+    // The first two ids of the parity are the two ends' roots, and neither is ever
+    // handed out for anything else.
+    expect(table.handleFor(await makeProcess("third"))).toBe(7);
   });
 
-  it("keeps id 0 for the root it was bound to", async () => {
-    const table = new ProcessTable("odd");
+  it("keeps the first id of its parity for the root it was bound to", async () => {
+    const odd = new ProcessTable("odd");
+    const even = new ProcessTable("even");
     const root = await makeProcess("root");
 
-    table.bindRoot(root);
-    expect(table.handleFor(root)).toBe(ROOT_ID);
-    expect(table.processFor(ROOT_ID)).toBe(root);
-    expect(table.resolve(ROOT_ID)).toBe(root);
+    odd.bindRoot(root);
+    expect(odd.rootId()).toBe(1);
+    expect(odd.farRootId()).toBe(0);
+    expect(odd.processFor(1)).toBe(root);
+    expect(odd.resolve(1)).toBe(root);
 
-    // The root does not use up a number: the next process still starts at 1.
-    const kid = await makeProcess("kid");
-    expect(table.handleFor(kid)).toBe(1);
+    // The root takes a number like anything else, and the id in between is the far
+    // side's root: the first id this side hands out is past both of them.
+    expect(odd.handleFor(await makeProcess("kid"))).toBe(3);
+
+    even.bindRoot(root);
+    expect(even.rootId()).toBe(0);
+    expect(even.farRootId()).toBe(1);
+    expect(even.processFor(0)).toBe(root);
   });
 
   it("numbers each side's processes on its own half of the space", async () => {
     const odd = new ProcessTable("odd");
     const even = new ProcessTable("even");
 
-    expect(odd.handleFor(await makeProcess("kid"))).toBe(1);
-    expect(odd.handleFor(await makeProcess("other"))).toBe(3);
+    expect(odd.handleFor(await makeProcess("kid"))).toBe(3);
+    expect(odd.handleFor(await makeProcess("other"))).toBe(5);
     expect(even.handleFor(await makeProcess("kid"))).toBe(2);
     expect(even.handleFor(await makeProcess("other"))).toBe(4);
   });
@@ -85,18 +92,18 @@ describe("ProcessTable", () => {
     const mine = await makeProcess("mine");
     const theirs = makeHandle({ id: 2, pname: "remote:kid" });
 
-    expect(table.handleFor(mine)).toBe(1);
+    expect(table.handleFor(mine)).toBe(3);
     table.bindFar(theirs.ref.id, theirs);
 
     // One number belongs to one side, so what it resolves to does not depend on
     // which way the frame that carries it was going.
-    expect(table.processFor(1)).toBe(mine);
+    expect(table.processFor(3)).toBe(mine);
     expect(table.processFor(2)).toBeUndefined();
     expect(table.farHandleFor(2)).toBe(theirs);
-    expect(table.farHandleFor(1)).toBeUndefined();
-    expect(table.resolve(1)).toBe(mine);
+    expect(table.farHandleFor(3)).toBeUndefined();
+    expect(table.resolve(3)).toBe(mine);
     expect(table.resolve(2)).toBe(theirs);
-    expect(table.resolve(3)).toBeUndefined();
+    expect(table.resolve(4)).toBeUndefined();
     expect(table.handles()).toEqual([theirs]);
   });
 
@@ -118,24 +125,34 @@ describe("ProcessTable", () => {
     expect(table.handleFor(mine)).not.toBe(id);
   });
 
-  it("does not let go of the root: it is this side's own end of the connection", async () => {
+  it("does not let go of either root: one is its own end, the other what it talks to", async () => {
     const table = new ProcessTable("odd");
     const root = await makeProcess("root");
     table.bindRoot(root);
+    const farRoot = makeHandle({ id: table.farRootId(), pname: "remote" });
+    table.bindFar(table.farRootId(), farRoot);
 
-    expect(table.release(ROOT_ID)).toBeUndefined();
-    expect(table.resolve(ROOT_ID)).toBe(root);
+    expect(table.release(table.rootId())).toBeUndefined();
+    expect(table.release(table.farRootId())).toBeUndefined();
+    expect(table.resolve(table.rootId())).toBe(root);
+    expect(table.resolve(table.farRootId())).toBe(farRoot);
   });
 
-  it("refuses a second root, and a root from the other side", async () => {
+  it("refuses a second root, and holds the far side's root like a process of theirs", async () => {
     const table = new ProcessTable("odd");
-    table.bindRoot(await makeProcess("root"));
+    const root = await makeProcess("root");
+    table.bindRoot(root);
     const other = await makeProcess("other");
 
     expect(() => table.bindRoot(other)).toThrow(/already bound/);
-    expect(() => table.bindFar(ROOT_ID, makeHandle({ id: ROOT_ID, pname: "remote" }))).toThrow(
-      /not something to bind/,
-    );
+
+    // The far side's root is a handle here, bound under the first id of the far side's
+    // parity — the number this side's own numbering skipped.
+    const farRoot = makeHandle({ id: 0, pname: "remote" });
+    table.bindFar(0, farRoot);
+    expect(table.farHandleFor(0)).toBe(farRoot);
+    expect(table.resolve(0)).toBe(farRoot);
+    expect(table.resolve(1)).toBe(root);
   });
 });
 
@@ -145,7 +162,7 @@ describe("encodeProcessRefs", () => {
     const table = new ProcessTable("odd");
 
     expect(encodeProcessRefs(proc, table)).toEqual({
-      [PROCESS_REF]: { id: 1, pname: "kid" },
+      [PROCESS_REF]: { id: 3, pname: "kid" },
     });
     expect(encodeProcessRefs({ count: 2, ok: true, missing: null }, table)).toEqual({
       count: 2,
@@ -162,10 +179,10 @@ describe("encodeProcessRefs", () => {
     const encoded = encodeProcessRefs({ kids: [kid, { deep: other }], again: kid }, table);
     expect(encoded).toEqual({
       kids: [
-        { [PROCESS_REF]: { id: 1, pname: "kid" } },
-        { deep: { [PROCESS_REF]: { id: 3, pname: "other" } } },
+        { [PROCESS_REF]: { id: 3, pname: "kid" } },
+        { deep: { [PROCESS_REF]: { id: 5, pname: "other" } } },
       ],
-      again: { [PROCESS_REF]: { id: 1, pname: "kid" } },
+      again: { [PROCESS_REF]: { id: 3, pname: "kid" } },
     });
   });
 
@@ -178,15 +195,20 @@ describe("encodeProcessRefs", () => {
 
     expect(encoded).not.toBe(state);
     expect(state.child).toBe(proc);
-    expect(encoded).toEqual({ child: { [PROCESS_REF]: { id: 1, pname: "kid" } } });
+    expect(encoded).toEqual({ child: { [PROCESS_REF]: { id: 3, pname: "kid" } } });
   });
 
-  it("writes the root as id 0", async () => {
-    const table = new ProcessTable("odd");
+  it("writes a root with the id its own side gave it", async () => {
+    const odd = new ProcessTable("odd");
+    const even = new ProcessTable("even");
     const root = await makeProcess("root");
-    table.bindRoot(root);
+    odd.bindRoot(root);
+    even.bindRoot(root);
 
-    expect(encodeProcessRefs(root, table)).toEqual({ [PROCESS_REF]: { id: ROOT_ID, pname: "root" } });
+    expect(encodeProcessRefs(root, odd)).toEqual({ [PROCESS_REF]: { id: 1, pname: "root" } });
+    // The other end of the same connection numbers its own root differently, and what
+    // crosses is the number the side that holds it gave it.
+    expect(encodeProcessRefs(root, even)).toEqual({ [PROCESS_REF]: { id: 0, pname: "root" } });
   });
 
   it("writes a handle back as the id it came with, whatever this side's table says", () => {

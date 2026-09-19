@@ -112,8 +112,10 @@ export async function answerCall(
   write: WireSink,
   table: ProcessTable<ProcessHandle>,
 ): Promise<void> {
+  // An answer goes back to the far side's own end of the connection: a result is about
+  // the call and not about a process, and the one waiting for it is out there.
   const reply = (body: Record<string, unknown>) =>
-    write(encodeFrame({ [`${REFLECT_RESULT}${call.name}`]: body }, table));
+    write(encodeFrame({ [`${REFLECT_RESULT}${call.name}`]: body }, table, table.farRootId()));
   // Only a process this side holds can be asked: the id a call names is the holder's
   // own, and this side is the holder of what it holds.
   if (!isProcess(target)) {

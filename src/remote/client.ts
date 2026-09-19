@@ -12,7 +12,13 @@ import type { HookResult } from "../hooks.js";
 import type { ActorDefinition, HandlerOptions, MethodOptions, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
-import { ProcessTable, ROOT_ID, isRemoteProcess, type ProcessHandle, type ProcessRef } from "./process-ref.js";
+import {
+  ProcessTable,
+  SERVED_ROOT_NAME,
+  isRemoteProcess,
+  type ProcessHandle,
+  type ProcessRef,
+} from "./process-ref.js";
 import { ProcessStreams } from "./process-streams.js";
 import { RemoteProcess, type FrameSink } from "./remote-process.js";
 import { makeSender } from "./sender.js";
@@ -56,9 +62,8 @@ export function remoteClient<
       public: State;
       private: {
         channel: Channel;
-        sendTo: FrameSink;
+        farRoot: RemoteProcess<InMsg, OutMsg>;
         exitPromise: Promise<{ code: number | null; state: State }>;
-        fromName: string;
       };
     },
     InMsg,
@@ -85,11 +90,11 @@ export function remoteClient<
       // Everything is in place to speak: the sink writes to the wire, and what the
       // table numbers crosses through it.  The sink is reached by a call rather
       // than handed over, because what it does is flush these streams.
-      const streams = new ProcessStreams((frame, to) => sendTo(frame, to));
+      const streams = new ProcessStreams((frame, to) => sendTo(frame, to), table.rootId());
 
-      /** Put an encoded frame on the wire, and then say what it numbered.  A frame
-       *  that carried a reference has to be out before anything about that process
-       *  is, or the far side is told about a process it cannot name yet. */
+      /** Put an encoded frame on the wire, and then say what it numbered.  A frame that
+       *  carried a reference has to be out first, or the far side hears about a process
+       *  it cannot name yet. */
       const write = (frame: Record<string, unknown>): Promise<void> =>
         Promise.resolve(channel.send(frame)).then(() => streams.flush());
 
@@ -108,7 +113,7 @@ export function remoteClient<
             parentIdName: fromName,
           },
         },
-        ROOT_ID,
+        table.farRootId(),
       );
 
       let currentState: Record<string, unknown> = {};
@@ -120,10 +125,14 @@ export function remoteClient<
       const calls = new CallSide(write, table);
 
       /**
-       * The handle for a reference that arrived.  A process handed over twice is
-       * one process, so a reference that names one this side already knows gives
-       * back the handle it gave last time; one that names a process of this
-       * side's own — handed back to its owner — gives back that process.
+       * The handle for a reference that arrived.  A process handed over twice is one
+       * process, so a reference that names one this side already knows gives back the
+       * handle it gave last time, and one that names a process of this side's own —
+       * handed back to its owner — gives back that process.
+       *
+       * The roots are numbered apart, so the numbers say what belongs to whom: 1 is this
+       * side's own end, and 0 is the far side's root, which is a handle like any of the
+       * processes they hold.
        */
       const handleFor = (ref: ProcessRef): ProcessHandle => {
         const held = table.processFor(ref.id);
@@ -131,17 +140,23 @@ export function remoteClient<
         const known = table.farHandleFor(ref.id);
         if (isRemoteProcess(known)) return known;
         const handle = new RemoteProcess(ref, sendTo, fromName, (id) => table.release(id));
-        // The root is not bound: this side's own end of the connection is the
-        // process id 0 already names, and a frame about the root is about the
-        // proxy, which arrives without an address.
-        if (ref.id !== ROOT_ID) table.bindFar(ref.id, handle);
+        table.bindFar(ref.id, handle);
         return handle;
       };
 
-      let exitResolver: ((v: { code: number | null; state: State }) => void) | null = null;
-      const exitPromise = new Promise<{ code: number | null; state: State }>((resolve) => {
-        exitResolver = resolve;
-      });
+      /**
+       * The far side's root, which is what this proxy stands in for.  It is bound here
+       * like any other reference the far side sends: what it holds, what it says, when
+       * it is over and what it can answer reach it as they reach any handle.
+       */
+      const farRoot = new RemoteProcess<InMsg, OutMsg>(
+        { id: table.farRootId(), pname: SERVED_ROOT_NAME },
+        sendTo,
+        fromName,
+        (id) => table.release(id),
+      );
+      table.bindFar(table.farRootId(), farRoot);
+
       // Setup is done when the far side has said what it holds; until then the
       // one handler below is what takes everything that arrives, so nothing
       // falls between two of them.
@@ -150,91 +165,118 @@ export function remoteClient<
         started = resolve;
       });
 
+      // All three in one asking, since this proxy stands in for the far root: what it
+      // holds is this proxy's state, what it says is what this proxy says, and its end
+      // is the end of the connection.  A process says nothing until something asks, and
+      // the root is no exception.
+      farRoot.tune(["message", "state", "exit"]);
+      farRoot.subscribe("state", () => {
+        // One object, updated the way the far side publishes it: the proxy's state is
+        // the far root's, and a caller here reads it as `proc.state`.
+        Object.assign(currentState, farRoot.state ?? {});
+        root.notify();
+        started?.();
+        started = null;
+      });
+      farRoot.subscribe("message", (msg) => {
+        void this.emit(msg as OutMsg);
+      });
+      const exitPromise: Promise<{ code: number | null; state: State }> = farRoot.wait().then(
+        (exit) => ({ code: exit.code, state: exit.state as State }),
+        // The wire went before the far root did: what is known here is that it is over,
+        // and the state last heard is the last word there is.
+        () => ({ code: null, state: currentState as State }),
+      );
+
       channel.onMessage((raw) => {
         const frame = decodeFrame(raw, handleFor);
-        // An answer is about the call waiting for it and not about a process: it
-        // names the seq, and is settled before anything is looked up.  Every other
-        // frame is looked up once, by the process it is about — the root when it says
-        // nothing — so which frames a connection accepts is the table's answer, not a
-        // rule per frame kind.
+        // An answer is about the call waiting for it and not about a process: it names
+        // the seq, and is settled before anything is looked up.
         if (calls.settle(frame)) return;
         const to = frameTo(frame);
-        const target = to === null ? undefined : table.resolve(to);
-        // An id this connection knows nothing about: nothing to deliver to.
-        if (!target) return;
+        if (to === null) return;
+        // A frame answers one of two questions.  News about a process the far side holds
+        // lands on the handle for it: what it holds, what it says, that it is over, what
+        // it can answer.  An ask of a process this side holds goes to wherever that
+        // process lives: a message, control, a call, a tune.
+        const news = table.farHandleFor(to);
+        const mine = table.processFor(to);
         if (isRelease(frame)) {
-          // A process of this side's own, let go of over there: nothing more is
-          // said about it, and the id is no longer this connection's.  The process
-          // itself is untouched.
-          if (to !== null) {
+          // A process of this side's own, let go of over there: nothing more is said
+          // about it, and the id is no longer this connection's.  The process itself
+          // runs on.  Neither root is let go of, so the table refuses both.
+          if (mine !== undefined) {
             streams.stop(to);
             table.release(to);
           }
           return;
         }
-        if (isRemoteProcess(target)) {
-          // A process the far side holds.  Its state and its messages are its
-          // own, and they go to whoever subscribed to this handle.
-          if (isState(frame)) target.receiveState(frame.$state);
-          else if (isMsg(frame)) target.receiveMessage(frame.$msg.body as OutMsg, frame.$msg.fromName);
-          else if (isExit(frame)) target.receiveExit(frame.$exit);
-          else if (isReflectionMethods(frame)) {
-            // What the far side holds can answer, and how this side asks it: what
-            // was announced is the whole surface, so a name never announced is never
-            // called here either.
-            target.receiveMethods(frame[REFLECT_METHODS], (method, callArgs) =>
-              calls.call(method, callArgs, target.ref.id),
+        if (isReflectionMethods(frame)) {
+          // What the far side holds can answer, and how this side asks it: what was
+          // announced is the whole surface, so a name never announced is never called
+          // here either.  The far root's names go on this proxy's own surface as well,
+          // since the proxy is the process a caller here holds.
+          if (isRemoteProcess(news)) {
+            news.receiveMethods(frame[REFLECT_METHODS], (method, callArgs) =>
+              calls.call(method, callArgs, to),
             );
-          }
-          return;
-        }
-        if (target !== root) {
-          // A process of this side's own, handed over and now spoken to from over
-          // there: the message goes where it lives, and control is this side's to
-          // act on.  The wire says who sent a message by name alone, so nobody
-          // here can be recognised as its parent.
-          if (isProcess(target)) {
-            if (isMsg(frame)) {
-              target.send(frame.$msg.body as InMsg, makeSender(frame.$msg.fromName, null, null));
-            } else if (isStop(frame)) void target.stop({ from: makeSender(name, null, null) });
-            else if (isPause(frame)) target.pause();
-            else if (isResume(frame)) target.resume();
-            else if (isTune(frame) && to !== null) {
-              // How much the far side hears about a process of this side's own is
-              // its to ask, and this is where the asking lands.
-              const kinds = tuneFrame(frame);
-              if (kinds !== null) streams.tune(to, kinds);
-            } else {
-              // A call into a process of this side's own, made from over there: the
-              // method is this side's to run, and the answer goes back by name and
-              // seq, the way the root's does.
-              const call = asReflectionCall(frame);
-              if (call) void answerCall(call, target, write, table);
+            if (to === table.farRootId()) {
+              calls.install(
+                this.reflection as unknown as Record<string, unknown>,
+                frame[REFLECT_METHODS],
+                table.farRootId(),
+              );
             }
           }
           return;
         }
         if (isState(frame)) {
-          Object.assign(currentState, frame.$state);
-          // $state frames arrive outside this actor's dispatch loop; notify
-          // state subscribers so observers (Vue, nextState, …) see the change.
-          root.notify();
-          started?.();
-          started = null;
-        } else if (isMsg(frame)) {
-          this.emit(frame.$msg.body as OutMsg);
-        } else if (isExit(frame)) {
-          if (exitResolver) {
-            exitResolver({ code: frame.$exit.code, state: frame.$exit.state as State });
-            exitResolver = null;
-          }
-        } else if (isReflectionMethods(frame)) {
-          calls.install(
-            this.reflection as unknown as Record<string, unknown>,
-            frame[REFLECT_METHODS],
-            ROOT_ID,
-          );
+          // A process the far side holds, saying what it holds: news for whoever
+          // subscribed to the handle.
+          if (isRemoteProcess(news)) news.receiveState(frame.$state);
+          return;
         }
+        if (isExit(frame)) {
+          // A process the far side holds, gone: nothing more will be said about it.
+          if (isRemoteProcess(news)) news.receiveExit(frame.$exit);
+          return;
+        }
+        if (isMsg(frame)) {
+          // A message naming a process this side holds goes into it, the proxy's own
+          // root included, and the wire says who sent it by name alone.  One about a
+          // process the far side holds is that process talking, and goes to whoever
+          // subscribed to the handle.
+          if (isProcess(mine)) {
+            mine.send(frame.$msg.body as InMsg, makeSender(frame.$msg.fromName, null, null));
+          } else if (isRemoteProcess(news)) {
+            news.receiveMessage(frame.$msg.body as OutMsg, frame.$msg.fromName);
+          }
+          return;
+        }
+        if (isTune(frame)) {
+          // How much the far side hears about a process of this side's own is its to
+          // ask, and this is where the asking lands.
+          if (mine !== undefined) {
+            const kinds = tuneFrame(frame);
+            if (kinds !== null) streams.tune(to, kinds);
+          }
+          return;
+        }
+        if (isStop(frame) || isPause(frame) || isResume(frame)) {
+          // Control, addressed to the process it is about, and acted on by whoever holds
+          // it, which is this side.  Its own root is one of those.  A handle has nothing
+          // here to act on.
+          if (isProcess(mine)) {
+            if (isStop(frame)) void mine.stop({ from: makeSender(name, null, null) });
+            else if (isPause(frame)) mine.pause();
+            else mine.resume();
+          }
+          return;
+        }
+        // A call into a process of this side's own, made from over there: the method is
+        // this side's to run, and the answer goes back by name and seq.
+        const call = asReflectionCall(frame);
+        if (call) void answerCall(call, mine, write, table);
       });
       channel.onClose(() => {
         // A call that was in flight when the wire went away has no answer
@@ -248,31 +290,36 @@ export function remoteClient<
         // And nothing more is said about the processes of this side's own that
         // were handed over: there is no one left to say it to.
         streams.stopAll();
-        if (exitResolver) {
-          exitResolver({ code: null, state: currentState as State });
-          exitResolver = null;
-        }
+        // A wire that goes before the far root does leaves nothing to wait for: the
+        // handles are gone, and the far root's end is the connection's end, which is
+        // what `wait()` on it rejects about.
       });
 
       await start;
 
       return {
         public: currentState as State,
-        private: { channel, sendTo, exitPromise, fromName },
+        private: { channel, farRoot, exitPromise },
       };
 
     },
     async onMessage(msg: InMsg): Promise<HookResult> {
-      const { sendTo, fromName } = this.state.private;
-      // A message this side sends is for the root: that is the process the proxy
-      // stands for, and a frame that names no process means it.
-      sendTo({ $msg: { fromName, body: msg } }, ROOT_ID);
+      const { farRoot } = this.state.private;
+      // A message this side sends is for the root: that is the process the proxy stands
+      // for, and it is sent the way any handle sends to a process of the far side's.
+      if (farRoot.isConnected()) farRoot.send(msg);
       return stopPropagation();
     },
     async onStopRequested() {
-      const { channel, sendTo, exitPromise, fromName } = this.state.private;
+      const { channel, farRoot, exitPromise } = this.state.private;
       if (channel) {
-        sendTo({ $msg: { fromName, body: { type: "STOP" } } }, ROOT_ID);
+        // Asking the far root to stop is asking a process, not sending it a message:
+        // the control frame its holder acts on, the one every other handle uses.  Worth
+        // asking only while there is something to ask of it — an end that has come, or
+        // a wire that has gone, leaves nothing to ask and nothing to wait for.
+        if (farRoot.isConnected() && !farRoot.hasEnded()) {
+          void farRoot.stop().catch(() => undefined);
+        }
         await exitPromise;
       }
       this.agreeToStop();

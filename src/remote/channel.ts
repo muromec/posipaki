@@ -8,7 +8,6 @@
 
 import type { Message } from "../types.js";
 import {
-  ROOT_ID,
   decodeProcessRefs,
   encodeProcessRefs,
   type ProcessTable,
@@ -35,34 +34,30 @@ export interface Channel {
 
 // ── the address on a frame ─────────────────────────────────────────────────
 //
-// A frame that is about a process carries that process's id as `to`, at the top
-// level of the frame rather than inside its body: the frame is the envelope, and
-// the address says who it is for whatever kind it turns out to be.  A frame that
-// carries no address is for the root of the connection.
+// A frame that is about a process carries that process's id as `to`, at the top level
+// of the frame rather than inside its body: the frame is the envelope, and the address
+// says who it is for whatever kind it turns out to be.  Every frame that is about a
+// process names it, the root of the connection included, since both ends number their
+// own root and neither has to be guessed at.
 
-/**
- * The id a frame addresses, or null when what it carries is not an id.  Naming
- * no process and naming the root are the same thing, so both answer ROOT_ID.
- */
+/** The id a frame addresses, or null when it names no process. */
 export function frameTo(frame: Record<string, unknown>): number | null {
   const to = frame.to;
-  if (to === undefined) return ROOT_ID;
   return typeof to === "number" ? to : null;
 }
 
 /**
  * A frame on its way out: every process in it becomes the reference this
  * connection uses for that process, and the process the frame addresses is
- * written down as `to` — unless it is the root, which is named by carrying no
- * address at all.
+ * written down as `to`.
  */
 export function encodeFrame(
   frame: Record<string, unknown>,
   table: ProcessTable,
-  to: number = ROOT_ID,
+  to: number,
 ): Record<string, unknown> {
   const encoded = encodeProcessRefs(frame, table) as Record<string, unknown>;
-  return to === ROOT_ID ? encoded : { ...encoded, to };
+  return { ...encoded, to };
 }
 
 /**

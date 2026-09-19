@@ -12,14 +12,15 @@
 // whatever came after it.
 //
 // The two sides allocate from one space, split by parity: the client takes the
-// odd ids, the server the even ones, and the root is 0 on both.  So an id says
-// on its own which side holds the process it names, and a frame's address means
-// the same thing whoever reads it.
+// odd ids, the server the even ones.  Every connection also has a root, and a root is
+// numbered like anything else — the first id of the parity of the side that holds it:
+// 0 on the even side (the server), 1 on the odd one (the client).  So an id says on
+// its own which side holds the process it names, the two roots included, and a frame's
+// address means the same thing whoever reads it.
 //
-// Every connection has a root: id 0, held on both sides — the far actor on one,
-// the proxy that asked for it on the other.  A frame that names no process
-// addresses it, which is what every frame has always meant, so traffic for the
-// root reads exactly as it did before there were ids at all.
+// A side's own root is the process the connection is, and the far side's root is a
+// handle here like any of theirs.  Neither end has to be told which number belongs to
+// whom: each root is the first id of its own parity.
 
 import { isProcess } from "../process.async.js";
 import type { RemoteProcess } from "./remote-process.js";
@@ -27,9 +28,19 @@ import type { RemoteProcess } from "./remote-process.js";
 /** The key that marks a process reference inside an otherwise JSON value. */
 export const PROCESS_REF = "$p";
 
-/** The id a connection gives its own end: the root, named by carrying no id at
- *  all as much as by naming this one. */
-export const ROOT_ID = 0;
+/**
+ * The id a side gives its own root: the first id of its parity.  The two ends of a
+ * connection therefore number their roots differently, and an id says whose root it is
+ * as it says who holds every other process.  A side hands out its next id from two
+ * steps further on, the one in between belonging to the root of the side it talks to.
+ */
+export function rootIdFor(parity: IdParity): number {
+  return parity === "odd" ? 1 : 0;
+}
+
+/** The name a served root is spawned under: what a visitor's handle on the far root
+ *  is called, since no frame about a root carries a name of its own. */
+export const SERVED_ROOT_NAME = "remote";
 
 /** What crosses the wire in place of a process. */
 export interface ProcessRef {
@@ -64,25 +75,44 @@ export class ProcessTable<P extends ProcessHandle = ProcessHandle> {
   private pvtMineIds = new Map<P, number>();
   /** The far side's processes, by the ids they came with. */
   private pvtTheirs = new Map<number, P>();
-  /** The next id this side may hand out: its own parity, 0 being the root's. */
+  /** The id of this side's own root: the first of its parity. */
+  private pvtRootId: number;
+  /** The id the far side gave its root: the first of its parity, and the number this
+   *  side's own numbering skips. */
+  private pvtFarRootId: number;
+  /** The next id this side may hand out: its own parity, from two steps past its own
+   *  root, the one in between belonging to the far side's root. */
   private pvtNext: number;
   /** Told the first time a process is numbered — the moment it is about to
    *  cross the connection. */
   private pvtOnCrossed: ((proc: P, id: number) => void) | undefined;
 
   constructor(parity: IdParity, onCrossed?: (proc: P, id: number) => void) {
-    this.pvtNext = parity === "odd" ? 1 : 2;
+    this.pvtRootId = rootIdFor(parity);
+    this.pvtFarRootId = rootIdFor(parity === "odd" ? "even" : "odd");
+    this.pvtNext = this.pvtRootId + 2;
     this.pvtOnCrossed = onCrossed;
   }
 
-  /** Bind this side's own end of the connection — the root — to id 0. */
+  /** The id of this side's own end of the connection. */
+  rootId(): number {
+    return this.pvtRootId;
+  }
+
+  /** The id the far side knows its own end by: the root this side reaches as a handle,
+   *  and the one it never hands out for anything of its own. */
+  farRootId(): number {
+    return this.pvtFarRootId;
+  }
+
+  /** Bind this side's own end of the connection — the root — to its id. */
   bindRoot(proc: P): void {
-    const bound = this.pvtMine.get(ROOT_ID);
+    const bound = this.pvtMine.get(this.pvtRootId);
     if (bound !== undefined && bound !== proc) {
       throw new Error("ProcessTable: the root is already bound");
     }
-    this.pvtMine.set(ROOT_ID, proc);
-    this.pvtMineIds.set(proc, ROOT_ID);
+    this.pvtMine.set(this.pvtRootId, proc);
+    this.pvtMineIds.set(proc, this.pvtRootId);
   }
 
   /** The id this side gives a process it holds, allocating one the first time. */
@@ -104,14 +134,11 @@ export class ProcessTable<P extends ProcessHandle = ProcessHandle> {
 
   /**
    * Register a process the far side holds — a handle — under the id it arrived
-   * with.  The root is not one of these: the far side's root is the process this
-   * side already holds under id 0, the proxy on one end of the connection and
-   * the actor on the other.
+   * with.  A root is one of these as much as anything else: both ends hold one at 0,
+   * so the far side's root is a handle here, and the one this side has of itself
+   * stays what it was.
    */
   bindFar(id: number, proc: P): void {
-    if (id === ROOT_ID) {
-      throw new Error("ProcessTable: the root is this side's own, not something to bind");
-    }
     this.pvtTheirs.set(id, proc);
   }
 
@@ -137,11 +164,11 @@ export class ProcessTable<P extends ProcessHandle = ProcessHandle> {
    * forget names its own — and an id let go is never handed out again, so nothing
    * that still names it can come to mean another process.
    *
-   * The root is not something a connection lets go of: it is this side's own end,
-   * so releasing it would leave the connection without a name for itself.
+   * Neither root is let go of: one is this side's own end of the connection, and the
+   *  other is what this side is talking to.
    */
   release(id: number): P | undefined {
-    if (id === ROOT_ID) return undefined;
+    if (id === this.pvtRootId || id === this.pvtFarRootId) return undefined;
     const mine = this.pvtMine.get(id);
     if (mine !== undefined) {
       this.pvtMine.delete(id);

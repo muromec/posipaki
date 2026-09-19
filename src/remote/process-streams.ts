@@ -8,7 +8,7 @@
 
 import { isProcess, type AnyProcess } from "../process.async.js";
 import { REFLECT_METHODS, STREAM_KINDS, type StreamKind } from "./channel.js";
-import { ROOT_ID } from "./process-ref.js";
+
 import type { FrameSink } from "./remote-process.js";
 
 /** What a process can be asked over the wire: the functions on its reflection
@@ -35,11 +35,12 @@ export function reflectionNames(target: { $reflection?: unknown }): string[] {
  * let out by `flush` right after the frame goes — which is the only thing a
  * caller has to remember.
  *
- * What a stream says is what the far side asked for.  A process that crosses is
- * silent, and stays silent until something over there asks to hear it: `tune` is
- * that asking, and only the categories it names cross.  The root of the
- * connection is the one exception — it is not a process that was handed over but
- * the one the handing over is done through, and it says what it always said.
+ * What a stream says is what the far side asked for.  A process that crosses is silent
+ * until something over there asks to hear it, and `tune` is that asking: only the
+ * categories it names cross.  The root of the connection is no exception.  It is
+ * registered here the moment the connection opens, and a side that wants to hear it
+ * asks, which is what a visitor's proxy does for the state and messages it stands in
+ * for.
  */
 
 /** One process that crossed, and what is said about it now. */
@@ -55,12 +56,17 @@ interface StreamRecord {
 
 export class ProcessStreams {
   private pvtSink: FrameSink;
+  /** The id of the connection's own end.  Its end is the connection's end, so the side
+   *  that owns the wire says it, awaited there, instead of this watching for it as it
+   *  watches any other process's. */
+  private pvtRootId: number;
   private pvtPending: Array<[AnyProcess, number]> = [];
   private pvtRecords = new Map<number, StreamRecord>();
   private pvtFlushing = false;
 
-  constructor(sink: FrameSink) {
+  constructor(sink: FrameSink, rootId: number) {
     this.pvtSink = sink;
+    this.pvtRootId = rootId;
   }
 
   /** A process was numbered: it is about to cross.  Anything that is not a
@@ -130,17 +136,12 @@ export class ProcessStreams {
     this.pvtPending.length = 0;
   }
 
-  /** What a process starts out saying: nothing, unless it is the root of the
-   *  connection, which is not a process that crossed but the one it crossed
-   *  through. */
-  private pvtDefault(id: number): StreamKind[] {
-    return id === ROOT_ID ? STREAM_KINDS : [];
-  }
-
   private pvtStream(target: AnyProcess, id: number): void {
+    // Nothing to begin with: what is said about a process is what the far side asks
+    // for, and the root is asked for like anything else.
     const record: StreamRecord = {
       target,
-      kinds: new Set(this.pvtDefault(id)),
+      kinds: new Set(),
       stops: new Map(),
     };
     this.pvtRecords.set(id, record);
@@ -153,10 +154,16 @@ export class ProcessStreams {
     // Its end is the last thing ever said about it, and the one thing a stream has
     // to hear to know it is over, whether or not the far side is told.  A process
     // that fails to run takes the same road as one that finishes.
-    void target.wait().then(
-      () => this.pvtEnded(id, 0),
-      () => this.pvtEnded(id, 1),
-    );
+    //
+    // Not for the root.  Its end is the connection's end, and the side that owns the
+    // wire says it while taking the wire down, awaiting it there because that frame has
+    // to be out before the close.  Both of them end up in `sayEnded`.
+    if (id !== this.pvtRootId) {
+      void target.wait().then(
+        () => void this.sayEnded(id, 0),
+        () => void this.sayEnded(id, 1),
+      );
+    }
   }
 
   /** Start saying this much about it, and say what there is to say now. */
@@ -193,14 +200,18 @@ export class ProcessStreams {
     record.stops.delete(kind);
   }
 
-  /** It has ended: say so once, if that is among the categories asked for, and say
-   *  nothing more about it either way. */
-  private pvtEnded(id: number, code: number): void {
+  /**
+   * It has ended: say so once, if that is among the categories asked for, and say
+   * nothing more about it either way.  Awaited by whoever has to have the frame out
+   * before the wire closes, which is the root's end and nobody else's — no other
+   * process can end after this side has stopped saying anything about it.
+   */
+  async sayEnded(id: number, code: number): Promise<void> {
     const record = this.pvtRecords.get(id);
     if (!record) return;
     const told = record.kinds.has("exit");
     const state = record.target.state;
     this.stop(id);
-    if (told) this.pvtSink({ $exit: { code, state } }, id);
+    if (told) await this.pvtSink({ $exit: { code, state } }, id);
   }
 }

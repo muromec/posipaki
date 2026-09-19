@@ -3,6 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "../index.js";
 import { serveRemoteActor } from "./server.js";
+import { rootIdFor } from "./process-ref.js";
 import { isState, isMsg, isExit } from "./channel.js";
 import type { Channel } from "./channel.js";
 import { sleep } from "../util.js";
@@ -39,6 +40,9 @@ async function waitUntil(predicate: () => boolean, what: string) {
   }
 }
 
+/** The id this side gives its own root: what a frame about it is addressed with. */
+const ROOT = rootIdFor("even");
+
 function makeEcho() {
   return defineActor({
     name: "echo",
@@ -63,13 +67,14 @@ describe("serveRemoteActor (unit)", () => {
     await waitUntil(() => channel.handler !== null, "$init handler");
     channel.handler!({ $init: { parentName: "root", parentIdName: "root" } });
 
-    // 2. emits initial $state
+    // 2. says the root's state once it is asked for it, as the far side's proxy does
+    channel.handler!({ to: ROOT, $tune: { streams: ["message", "state", "exit"] } });
     await waitUntil(() => channel.sent.some(isState), "initial $state");
     expect(channel.sent.find(isState)!.$state).toEqual({ pings: 0 });
 
     // 3. forwards $msg → actor → $msg out
     await waitUntil(() => channel.handler !== null, "message handler");
-    channel.handler!({ $msg: { fromName: "root", body: { type: "PING", count: 2 } } });
+    channel.handler!({ to: ROOT, $msg: { fromName: "root", body: { type: "PING", count: 2 } } });
     await waitUntil(() => channel.sent.some(isMsg), "$msg reply");
     expect(channel.sent.find(isMsg)!.$msg).toMatchObject({
       fromName: "remote",
@@ -77,7 +82,7 @@ describe("serveRemoteActor (unit)", () => {
     });
 
     // 4. STOP → $exit + close
-    channel.handler!({ $msg: { fromName: "root", body: { type: "STOP" } } });
+    channel.handler!({ to: ROOT, $msg: { fromName: "root", body: { type: "STOP" } } });
     await waitUntil(() => channel.sent.some(isExit), "$exit");
 
     await serve;
@@ -93,9 +98,10 @@ describe("serveRemoteActor (unit)", () => {
     expect(channel.sent.filter(isState)).toEqual([]);
 
     channel.handler!({ $init: { parentName: "root", parentIdName: "root" } });
+    channel.handler!({ to: ROOT, $tune: { streams: ["message", "state", "exit"] } });
     await waitUntil(() => channel.sent.some(isState), "initial $state");
     await waitUntil(() => channel.handler !== null, "message handler");
-    channel.handler!({ $msg: { fromName: "root", body: { type: "STOP" } } });
+    channel.handler!({ to: ROOT, $msg: { fromName: "root", body: { type: "STOP" } } });
     await serve;
   });
 });

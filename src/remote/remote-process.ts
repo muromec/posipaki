@@ -23,8 +23,9 @@ export interface RemoteExit {
 }
 
 /** How a handle gets a frame onto the connection it belongs to, addressed to a
- *  process the far side holds. */
-export type FrameSink = (frame: Record<string, unknown>, to: number) => void;
+ *  process the far side holds.  The answer is handed back when a caller has to know
+ *  the frame is out — the root's end is said that way, just before the wire closes. */
+export type FrameSink = (frame: Record<string, unknown>, to: number) => void | Promise<void>;
 
 /** What a side does when it lets go of a handle: stop knowing the id, so nothing
  *  arriving for it can land here again. */

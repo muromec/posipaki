@@ -17,7 +17,9 @@ function makeHandle(sent: Array<[Record<string, unknown>, number]> = []) {
   const letGo: number[] = [];
   const handle = new RemoteProcess<Ping, Pong>(
     { id: 2, pname: "remote:kid" },
-    (frame, to) => sent.push([frame, to]),
+    (frame, to) => {
+      sent.push([frame, to]);
+    },
     "here",
     (id) => letGo.push(id),
   );

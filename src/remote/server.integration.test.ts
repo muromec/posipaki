@@ -9,8 +9,13 @@ import { unlink, writeFile } from "node:fs/promises";
 import { FifoUtf8NlineTransport } from "./transports/fifo.js";
 import { encode, decode, VERSION } from "./protocols/json1.js";
 import { isProto, isReflectionMethods, isState, isMsg, isExit } from "./channel.js";
+import { rootIdFor } from "./process-ref.js";
 import { makeWaiter } from "../util.js";
 import type { Message } from "../types.js";
+
+/** The id the served root goes by on its own side: what a frame about it is addressed
+ *  with, and what this raw client asks of it. */
+const ROOT = rootIdFor("even");
 
 const cleanupPaths: string[] = [];
 
@@ -67,6 +72,10 @@ describe("serveRemoteActor — FIFO integration", () => {
       } }),
     );
 
+    // What a proxy asks a root for the moment it connects: the root is a process that
+    // crossed like any other, so it says nothing until something asks.
+    await client.send(encode({ to: ROOT, $tune: { streams: ["message", "state", "exit"] } }));
+
     // What the far side can be asked comes first, before it says anything else.
     const announceLine = await new Promise<string>((resolve) => {
       client.onMessage((line) => resolve(line));
@@ -82,14 +91,14 @@ describe("serveRemoteActor — FIFO integration", () => {
     expect((stateMsg.$state as Record<string, unknown>).pings).toBe(0);
     client.removeHandler();
 
-    const messages: Record<string, unknown>[] = [];
+        const messages: Record<string, unknown>[] = [];
     const exitWaiter = makeWaiter<{ code: number; state: unknown }>();
     let messageWaiter = makeWaiter<Record<string, unknown>[]>();
     let expectedMessageCount = 2;
 
     client.onMessage((line) => {
       const msg = decode(line);
-      if (isExit(msg)) {
+        if (isExit(msg)) {
         return exitWaiter.resolve({ code: msg.$exit.code, state: msg.$exit.state });
       }
 
@@ -104,7 +113,7 @@ describe("serveRemoteActor — FIFO integration", () => {
     });
 
     await client.send(
-      encode({ $msg: {
+      encode({ to: ROOT, $msg: {
         type: "PING",
         fromName: "client",
         body: { type: "PING", count: 1 },
@@ -113,7 +122,7 @@ describe("serveRemoteActor — FIFO integration", () => {
 
     await expect(await messageWaiter.promise);
     await client.send(
-      encode({ $msg: {
+      encode({ to: ROOT, $msg: {
         type: "PING",
         fromName: "client",
         body: { type: "PING", count: 2 },
@@ -122,24 +131,24 @@ describe("serveRemoteActor — FIFO integration", () => {
 
     await expect(await messageWaiter.promise);
     await client.send(
-      encode({ $msg: {
+      encode({ to: ROOT, $msg: {
         type: "PING",
         fromName: "client",
         body: { type: "PING", count: 3 },
       } }),
     );
     await expect(await messageWaiter.promise).toEqual([
-      { $msg: { body: { type: "PONG", count: 1 }, fromName: "remote" } },
-      { $state: { pings: 1 } },
-      { $msg: { body: { type: "PONG", count: 2 }, fromName: "remote" } },
-      { $state: { pings: 2 } },
+      { to: ROOT, $msg: { body: { type: "PONG", count: 1 }, fromName: "remote" } },
+      { to: ROOT, $state: { pings: 1 } },
+      { to: ROOT, $msg: { body: { type: "PONG", count: 2 }, fromName: "remote" } },
+      { to: ROOT, $state: { pings: 2 } },
 
-      { $msg: { body: { type: "PONG", count: 3 }, fromName: "remote" } },
-      { $state: { pings: 3 } },
+      { to: ROOT, $msg: { body: { type: "PONG", count: 3 }, fromName: "remote" } },
+      { to: ROOT, $state: { pings: 3 } },
     ]);
 
     client.send(
-      encode({ $msg: {
+      encode({ to: ROOT, $msg: {
         type: "STOP",
         fromName: "client",
         body: { type: "STOP", count: 0 },
