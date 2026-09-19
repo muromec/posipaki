@@ -2,10 +2,11 @@
 
 **Status:** increments 1, 2a (process references both ways), 2b (addressing a
 process by its reference), 2c (a handle on a process the far side holds), 2d (a
-process of this side passed to the far one, and dispatched from there) and 2f
-(control: what a handle can ask of a process, and the exit that answers it) are
-implemented.  What is left — `release()`, orphans, method calls into a process
-this side holds — is listed below.
+process of this side passed to the far one, and dispatched from there), 2e (every
+carrier of a reference, tested both ways), 2f (control: what a handle can ask of a
+process, and the exit that answers it) and 2h (letting a handle go) are
+implemented.  What is left — orphans, and method calls into a process this side
+holds — is listed below.
 
 ## Summary
 
@@ -98,8 +99,9 @@ Three frames, in the `$r` family:
 ```
 
 Beside those, a frame that asks something of a process rather than of its methods —
-`$stop`, `$pause`, `$resume` — carries no answer of its own: what answers them is
-the process itself, saying that it ended (see *Control and the end of a process*).
+`$stop`, `$pause`, `$resume`, `$release` — carries no answer of its own: what answers
+them is the process itself, saying that it ended, or nothing at all (see *Control and
+the end of a process* and *Letting a handle go*).
 
 The method name is in the frame key, so a frame says what it is without a table.
 
@@ -195,7 +197,7 @@ per process per connection.
 const kid = proc.state.kid;          // RemoteProcess
 kid.pname;                           // "remote:kid"
 kid.ref.id;                          // 2 — the id this connection knows it by
-kid.isConnected();                   // false once the connection is gone
+kid.isConnected();                   // false once it cannot be used any more
 kid.state;                           // what the far side has published so far
 kid.$reflection["inspect.getTree"];  // what it announced it can answer
 kid.send({ type: "PING" });           // a message for it
@@ -212,9 +214,10 @@ kid.subscribe("state", () => …);      // what it holds
   not where it sits here.
 - A reference handed back to the side that holds the process is that process
   again, not a handle on itself.
-- A handle does not outlive its connection: when the wire goes, every handle on
-  it says so, and a `send` after that throws rather than disappearing.  There is
-  no reconnect to wait for, so nothing pretends there might be.
+- A handle does not outlive what it points at: when the wire goes, when the process
+  ends, or when this side lets it go, `isConnected()` says so, and a `send` after
+  that throws rather than disappearing.  There is no reconnect and no way back, so
+  nothing pretends there might be.
 
 ### A process of this side's — done (2d)
 
@@ -276,10 +279,33 @@ kid.hasEnded();                  // true once that exit has arrived
 - A handle that has ended is not merely out of reach: `send`, `pause`, `resume` and
   `stop` all throw, since there is nothing there to ask.
 
-What is left: `release()` on a handle, which drops it from the table on the far
-side so that everything that needs it there fails rather than reaching a process
-nobody wants (2h), and orphans, marked TBD in this document until they are thought
-through (2g). Two gaps beside those: a method call from the far side into a process
+### Letting a handle go — done (2h)
+
+A handle can also be let go of, which is the fourth control frame:
+
+```ts
+kid.release();          // the far side forgets that id, and says nothing more
+kid.isConnected();      // false
+```
+
+- The far side drops the id from its table and stops streaming the process it named.
+  The *process* is untouched: it runs on, and nothing about it is said here any more.
+  An id let go is never handed out again, so a later crossing numbers the process
+  afresh and nothing that still names the old id can come to mean another process.
+- Everything that needs the released handle errors out on this side too: `send`,
+  `stop`, `pause` and `resume` throw, `wait()` rejects, and what still arrives for it
+  is not news.  The reason is in the message — released, ended, or the connection
+  gone — and never a silent drop.
+- `isConnected()` is the one answer about whether a handle is any good, and all three
+  of those roads lead there.  What they cannot tell apart is the process's fate: a
+  connection that drops before an exit leaves a handle that knows only that it died,
+  and the root of a connection is the same kind of thing — a proxy whose wire is gone
+  knows only that it is gone.
+- Releasing is not stopping: nothing is asked of the process, and whether it keeps
+  running is not this connection's business any more.
+
+What is left: orphans, marked TBD in this document until they are thought through
+(2g). Two gaps beside those: a method call from the far side into a process
 this side holds is still not answered — the announcement arrives, the call side of
 it does not — and a process handed over as *the root of a connection* is read by
 the far side as its own root, since id 0 means that on both ends. Nothing exercises
@@ -313,12 +339,14 @@ declare module "posipaki" {
 9. Addressing a process by reference — done (2b): the connection's table, `to` on
    the frames that name a process, and one walk per frame in each direction
 10. A handle a caller can use — done (2c): `send`, `state`, `subscribe`,
-    `$reflection` and `isConnected()`; `release()` follows
+    `$reflection` and `isConnected()`
 11. A process of this side's passed to the far one, and dispatched from there —
     done (2d): the same table, reference and stream, used from the other end
-13. Control and the end of a process — done (2f): `$stop`, `$pause`, `$resume`, a
+12. Control and the end of a process — done (2f): `$stop`, `$pause`, `$resume`, a
     streamed `$exit`, and `wait`, `stop`, `pause`, `resume` and `hasEnded()` on the
     handle; both directions, over a real subprocess as well
+13. Letting a handle go — done (2h): `$release`, the id dropped on the far side, the
+    handle dead on this one, and `isConnected()` as the single answer about that
 14. Tests: local invocation, plugin registration, wire round-trip, concurrent
     calls, refusals, references over a real subprocess — done; and every carrier
     of a reference — a message body, a call argument, a state update that replaces

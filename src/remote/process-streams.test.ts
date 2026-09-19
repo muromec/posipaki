@@ -143,6 +143,23 @@ describe("ProcessStreams", () => {
     expect(sent).toEqual([]);
   });
 
+  it("says nothing more about one it is told to let go, and nothing of its end", async () => {
+    const { streams, sent } = makeStreams();
+    const mine = await Echo.spawn({});
+    streams.crossed(mine, 1);
+    streams.flush();
+    streams.stop(1);
+    sent.length = 0;
+
+    mine.send({ type: "PING" } as Ping);
+    await mine.stop();
+    await sleep(20);
+
+    // Neither what it did nor the fact that it is gone: it is out of this
+    // connection's hands, and its end is nobody's news here.
+    expect(sent).toEqual([]);
+  });
+
   it("says nothing more about any of them once it is stopped", async () => {
     const { streams, sent } = makeStreams();
     const mine = await Echo.spawn({});

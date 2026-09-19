@@ -66,6 +66,18 @@ export class ProcessStreams {
     }
   }
 
+  /**
+   * Say nothing more about this one.  It is not that the process ended — the far
+   * side asked to be left out of it, so its exit is nobody's news over here, and
+   * dropping the subscription is what keeps it from being sent.
+   */
+  stop(id: number): void {
+    const stops = this.pvtStops.get(id);
+    if (!stops) return;
+    for (const stop of stops) stop();
+    this.pvtStops.delete(id);
+  }
+
   /** Nothing more is said about any of them: the connection is done. */
   stopAll(): void {
     for (const stops of this.pvtStops.values()) {

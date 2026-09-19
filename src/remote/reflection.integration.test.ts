@@ -181,6 +181,28 @@ describe("reflection across a process boundary", () => {
     await proc.stop();
   }, 20000);
 
+  it("lets a handle go, and the far side stops knowing the process by that id", async () => {
+    const { proc, surface } = await spawnPayload();
+
+    const kid = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
+    await waitUntil(() => kid.state !== null, "the state it streamed");
+    const id = kid.ref.id;
+
+    kid.release();
+
+    expect(kid.isConnected()).toBe(false);
+    expect(() => kid.send({ type: "PING" })).toThrow(/was released/);
+
+    // What the far side let go of is the id, not the process: asked again, the same
+    // process is numbered afresh, and the handle that let it go is done.
+    const again = (await surface["inspect.find"]("remote:kid")) as RemoteProcess;
+    expect(again.pname).toBe("remote:kid");
+    expect(again.ref.id).not.toBe(id);
+    expect(again).not.toBe(kid);
+
+    await proc.stop();
+  }, 20000);
+
   it("holds a process on the far side back while it is paused", async () => {
     const { proc } = await spawnPayload();
 

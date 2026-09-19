@@ -25,6 +25,10 @@ export interface RemoteExit {
  *  process the far side holds. */
 export type FrameSink = (frame: Record<string, unknown>, to: number) => void;
 
+/** What a side does when it lets go of a handle: stop knowing the id, so nothing
+ *  arriving for it can land here again. */
+export type ReleaseHook = (id: number) => void;
+
 /** An out-message of the far process, and the name it came with. */
 export type RemoteMessage<OutMsg extends Message = Message> = (msg: OutMsg, fromName: string) => void;
 
@@ -45,24 +49,37 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   private pvtSend: FrameSink;
   private pvtFromName: string;
   private pvtConnected = true;
+  /** This side let it go: nothing more is asked of it, and nothing arriving for it
+   *  is news any more.  Not the same as ending, and not the same as the connection
+   *  going: in all three the handle is dead, and only the reason differs. */
+  private pvtReleased = false;
+  private pvtLetGo: ReleaseHook | undefined;
   /** What the far side said when it ended, or null while it is running. */
   private pvtExit: RemoteExit | null = null;
   private pvtExitWaiter: Waiter<RemoteExit> | null = null;
   private pvtMessageSubs: Array<RemoteMessage<OutMsg>> = [];
   private pvtStateSubs: Array<() => void> = [];
 
-  constructor(ref: ProcessRef, send: FrameSink, fromName: string) {
+  constructor(ref: ProcessRef, send: FrameSink, fromName: string, letGo?: ReleaseHook) {
     this.ref = ref;
     this.pname = ref.pname;
     this.id = Symbol(ref.pname);
     this.pvtSend = send;
     this.pvtFromName = fromName;
+    this.pvtLetGo = letGo;
   }
 
-  /** Whether the connection this handle lives on is still there.  It is the only
-   *  thing "alive" can mean for a process on the other end. */
+  /**
+   * Whether this handle is still any good: the connection is there, the process
+   * behind it has not ended, and this side has not let it go.
+   *
+   * That is the one answer liveness can have here.  All three roads end in the same
+   * place — nothing can be asked of it any more — and there is no coming back from
+   * any of them: no reconnect, and no way to un-release.  The reason differs, and
+   * the error a `send` throws states it.
+   */
   isConnected(): boolean {
-    return this.pvtConnected;
+    return this.pvtConnected && !this.pvtReleased && this.pvtExit === null;
   }
 
   /**
@@ -85,6 +102,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
 
   /** Why nothing can be asked of it, or nothing when it can still be reached. */
   private pvtUnreachable(): string | null {
+    if (this.pvtReleased) return `${this.pname} was released`;
     if (this.pvtExit !== null) return `${this.pname} has ended`;
     if (!this.pvtConnected) return `${this.pname} cannot be reached: the connection is closed`;
     return null;
@@ -120,6 +138,19 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
     this.pvtReachable();
     this.pvtSend({ $stop: {} }, this.ref.id);
     return this.wait().then(() => undefined);
+  }
+
+  /**
+   * Let it go: the far side forgets this id and stops telling this side anything
+   * about the process behind it.  The process itself is untouched — it runs on, it
+   * is simply nobody's here any more — and this handle is done: nothing reaches it,
+   * nothing is waited for, and what arrives for it later is not news.
+   */
+  release(): void {
+    this.pvtReachable();
+    this.pvtReleased = true;
+    this.pvtLetGo?.(this.ref.id);
+    this.pvtSend({ $release: {} }, this.ref.id);
   }
 
   /** Stop feeding it messages.  It is still there: `send` still reaches it. */
@@ -164,19 +195,21 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
 
   /** Its state, as the far side just published it. */
   receiveState(state: Record<string, unknown>): void {
+    if (this.pvtReleased) return;
     this.state = Object.assign(this.state ?? {}, state);
     this.pvtStateSubs.forEach((fn) => fn());
   }
 
   /** A message it emitted. */
   receiveMessage(msg: OutMsg, fromName: string): void {
+    if (this.pvtReleased) return;
     this.pvtMessageSubs.forEach((fn) => fn(msg, fromName));
   }
 
   /** It has ended, and this is what it left behind.  The last thing said about a
    *  process: nothing more about it crosses after its exit. */
   receiveExit(exit: RemoteExit): void {
-    if (this.pvtExit !== null) return;
+    if (this.pvtExit !== null || this.pvtReleased) return;
     this.pvtExit = exit;
     this.pvtExitWaiter?.resolve(exit);
   }

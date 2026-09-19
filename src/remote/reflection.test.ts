@@ -493,6 +493,31 @@ describe("a process of this side, handed over", () => {
     await endProxy(channel, proc);
   });
 
+  it("lets a process of mine go when the far side does, and stops speaking for it", async () => {
+    const { channel, proc, surface } = await spawnProxy(["probe.use"]);
+
+    const mine = await Echo.spawn({});
+    const answer = surface["probe.use"]!(mine);
+    await waitUntil(() => channel.sent.some((f) => frameKey(f, REFLECT_CALL)), "the call");
+    channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
+    await answer;
+    await waitUntil(() => channel.sent.some((f) => f.to === 1 && isState(f)), "the state it streamed");
+
+    channel.handler!({ to: 1, $release: {} });
+    await sleep(10);
+    channel.sent.length = 0;
+
+    // The id is this connection's no longer: a message for it goes nowhere, and
+    // what the process does is not this connection's news.
+    channel.handler!({ to: 1, $msg: { fromName: "remote", body: { type: "PING" } } });
+    await sleep(20);
+    expect((mine.state as unknown as { pings: number }).pings).toBe(0);
+    expect(channel.sent).toEqual([]);
+
+    await mine.stop();
+    await endProxy(channel, proc);
+  });
+
   it("takes the far side's word that a handle it gave is gone", async () => {
     const channel = new FakeChannel();
     const actor = remoteClient<Record<string, unknown>, { kid?: RemoteProcess }, Message, Message>(
@@ -985,6 +1010,34 @@ describe("serveRemoteActor reflection", () => {
     channel.handler!({ to: 2, $stop: {} });
     await waitUntil(() => channel.sent.some((f) => f.to === 2 && isExit(f)), "its exit");
     expect(channel.sent.find((f) => f.to === 2 && isExit(f))?.$exit).toEqual({ code: 0, state: null });
+
+    await endServer(channel, served);
+  });
+
+  it("forgets a process it holds when the far side lets it go, and is not asked of it again", async () => {
+    const { channel, served } = await serveProbe();
+
+    channel.handler!({ [`${REFLECT_CALL}probe.expose`]: { seq: 42, args: [] } });
+    await waitUntil(() => rootStates(channel).some((f) => "child" in f.$state), "the child it put out");
+    await waitUntil(() => channel.sent.some((f) => f.to === 2 && isState(f)), "its stream");
+
+    channel.handler!({ to: 2, $release: {} });
+    await sleep(10);
+    channel.sent.length = 0;
+
+    // The id is no longer this connection's: a call to it is refused, and a message
+    // to it goes nowhere.  The process itself is untouched, and nothing about it is
+    // said here any more.
+    channel.handler!({ [`${REFLECT_CALL}probe.add`]: { seq: 43, args: [1, 2] }, to: 2 });
+    await waitUntil(() => answerFor(channel, "probe.add") !== undefined, "the refusal");
+    expect(answerFor(channel, "probe.add")).toEqual({
+      seq: 43,
+      error: "no process with that id on this connection",
+    });
+
+    channel.handler!({ to: 2, $msg: { fromName: "client", body: { type: "PING" } } });
+    await sleep(20);
+    expect(channel.sent.filter((f) => f.to === 2)).toEqual([]);
 
     await endServer(channel, served);
   });

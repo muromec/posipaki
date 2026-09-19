@@ -30,6 +30,7 @@ import {
   isInit,
   isMsg,
   isPause,
+  isRelease,
   isResume,
   isState,
   isStop,
@@ -80,7 +81,7 @@ export async function serveRemoteActor<
     if (held) return held;
     const known = table.farHandleFor(ref.id);
     if (isRemoteProcess(known)) return known;
-    const handle = new RemoteProcess(ref, sendTo, ROOT_NAME);
+    const handle = new RemoteProcess(ref, sendTo, ROOT_NAME, (id) => table.release(id));
     // The far side's root is not bound: that process is id 0, and this side's own
     // end of the connection is already the one holding it.
     if (ref.id !== ROOT_ID) table.bindFar(ref.id, handle);
@@ -182,6 +183,17 @@ export async function serveRemoteActor<
     const frame = decodeFrame(raw, handleFor);
     const to = frameTo(frame);
     const target = to === null ? undefined : table.resolve(to);
+    if (isRelease(frame)) {
+      // A process of this side's own, let go of over there: nothing more is said
+      // about it, and the id the far side knew it by is no longer this
+      // connection's.  The process itself is untouched — it runs on, and a later
+      // crossing numbers it afresh.
+      if (to !== null) {
+        streams.stop(to);
+        table.release(to);
+      }
+      return;
+    }
     if (isState(frame)) {
       // A process the far side holds, saying what it holds: that is news for the
       // handle on it, and lands where a subscription can see it.  A state frame

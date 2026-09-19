@@ -130,6 +130,29 @@ export class ProcessTable<P extends ProcessHandle = ProcessHandle> {
     return this.pvtMine.get(id) ?? this.pvtTheirs.get(id);
   }
 
+  /**
+   * Let go of an id: the process behind it is not this connection's business any
+   * more, so it is no longer known by it.  Both sides' ids go the same way — the
+   * side that lets a handle go names the far side's id, the side that is asked to
+   * forget names its own — and an id let go is never handed out again, so nothing
+   * that still names it can come to mean another process.
+   *
+   * The root is not something a connection lets go of: it is this side's own end,
+   * so releasing it would leave the connection without a name for itself.
+   */
+  release(id: number): P | undefined {
+    if (id === ROOT_ID) return undefined;
+    const mine = this.pvtMine.get(id);
+    if (mine !== undefined) {
+      this.pvtMine.delete(id);
+      this.pvtMineIds.delete(mine);
+      return mine;
+    }
+    const theirs = this.pvtTheirs.get(id);
+    if (theirs !== undefined) this.pvtTheirs.delete(id);
+    return theirs;
+  }
+
   /** Every handle this side holds on a process of the far side. */
   handles(): P[] {
     return [...this.pvtTheirs.values()];

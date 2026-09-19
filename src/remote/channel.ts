@@ -108,6 +108,8 @@ export function isExit(
 //   {"$stop": {}, "to": 3}      stop it; it ends, and its `$exit` crosses back
 //   {"$pause": {}, "to": 3}     stop feeding it messages
 //   {"$resume": {}, "to": 3}    feed it again
+//   {"$release": {}, "to": 3}   let it go: forget this id, and stop telling me
+//                               about the process behind it
 //
 // They address the process they are about, so they are answered by whoever holds
 // that process — the side that can act on it.  Stopping the *root* of a connection
@@ -122,6 +124,9 @@ export function isPause(msg: Record<string, unknown>): msg is { $pause: Record<s
 }
 export function isResume(msg: Record<string, unknown>): msg is { $resume: Record<string, unknown> } {
   return "$resume" in msg;
+}
+export function isRelease(msg: Record<string, unknown>): msg is { $release: Record<string, unknown> } {
+  return "$release" in msg;
 }
 
 // ── reflection frames ──────────────────────────────────────────────────────

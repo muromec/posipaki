@@ -14,12 +14,14 @@ type Ping = { type: "PING"; n: number } & Message;
 type Pong = { type: "PONG"; n: number } & Message;
 
 function makeHandle(sent: Array<[Record<string, unknown>, number]> = []) {
+  const letGo: number[] = [];
   const handle = new RemoteProcess<Ping, Pong>(
     { id: 2, pname: "remote:kid" },
     (frame, to) => sent.push([frame, to]),
     "here",
+    (id) => letGo.push(id),
   );
-  return { handle, sent };
+  return { handle, sent, letGo };
 }
 
 describe("RemoteProcess", () => {
@@ -128,6 +130,40 @@ describe("RemoteProcess", () => {
       [{ $pause: {} }, 2],
       [{ $resume: {} }, 2],
     ]);
+  });
+
+  it("lets go of the id when this side releases it, and asks nothing more of it", async () => {
+    const { handle, sent, letGo } = makeHandle();
+    const seen: Array<Record<string, unknown>> = [];
+    handle.subscribe("state", () => seen.push({ ...(handle.state ?? {}) }));
+    handle.receiveState({ pings: 0 });
+
+    handle.release();
+
+    expect(sent).toEqual([[{ $release: {} }, 2]]);
+    // The connection is told to stop knowing the id, so nothing arriving for it can
+    // land here again.
+    expect(letGo).toEqual([2]);
+    // Dead, like a handle whose connection went: the wire is fine, but this handle
+    // reaches nothing.
+    expect(handle.isConnected()).toBe(false);
+    // Let go is not the same as ended: what happened to it over there is not this
+    // side's to know.
+    expect(handle.hasEnded()).toBe(false);
+
+    expect(() => handle.send({ type: "PING", n: 1 })).toThrow(/was released/);
+    expect(() => handle.pause()).toThrow(/was released/);
+    expect(() => handle.resume()).toThrow(/was released/);
+    expect(() => handle.stop()).toThrow(/was released/);
+    await expect(handle.wait()).rejects.toThrow(/was released/);
+
+    // And what still arrives for it is not news.
+    handle.receiveState({ pings: 9 });
+    handle.receiveMessage({ type: "PONG", n: 9 }, "remote:kid");
+    handle.receiveExit({ code: 0, state: { pings: 9 } });
+    expect(handle.state).toEqual({ pings: 0 });
+    expect(seen).toEqual([{ pings: 0 }]);
+    expect(handle.hasEnded()).toBe(false);
   });
 
   it("says it is not connected once the connection is gone, and refuses to send", () => {

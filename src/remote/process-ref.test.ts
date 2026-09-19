@@ -100,6 +100,33 @@ describe("ProcessTable", () => {
     expect(table.handles()).toEqual([theirs]);
   });
 
+  it("lets an id go, whichever side gave it, and never hands it out again", async () => {
+    const table = new ProcessTable("odd");
+    const mine = await makeProcess("mine");
+    const theirs = makeHandle({ id: 2, pname: "remote:kid" });
+    const id = table.handleFor(mine);
+    table.bindFar(theirs.ref.id, theirs);
+
+    expect(table.release(id)).toBe(mine);
+    expect(table.resolve(id)).toBeUndefined();
+    expect(table.release(2)).toBe(theirs);
+    expect(table.farHandleFor(2)).toBeUndefined();
+    expect(table.handles()).toEqual([]);
+
+    // The same process crossing again is numbered afresh: an id let go is never
+    // handed out twice, so nothing that still names it can mean another process.
+    expect(table.handleFor(mine)).not.toBe(id);
+  });
+
+  it("does not let go of the root: it is this side's own end of the connection", async () => {
+    const table = new ProcessTable("odd");
+    const root = await makeProcess("root");
+    table.bindRoot(root);
+
+    expect(table.release(ROOT_ID)).toBeUndefined();
+    expect(table.resolve(ROOT_ID)).toBe(root);
+  });
+
   it("refuses a second root, and a root from the other side", async () => {
     const table = new ProcessTable("odd");
     table.bindRoot(await makeProcess("root"));

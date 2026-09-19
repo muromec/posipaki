@@ -25,6 +25,7 @@ import {
   isExit,
   isMsg,
   isPause,
+  isRelease,
   isResume,
   isStop,
   isReflectionMethods,
@@ -157,7 +158,7 @@ export function remoteClient<
         if (held) return held;
         const known = table.farHandleFor(ref.id);
         if (isRemoteProcess(known)) return known;
-        const handle = new RemoteProcess(ref, sendTo, fromName);
+        const handle = new RemoteProcess(ref, sendTo, fromName, (id) => table.release(id));
         // The root is not bound: this side's own end of the connection is the
         // process id 0 already names, and a frame about the root is about the
         // proxy, which arrives without an address.
@@ -186,6 +187,16 @@ export function remoteClient<
         const target = to === null ? undefined : table.resolve(to);
         // An id this connection knows nothing about: nothing to deliver to.
         if (!target) return;
+        if (isRelease(frame)) {
+          // A process of this side's own, let go of over there: nothing more is
+          // said about it, and the id is no longer this connection's.  The process
+          // itself is untouched.
+          if (to !== null) {
+            streams.stop(to);
+            table.release(to);
+          }
+          return;
+        }
         if (isRemoteProcess(target)) {
           // A process the far side holds.  Its state and its messages are its
           // own, and they go to whoever subscribed to this handle.
