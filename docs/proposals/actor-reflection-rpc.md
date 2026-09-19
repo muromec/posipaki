@@ -1,8 +1,10 @@
 # Actor Reflection RPC
 
 **Status:** increments 1, 2a (process references both ways), 2b (addressing a
-process by its reference) and 2c (a handle on a process the far side holds) are
-implemented; passing a process from this side to the far one — 2d — is not.
+process by its reference), 2c (a handle on a process the far side holds) and 2d (a
+process of this side passed to the far one, and dispatched from there) are
+implemented.  What a handle still cannot do — `wait`, `stop`, `pause`, `release` —
+is listed below.
 
 ## Summary
 
@@ -142,8 +144,8 @@ A process is not JSON, so a method that returns one answers with a reference:
 - Containers are copied, never rewritten: the state an actor is still running on
   is not the wire's to edit.
 - Both sides parse references: a result on the caller's side, an argument on the
-  answerer's. Parsing gives an `UnreachableRemoteProcess` — the id and the name,
-  and no way to reach it. A reference sent back travels as the id it came with.
+  answerer's. Parsing gives a handle on that process — the name, the id, and the
+  connection to reach it on. A reference sent back travels as the id it came with.
 
 What makes a value a process is judged by what it holds, not by `instanceof`: a
 build inlines its own copy of `AsyncProcess` per entry point, so a process built
@@ -209,10 +211,37 @@ kid.subscribe("state", () => …);      // what it holds
   it says so, and a `send` after that throws rather than disappearing.  There is
   no reconnect to wait for, so nothing pretends there might be.
 
-What is left for 2d and after: a process of this side's own passed to the far one
+### A process of this side's — done (2d)
+
+The same reference works the other way. A process this side holds goes over as an
+argument or in a message body, is numbered here, and is a handle on the other side:
+
+```ts
+await surface["probe.poke"](myChild);   // myChild is numbered 1 here, and a handle there
+```
+
+- It needs no code of its own: what crosses is one walk, in both directions, so a
+  process handed *out* is the same walk as one handed back.
+- A process this side hands over is streamed from that moment, exactly as the far
+  side streams its own — what it can answer, the state it holds, and what it emits,
+  each frame addressed with the id it crossed by. The side that holds a process is
+  the side that says what it holds, so a `$state` frame for a process of this
+  side's own is ignored here and lands on the handle there.
+- A message addressed to that id is delivered into the process where it lives, and
+  what that process does about it crosses back on its stream — which is how a
+  `send` on a handle is answered rather than merely delivered.
+- The wire carries a sender as a name, since a symbol cannot be written down. A
+  side turns the name back into a sender, and uses the parent's stable id when the
+  name is the one the receiving process was told is its parent.
+- A method call *into* a process this side holds is not answered yet: the
+  announcement arrives, and the call side of it is 2f.
+
+What is left for 2e and after: a process of this side's own passed to the far one
 and dispatched from there (2d), handles in messages, arguments and state updates
 (2e), `wait`, `stop`, `pause` and subscriptions both ways (2f), orphans (2g), and
-`release()` with `isConnected()` as the one answer about liveness (2h).  Stopping
+`release()` with `isConnected()` as the one answer about liveness (2h), and method
+calls from the far side into a process this side holds, both ways for `subscribe`
+and `wait`.  Stopping
 is where the root differs and keeps what it does today: asking the root to stop
 is the STOP message plus the far side's exit, while stopping any other process is
 a frame of its own (`$stop`, with `$pause` and `$resume` beside it).
@@ -246,7 +275,9 @@ declare module "posipaki" {
 10. A handle a caller can use — done (2c): `send`, `state`, `subscribe`,
     `$reflection` and `isConnected()`; `wait`, `stop`, `pause` and `release()`
     follow
-11. Tests: local invocation, plugin registration, wire round-trip, concurrent
+11. A process of this side's passed to the far one, and dispatched from there —
+    done (2d): the same table, reference and stream, used from the other end
+12. Tests: local invocation, plugin registration, wire round-trip, concurrent
     calls, refusals, references over a real subprocess — done
 
 ## Open questions

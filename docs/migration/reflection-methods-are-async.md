@@ -69,7 +69,9 @@ A helper that wrapped a synchronous `inspect.find` becomes `async` with it.
 ## Reading a process that came over a wire
 
 A reflection method may return a process. Over a wire it travels as a reference —
-an id this connection handed out and the name the far side knows it by — and it
-is parsed into an `UnreachableRemoteProcess`: the id and the name, and no way to
-reach it yet. Holding a local handle and a reference is therefore not the same
-thing, and code that expects to call into what it found has to account for that.
+an id this connection handed out and the name the far side knows it by — and
+parses into a `RemoteProcess`, which is a handle rather than the process itself:
+`send`, `subscribe`, `state`, `$reflection` and `isConnected()`. It is not a node
+in this side's tree (`getTree` walks the far side and gives that tree), and
+`wait`, `stop` and `pause` on a handle are still to come. Code that found a process
+by walking a tree and then called into it has to go through the handle.
