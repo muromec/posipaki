@@ -93,11 +93,17 @@ describe("RemoteProcess", () => {
 
     expect(await waiting).toEqual({ code: 0, state: { pings: 1 } });
     expect(handle.hasEnded()).toBe(true);
-    // Nothing more can be asked of it: it is gone, not merely out of reach.
+    // Gone is not out of reach: the handle still names it, and what it left is here.
+    // It is the process that can be asked nothing more.
+    expect(handle.isConnected()).toBe(true);
     expect(await handle.wait()).toEqual({ code: 0, state: { pings: 1 } });
     expect(() => handle.send({ type: "PING", n: 1 })).toThrow(/has ended/);
     expect(() => handle.pause()).toThrow(/has ended/);
     expect(() => handle.stop()).toThrow(/has ended/);
+    // And there is no id left to let go of: an end drops it on the far side, so the
+    // handle that names a process gone is told it has ended rather than released.
+    expect(() => handle.release()).toThrow(/has ended/);
+    expect(handle.isConnected()).toBe(true);
   });
 
   it("stops waiting when the connection goes, rather than waiting for ever", async () => {

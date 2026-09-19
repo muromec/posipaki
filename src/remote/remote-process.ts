@@ -76,22 +76,23 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   }
 
   /**
-   * Whether this handle is still any good: the connection is there, the process
-   * behind it has not ended, and this side has not let it go.
+   * Whether the process this handle names can still be reached: the wire is there, and
+   * this side has not let the handle go.
    *
-   * That is the one answer liveness can have here.  All three roads end in the same
-   * place — nothing can be asked of it any more — and there is no coming back from
-   * any of them: no reconnect, and no way to un-release.  The reason differs, and
-   * the error a `send` throws states it.
+   * Reaching it is not the same as it being alive.  A process that has ended is still
+   * one this side has a handle on — it is what the handle points at, and what it left
+   * behind is here — so an end does not put it out of reach; `hasEnded()` is that
+   * answer, and the two are asked separately.  From the two ways out there is no coming
+   * back: no reconnect, and no way to un-release.
    */
   isConnected(): boolean {
-    return this.pvtConnected && !this.pvtReleased && this.pvtExit === null;
+    return this.pvtConnected && !this.pvtReleased;
   }
 
   /**
-   * The connection is gone, or the far side said the process is.  A handle that
-   * cannot reach anything says so: there is no reconnect to wait for, so a send
-   * fails here and now rather than disappearing into nothing.
+   * The connection is gone.  Every handle this side holds goes out of reach with it,
+   * and says so: there is no reconnect to wait for, so a send fails here and now
+   * rather than disappearing into nothing.
    */
   disconnect(): void {
     if (!this.pvtConnected) return;
@@ -106,16 +107,18 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
     return this.pvtExit !== null;
   }
 
-  /** Why nothing can be asked of it, or nothing when it can still be reached. */
-  private pvtUnreachable(): string | null {
+  /** Why nothing can be asked *of the process* — let go, ended, or out of reach — or
+   *  nothing when something can.  Those are not one thing said three ways: an ended
+   *  process is still reached, it simply has nothing left to receive. */
+  private pvtWhyNotAskable(): string | null {
     if (this.pvtReleased) return `${this.pname} was released`;
     if (this.pvtExit !== null) return `${this.pname} has ended`;
     if (!this.pvtConnected) return `${this.pname} cannot be reached: the connection is closed`;
     return null;
   }
 
-  private pvtReachable(): void {
-    const why = this.pvtUnreachable();
+  private pvtRequireAskable(): void {
+    const why = this.pvtWhyNotAskable();
     if (why !== null) throw new Error(why);
   }
 
@@ -129,7 +132,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
    */
   wait(): Promise<RemoteExit> {
     if (this.pvtExit !== null) return Promise.resolve(this.pvtExit);
-    const why = this.pvtUnreachable();
+    const why = this.pvtWhyNotAskable();
     if (why !== null) return Promise.reject(new Error(why));
     // Waiting for it to end is a subscription to its end: nothing here hears an
     // exit that was never asked for, so asking to wait asks for it.
@@ -144,7 +147,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
    * There is no deadline, so a process that refuses to stop leaves this pending.
    */
   stop(): Promise<void> {
-    this.pvtReachable();
+    this.pvtRequireAskable();
     // Ask for the end before asking it to stop: whether an exit is sent is decided
     // by what the far side has been asked for when it comes, so a stop ordered ahead
     // of the asking could leave nothing to wait for.
@@ -160,7 +163,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
    * nothing is waited for, and what arrives for it later is not news.
    */
   release(): void {
-    this.pvtReachable();
+    this.pvtRequireAskable();
     this.pvtReleased = true;
     this.pvtLetGo?.(this.ref.id);
     this.pvtSend({ $release: {} }, this.ref.id);
@@ -168,13 +171,13 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
 
   /** Stop feeding it messages.  It is still there: `send` still reaches it. */
   pause(): void {
-    this.pvtReachable();
+    this.pvtRequireAskable();
     this.pvtSend({ $pause: {} }, this.ref.id);
   }
 
   /** Feed it messages again. */
   resume(): void {
-    this.pvtReachable();
+    this.pvtRequireAskable();
     this.pvtSend({ $resume: {} }, this.ref.id);
   }
 
@@ -189,7 +192,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
    * books the one place an end can go unrecorded.
    */
   tune(kinds: StreamKind[] | "silent"): void {
-    this.pvtReachable();
+    this.pvtRequireAskable();
     this.pvtTune(kinds === "silent" ? [] : kinds);
   }
 
@@ -216,7 +219,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
 
   /** Hand the far process a message. */
   send(msg: InMsg): void {
-    this.pvtReachable();
+    this.pvtRequireAskable();
     this.pvtSend({ $msg: { fromName: this.pvtFromName, body: msg } }, this.ref.id);
   }
 
@@ -262,7 +265,8 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   }
 
   /** It has ended, and this is what it left behind.  The last thing said about a
-   *  process: nothing more about it crosses after its exit. */
+   *  process: nothing crosses about it after its exit, though the handle still
+   *  reaches it for what it left. */
   receiveExit(exit: RemoteExit): void {
     if (this.pvtExit !== null || this.pvtReleased) return;
     this.pvtExit = exit;

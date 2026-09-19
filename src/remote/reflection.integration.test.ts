@@ -184,7 +184,9 @@ describe("reflection across a process boundary", () => {
     await kid.stop();
 
     expect(kid.hasEnded()).toBe(true);
-    // Gone, not merely out of reach: there is nothing to send to any more.
+    // Gone, but still reached: the handle is the id the far side knew it by, and what
+    // is left to ask about it is asked there.  Sending is what there is nothing for.
+    expect(kid.isConnected()).toBe(true);
     expect(() => kid.send({ type: "PING" })).toThrow(/has ended/);
 
     await proc.stop();
