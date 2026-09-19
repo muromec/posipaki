@@ -198,7 +198,8 @@ per process per connection.
 const kid = proc.state.kid;          // RemoteProcess
 kid.pname;                           // "remote:kid"
 kid.ref.id;                          // 2 — the id this connection knows it by
-kid.isConnected();                   // false once it cannot be used any more
+kid.isConnected();                   // whether the handle still reaches it at all
+kid.hasEnded();                      // whether the far side has said it is over
 kid.state;                           // what the far side has published so far
 kid.$reflection["inspect.getTree"];  // what it announced it can answer
 kid.send({ type: "PING" });           // a message for it
@@ -217,10 +218,13 @@ kid.tune(["state", "exit"]);          // exactly this much, or "silent" for noth
   not where it sits here.
 - A reference handed back to the side that holds the process is that process
   again, not a handle on itself.
-- A handle does not outlive what it points at: when the wire goes, when the process
-  ends, or when this side lets it go, `isConnected()` says so, and a `send` after
-  that throws rather than disappearing.  There is no reconnect and no way back, so
-  nothing pretends there might be.
+- A handle outlives the process it points at, and does not outlive the wire.  An end
+  is the far side saying what happened, and it leaves the handle a handle: the process
+  is still the one it names, and what was said about it is still here.  That is
+  `hasEnded()`.  What puts a handle out of reach is the wire going, or this side letting
+  it go, and that is what `isConnected()` answers.  A `send` after either throws rather
+  than disappearing, and there is no reconnect and no way back, so nothing pretends
+  there might be.
 
 ### A process of this side's — done (2d)
 
@@ -282,8 +286,11 @@ kid.hasEnded();                  // true once that exit has arrived
   it stays the STOP message plus the far side's `$exit` it has always been, because
   the root is not a handle — it is the process this side is talking through. That is
   what the proxy's own `stop()` does.
-- A handle that has ended is not merely out of reach: `send`, `pause`, `resume` and
-  `stop` all throw, since there is nothing there to ask.
+- An ended process can be asked nothing of itself — `send`, `pause`, `resume` and
+  `stop` all throw, since there is nothing there to receive — while the handle on it
+  stays a handle: reaching it and it being over are two answers, and they are
+  `isConnected()` and `hasEnded()`.  Releasing one is refused for the same reason an end
+  is what dropped the id: there is nothing left on the far side to let go of.
 
 ### Letting a handle go — done (2h)
 
@@ -302,8 +309,10 @@ kid.isConnected();      // false
   `stop`, `pause` and `resume` throw, `wait()` rejects, and what still arrives for it
   is not news.  The reason is in the message — released, ended, or the connection
   gone — and never a silent drop.
-- `isConnected()` is the one answer about whether a handle is any good, and all three
-  of those roads lead there.  What they cannot tell apart is the process's fate: a
+- `isConnected()` answers for the handle, not for the process: it is false once the
+  wire goes and once this side lets it go, and stays true over a process that has
+  ended.  Whether the process is over is `hasEnded()`'s answer, and between them a
+  caller has what it needs.  What neither can tell apart is the far side's fate: a
   connection that drops before an exit leaves a handle that knows only that it died,
   and the root of a connection is the same kind of thing — a proxy whose wire is gone
   knows only that it is gone.
@@ -403,7 +412,7 @@ declare module "posipaki" {
     streamed `$exit`, and `wait`, `stop`, `pause`, `resume` and `hasEnded()` on the
     handle; both directions, over a real subprocess as well
 13. Letting a handle go — done (2h): `$release`, the id dropped on the far side, the
-    handle dead on this one, and `isConnected()` as the single answer about that
+    handle out of reach on this one, and `isConnected()` false from that moment
 14. Saying less about a process — done (2j): `$tune`, `tune()` on the handle, only the
     categories asked for crossing, and the state said the moment it is asked for
 15. Silence by default — done (2k): a process that crosses says nothing until the far
