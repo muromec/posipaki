@@ -5,7 +5,8 @@
 // live in ./node.js.
 
 // seam
-export { serveRemoteActor, makeSender } from "./server.js";
+export { serveRemoteActor } from "./server.js";
+export { makeSender } from "./sender.js";
 export type { Spawner } from "./server.js";
 export { remoteClient } from "./client.js";
 export type { ClientSpawner } from "./client.js";

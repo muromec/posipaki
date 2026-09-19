@@ -9,7 +9,6 @@ import { fileURLToPath } from "node:url";
 
 vi.mock("./server.js", () => ({
   serveRemoteActor: vi.fn(() => Promise.resolve()),
-  makeSender: vi.fn(),
 }));
 
 vi.mock("./client.js", () => ({

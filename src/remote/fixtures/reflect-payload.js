@@ -20,6 +20,16 @@ try {
   process.exit(1);
 }
 
+// What a process on the other end does about a message is not answered by the
+// wire: it arrives when it arrives, so a method that wants to see it waits.
+const until = async (predicate, what) => {
+  const deadline = Date.now() + 5000;
+  while (!predicate()) {
+    if (Date.now() > deadline) throw new Error(`reflect-payload: timeout waiting for ${what}`);
+    await new Promise((resolve) => setTimeout(resolve, 5));
+  }
+};
+
 const leaf = defineActor({
   name: "leaf",
   plugins: [], // block inheritance: the tree shows a child it cannot ask
@@ -46,6 +56,18 @@ const reflector = defineActor({
     },
     "probe.late"(ms) {
       return new Promise((resolve) => setTimeout(() => resolve(`late:${ms}`), ms));
+    },
+    async "probe.poke"(handle) {
+      // A process of the far side's own, handed over to this side.  Sending to it
+      // is a message going the other way, and what it does about it comes back on
+      // the stream that started when it crossed — which is the only reason this
+      // method can answer at all.
+      const heard = [];
+      const stop = handle.subscribe("message", (msg) => heard.push(msg.type));
+      handle.send({ type: "PING" });
+      await until(() => handle.state?.pings === 1, "the state it streamed");
+      stop();
+      return { heard, pings: handle.state?.pings };
     },
     async "probe.boom"() {
       throw new Error("probe said no");

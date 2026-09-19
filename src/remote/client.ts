@@ -6,13 +6,16 @@
 // already done the $proto handshake.
 
 import { defineActor } from "../define-actor.js";
+import { isProcess } from "../process.async.js";
 import { stopPropagation } from "../hooks.js";
 import type { HookResult } from "../hooks.js";
 import type { ActorDefinition, HandlerOptions, MethodOptions, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
 import { ProcessTable, ROOT_ID, isRemoteProcess, type ProcessHandle, type ProcessRef } from "./process-ref.js";
+import { ProcessStreams } from "./process-streams.js";
 import { RemoteProcess, type FrameSink } from "./remote-process.js";
+import { makeSender } from "./sender.js";
 import {
   REFLECT_CALL,
   asReflectionResult,
@@ -65,15 +68,29 @@ export function remoteClient<
       // sides name it: the far actor on one end, this proxy on the other.  The
       // table takes the odd ids for the processes this side holds — the far side
       // takes the even ones — so an id says on its own which side holds it.
-      const table = new ProcessTable("odd");
+      // A process this side hands over is numbered by the table, and from then on
+      // the far side is told what it says: the stream follows the frame that
+      // carried the reference.
+      const table = new ProcessTable("odd", (proc, id) => streams.crossed(proc, id));
       const root = this.ctx;
       table.bindRoot(root);
       const channel = await spawner(args);
       const fromName = name;
+      // Everything is in place to speak: the sink writes to the wire, and what the
+      // table numbers crosses through it.  The sink is reached by a call rather
+      // than handed over, because what it does is flush these streams.
+      const streams = new ProcessStreams((frame, to) => sendTo(frame, to));
+
+      /** Put an encoded frame on the wire, and then say what it numbered.  A frame
+       *  that carried a reference has to be out before anything about that process
+       *  is, or the far side is told about a process it cannot name yet. */
+      const write = (frame: Record<string, unknown>): Promise<void> =>
+        Promise.resolve(channel.send(frame)).then(() => streams.flush());
+
       /** Every frame leaves this way: the processes in it become references, and
        *  what the frame is addressed to becomes the id the far side knows. */
       const sendTo: FrameSink = (frame, to) => {
-        void Promise.resolve(channel.send(encodeFrame(frame, table, to))).catch((error: unknown) => {
+        void write(encodeFrame(frame, table, to)).catch((error: unknown) => {
           console.error("Error sending out the frame", error);
         });
       };
@@ -113,7 +130,7 @@ export function remoteClient<
             return;
           }
           pending.set(seq, { name: method, resolve, reject });
-          void Promise.resolve(channel.send(frame)).catch((error: unknown) => {
+          void write(frame).catch((error: unknown) => {
             pending.delete(seq);
             reject(error instanceof Error ? error : new Error(String(error)));
           });
@@ -179,9 +196,12 @@ export function remoteClient<
           return;
         }
         if (target !== root) {
-          // A process of this side's own, other than the root: what a message
-          // for one means is a question for the day a side holds more than the
-          // proxy it was spawned as.
+          // A process of this side's own, handed over and now spoken to from over
+          // there: the message goes where it lives.  The wire says who sent it by
+          // name alone, so nobody here can be recognised as its parent.
+          if (isMsg(frame) && isProcess(target)) {
+            target.send(frame.$msg.body as InMsg, makeSender(frame.$msg.fromName, null, null));
+          }
           return;
         }
         if (isState(frame)) {
@@ -222,6 +242,9 @@ export function remoteClient<
         for (const held of table.handles()) {
           if (isRemoteProcess(held)) held.disconnect();
         }
+        // And nothing more is said about the processes of this side's own that
+        // were handed over: there is no one left to say it to.
+        streams.stopAll();
         if (exitResolver) {
           exitResolver({ code: null, state: currentState as State });
           exitResolver = null;

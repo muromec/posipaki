@@ -27,6 +27,22 @@ async function waitUntil(predicate: () => boolean, what: string): Promise<void> 
 
 const fixture = join(dirname(import.meta.url.slice(7)), "./fixtures/reflect-payload.js");
 
+/** A process of this side's own, with something to say when it is spoken to, so
+ *  the other end of the wire can see it work. */
+const worker = defineActor({
+  name: "mine",
+  async setup() {
+    return { pings: 0 };
+  },
+  handlers: {
+    async PING() {
+      this.state.pings += 1;
+      this.ctx.notify();
+      await this.emit({ type: "PONG" });
+    },
+  },
+});
+
 async function spawnPayload() {
   const actor = remoteClient<Record<string, unknown>, Record<string, unknown>, Message, Message>(
     "reflector",
@@ -131,6 +147,22 @@ describe("reflection across a process boundary", () => {
     expect(heard[0]).toEqual({ type: "PONG" });
     expect(kid?.state).toEqual({ pings: 1 });
 
+    await proc.stop();
+  }, 20000);
+
+  it("hands a process of mine over, and a message from there is answered where it lives", async () => {
+    const { proc, surface } = await spawnPayload();
+
+    const mine = await worker.spawn({});
+    const seen = (await surface["probe.poke"](mine)) as { heard: string[]; pings: number };
+
+    // The far side could only answer once the message had been delivered here and
+    // the result had come back over the wire: what it holds and what it says, on
+    // the stream that started when it crossed.
+    expect(seen).toEqual({ heard: ["PONG"], pings: 1 });
+    expect((mine.state as unknown as { pings: number }).pings).toBe(1);
+
+    await mine.stop();
     await proc.stop();
   }, 20000);
 

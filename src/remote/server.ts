@@ -6,7 +6,7 @@
 
 import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
-import { isProcess, type AnyProcess } from "../process.async.js";
+import { isProcess } from "../process.async.js";
 import type { Channel } from "./channel.js";
 import {
   ProcessTable,
@@ -17,6 +17,8 @@ import {
   type ProcessRef,
 } from "./process-ref.js";
 import { RemoteProcess, type FrameSink } from "./remote-process.js";
+import { ProcessStreams, reflectionNames } from "./process-streams.js";
+import { makeSender } from "./sender.js";
 import {
   REFLECT_METHODS,
   REFLECT_RESULT,
@@ -26,6 +28,7 @@ import {
   frameTo,
   isInit,
   isMsg,
+  isState,
   jsonProblem,
   type ReflectionCall,
 } from "./channel.js";
@@ -36,17 +39,6 @@ export type Spawner = () => Promise<Channel>;
  *  sender when it talks to a process of the far side's. */
 const ROOT_NAME = "remote";
 
-export function makeSender(
-  fromName: string,
-  parentName: string | null,
-  parentId: symbol | null,
-): { fromName: string; fromId: symbol } {
-  if (parentId && fromName === parentName) {
-    return { fromName, fromId: parentId };
-  }
-  return { fromName, fromId: Symbol() };
-}
-
 export async function serveRemoteActor<
   Args,
   State,
@@ -56,76 +48,26 @@ export async function serveRemoteActor<
 >(actor: ActorDefinition<Args, State, InMsg, OutMsg, R>, spawner: Spawner): Promise<void> {
   const channel = await spawner();
 
-  /** Processes that crossed for the first time while a frame was being written:
-   *  their streams start once that frame is out. */
-  const toStream: Array<[AnyProcess, number]> = [];
-  const streams = new Map<number, Array<() => void>>();
-  let streaming = false;
-
-  /** What a process of this side's offers over the wire: its reflection methods
-   *  and nothing else.  The list *is* the dispatch table, so a name that is not
-   *  on it can never be reached, whatever a frame asks for. */
-  const announcedNames = new Map<object, string[]>();
-
-  function ownMethods(target: { $reflection?: unknown }): string[] {
-    const known = announcedNames.get(target);
-    if (known) return known;
-    const surface = (target.$reflection ?? {}) as Record<string, Function>;
-    const names = Object.keys(surface).filter((name) => typeof surface[name] === "function");
-    announcedNames.set(target, names);
-    return names;
-  }
-
-  /** Everything the far side can watch about a process of this side's: what it
-   *  can answer, the state it holds, and what it says.  Addressed to the id it
-   *  was just given, so a handle at the other end knows what the frames are
-   *  about. */
-  function streamProcess(target: AnyProcess, id: number): void {
-    streams.set(id, [
-      target.subscribe("message", (msg, sender) => {
-        sendTo({ $msg: { fromName: sender.fromName, body: msg } }, id);
-      }),
-      target.subscribe("state", () => {
-        sendTo({ $state: target.state as Record<string, unknown> }, id);
-      }),
-    ]);
-    // What it can answer comes first: a handle that hears from a process it
-    // cannot name yet has nowhere to put the news.
-    sendTo({ [REFLECT_METHODS]: ownMethods(target) }, id);
-    sendTo({ $state: target.state as Record<string, unknown> }, id);
-  }
-
-  /** Start the streams of whatever crossed while `frame` was being written. */
-  function flushStreams(): void {
-    if (streaming) return;
-    streaming = true;
-    try {
-      while (toStream.length > 0) {
-        const next = toStream.shift();
-        if (next) streamProcess(next[0], next[1]);
-      }
-    } finally {
-      streaming = false;
-    }
-  }
-
   // The table takes the even ids: the odd ones are the far side's, so the same
   // number can never name a process on both ends at once.  A process that is
-  // numbered here is one that is about to cross, and its stream follows the
-  // frame that carried it.
-  const table = new ProcessTable<ProcessHandle>("even", (proc, id) => {
-    if (isProcess(proc)) toStream.push([proc, id]);
-  });
+  // numbered here is one that is about to cross, and its stream follows the frame
+  // that carried it.
+  const table = new ProcessTable<ProcessHandle>("even", (proc, id) => streams.crossed(proc, id));
 
   const sendToFrame = async (frame: Record<string, unknown>, to: number): Promise<void> => {
     await channel.send(encodeFrame(frame, table, to));
-    flushStreams();
+    streams.flush();
   };
+
   const sendTo: FrameSink = (frame, to) => {
     void sendToFrame(frame, to).catch((e: unknown) => {
       console.error("Error sending out the frame", e);
     });
   };
+
+  // Everything is in place to speak: the sink writes to the wire, and what the
+  // table numbers crosses through it.
+  const streams = new ProcessStreams(sendTo);
 
   /** The handle for a reference that arrived: the same one every time, and the
    *  process itself when the reference names a process of this side's own. */
@@ -190,7 +132,7 @@ export async function serveRemoteActor<
   // $state.  The client installs its call side from this list, and a name that
   // was never announced is never dispatched: the list is the whole surface, so
   // no frame can reach a property the actor did not offer.
-  await sendToFrame({ [REFLECT_METHODS]: ownMethods(proc) }, ROOT_ID);
+  await sendToFrame({ [REFLECT_METHODS]: reflectionNames(proc) }, ROOT_ID);
   await sendToFrame({ $state: proc.state as Record<string, unknown> }, ROOT_ID);
 
   /** Call one announced reflection method and answer with what it said, or why not. */
@@ -203,7 +145,7 @@ export async function serveRemoteActor<
       await reply({ seq: call.seq, error: "no process with that id on this connection" });
       return;
     }
-    const names = ownMethods(target);
+    const names = reflectionNames(target);
     const surface = target.$reflection as unknown as Record<string, Function>;
     const method = names.includes(call.name) ? surface[call.name] : undefined;
     if (typeof method !== "function") {
@@ -236,6 +178,14 @@ export async function serveRemoteActor<
     const frame = decodeFrame(raw, handleFor);
     const to = frameTo(frame);
     const target = to === null ? undefined : table.resolve(to);
+    if (isState(frame)) {
+      // A process the far side holds, saying what it holds: that is news for the
+      // handle on it, and lands where a subscription can see it.  A state frame
+      // about a process of this side's own is this side's to publish, not the
+      // far side's to tell it.
+      if (isRemoteProcess(target)) target.receiveState(frame.$state);
+      return;
+    }
     if (isMsg(frame)) {
       const { fromName, body } = frame.$msg;
       // A message for a process this side holds goes into it.  One about a
@@ -265,10 +215,7 @@ export async function serveRemoteActor<
   // way out would otherwise try to write to a wire that is already closed.
   stopMirroringMessage();
   stopMirroringState();
-  for (const stops of streams.values()) {
-    for (const stop of stops) stop();
-  }
-  streams.clear();
+  streams.stopAll();
   await sendToFrame({ $exit: { code, state: proc.state } }, ROOT_ID);
   await channel.close();
 }

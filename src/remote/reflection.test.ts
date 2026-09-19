@@ -197,6 +197,27 @@ describe("remoteClient reflection", () => {
 
 // ── the client half: what comes back ───────────────────────────────────────
 
+/** A process of this side's own, with something to say when it is spoken to: a
+ *  worker the far side can only see work through what it streams. */
+const Echo = defineActor({
+  name: "mine",
+  $reflectionMethods: {
+    async "echo.pings"() {
+      return this.state.pings;
+    },
+  },
+  async setup() {
+    return { pings: 0 };
+  },
+  handlers: {
+    async PING() {
+      this.state.pings += 1;
+      this.ctx.notify();
+      await this.emit({ type: "PONG" });
+    },
+  },
+});
+
 describe("remoteClient process references", () => {
   it("makes a handle of a reference it is handed", async () => {
     const { channel, proc, surface } = await spawnProxy(["probe.child"]);
@@ -312,6 +333,55 @@ describe("remoteClient process references", () => {
   });
 });
 
+describe("a process of this side, handed over", () => {
+  it("streams it from the moment it crossed", async () => {
+    const { channel, proc, surface } = await spawnProxy(["probe.use"]);
+
+    const mine = await Echo.spawn({});
+    const answer = surface["probe.use"]!(mine);
+    await waitUntil(() => channel.sent.some((f) => frameKey(f, REFLECT_CALL)), "the call");
+
+    // What it can answer, then what it holds — both after the frame that carried
+    // the reference, since a far side told about a process it cannot name yet has
+    // nowhere to put the news.
+    const carrying = channel.sent.findIndex((f) => frameKey(f, REFLECT_CALL));
+    const announced = channel.sent.findIndex((f) => f.to === 1 && isReflectionMethods(f));
+    const state = channel.sent.findIndex((f) => f.to === 1 && isState(f));
+    expect(carrying).toBeGreaterThanOrEqual(0);
+    expect(announced).toBeGreaterThan(carrying);
+    expect(state).toBeGreaterThan(announced);
+    expect(channel.sent[announced][REFLECT_METHODS]).toEqual(["echo.pings"]);
+    expect(channel.sent[state].$state).toEqual({ pings: 0 });
+
+    channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
+    await answer;
+    await mine.stop();
+
+    await endProxy(channel, proc);
+  });
+
+  it("delivers a message the far side sent to it where it lives, and says what it did about it", async () => {
+    const { channel, proc, surface } = await spawnProxy(["probe.use"]);
+
+    const mine = await Echo.spawn({});
+    const answer = surface["probe.use"]!(mine);
+    await waitUntil(() => channel.sent.some((f) => frameKey(f, REFLECT_CALL)), "the call");
+    channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
+    await answer;
+
+    channel.handler!({ to: 1, $msg: { fromName: "remote", body: { type: "PING" } } });
+    await waitUntil(() => (mine.state as unknown as { pings: number }).pings === 1, "the work it did");
+
+    // And what it did about it crosses back, addressed to the process that asked.
+    await waitUntil(() => channel.sent.some((f) => f.to === 1 && isMsg(f)), "what it said");
+    const told = channel.sent.find((f) => f.to === 1 && isMsg(f));
+    expect(told?.$msg).toEqual({ fromName: "mine", body: { type: "PONG" } });
+
+    await mine.stop();
+    await endProxy(channel, proc);
+  });
+});
+
 // ── where a frame goes ─────────────────────────────────────────────────────
 
 describe("the address on a frame", () => {
@@ -421,6 +491,7 @@ const Leaf = defineActor({
 });
 
 function makeProbe() {
+  let held: RemoteProcess | null = null;
   return defineActor({
     name: "probe",
     $reflectionMethods: {
@@ -456,6 +527,18 @@ function makeProbe() {
         return isRemoteProcess(value)
           ? { reference: value.pname, id: value.ref.id }
           : { plain: true };
+      },
+      async "probe.take"(value: unknown) {
+        // Hold on to what was handed over, so what the far side says about it
+        // later has somewhere to land.
+        held = isRemoteProcess(value) ? value : null;
+        return held ? held.ref.id : null;
+      },
+      async "probe.held"() {
+        return held?.state ?? null;
+      },
+      async "probe.stateOf"() {
+        return this.state;
       },
     },
     async setup() {
@@ -499,6 +582,9 @@ describe("serveRemoteActor reflection", () => {
       "probe.refusing",
       "probe.expose",
       "probe.whatItGot",
+      "probe.take",
+      "probe.held",
+      "probe.stateOf",
     ]);
 
     await endServer(channel, served);
@@ -670,6 +756,34 @@ describe("serveRemoteActor reflection", () => {
     await waitUntil(() => channel.sent.some((f) => f.to === 2 && isMsg(f)), "its message");
     const told = channel.sent.find((f) => f.to === 2 && isMsg(f));
     expect(told?.$msg).toEqual({ fromName: "remote:one", body: { type: "PONG" } });
+
+    await endServer(channel, served);
+  });
+
+  it("takes what the far side says about a process it handed over", async () => {
+    const { channel, served } = await serveProbe();
+
+    channel.handler!({
+      [`${REFLECT_CALL}probe.take`]: { seq: 20, args: [{ [PROCESS_REF]: { id: 1, pname: "mine" } }] },
+    });
+    await waitUntil(() => answerFor(channel, "probe.take") !== undefined, "the handle");
+    expect(answerFor(channel, "probe.take")).toEqual({ seq: 20, value: 1 });
+
+    channel.handler!({ to: 1, $state: { pings: 1 } });
+    channel.handler!({ [`${REFLECT_CALL}probe.held`]: { seq: 21, args: [] } });
+    await waitUntil(() => answerFor(channel, "probe.held") !== undefined, "what it holds");
+    expect(answerFor(channel, "probe.held")).toEqual({ seq: 21, value: { pings: 1 } });
+
+    await endServer(channel, served);
+  });
+
+  it("is not told what a process of its own holds", async () => {
+    const { channel, served } = await serveProbe();
+
+    channel.handler!({ to: ROOT_ID, $state: { pings: 99 } });
+    channel.handler!({ [`${REFLECT_CALL}probe.stateOf`]: { seq: 22, args: [] } });
+    await waitUntil(() => answerFor(channel, "probe.stateOf") !== undefined, "its own state");
+    expect(answerFor(channel, "probe.stateOf")).toEqual({ seq: 22, value: { hits: 0 } });
 
     await endServer(channel, served);
   });
