@@ -386,7 +386,7 @@ describe("reflection across a process boundary", () => {
     await proc.stop();
   }, 20000);
 
-  it("asks what it found over there, and hears its state only once it asks", async () => {
+  it("asks a process it found over there, and waits for what it holds", async () => {
     const { found, proc } = await spawnHostAndWaitFor("host:tools:watcher");
     const handle = found as RemoteProcess;
 
@@ -398,10 +398,10 @@ describe("reflection across a process boundary", () => {
     );
     expect(await handle.$reflection["inspect.getState"]()).toEqual({ ticks: 0 });
 
-    // A process that crossed is silent, so what it holds is asked for and then heard.
+    // A process that crossed is silent, so what it holds is asked for while it is waited
+    // for: `ready` is both the asking and the waiting, and what it settles with is here.
     expect(handle.state).toBeNull();
-    handle.tune(["state"]);
-    await waitUntil(() => handle.state !== null, "the state it streamed");
+    await handle.ready();
     expect(handle.state).toEqual({ ticks: 0 });
 
     await proc.stop();

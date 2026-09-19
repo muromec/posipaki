@@ -45,6 +45,56 @@ describe("RemoteProcess", () => {
     expect(isRemoteProcess({ $p: { id: 1, pname: "a" } })).toBe(false);
   });
 
+  it("waits for what it holds, asking for it while it waits", async () => {
+    const { handle, sent } = makeHandle();
+
+    const waiting = handle.ready();
+
+    // Asking and waiting are one act: a process that crossed is silent until something
+    // here wants to hear it.
+    expect(sent).toEqual([[{ $tune: { streams: ["state"] } }, 2]]);
+
+    handle.receiveState({ ticks: 0 });
+    await expect(waiting).resolves.toBeUndefined();
+  });
+
+  it("does not ask again for state it already has", async () => {
+    const { handle, sent } = makeHandle();
+    handle.receiveState({ ticks: 1 });
+
+    await handle.ready();
+
+    expect(handle.state).toEqual({ ticks: 1 });
+    expect(sent).toEqual([]);
+  });
+
+  it("settles the wait when the process ends without saying anything", async () => {
+    const { handle } = makeHandle();
+
+    const waiting = handle.ready();
+    handle.receiveExit({ code: 0, state: null });
+
+    await expect(waiting).resolves.toBeUndefined();
+  });
+
+  it("settles the wait when the connection goes", async () => {
+    const { handle } = makeHandle();
+
+    const waiting = handle.ready();
+    handle.disconnect();
+
+    await expect(waiting).resolves.toBeUndefined();
+  });
+
+  it("settles the wait when the handle is let go of", async () => {
+    const { handle } = makeHandle();
+
+    const waiting = handle.ready();
+    handle.release();
+
+    await expect(waiting).resolves.toBeUndefined();
+  });
+
   it("keeps what the far side said about its state, and tells its subscribers", () => {
     const { handle } = makeHandle();
     const seen: Array<Record<string, unknown>> = [];

@@ -33,9 +33,9 @@ plugins installed, and a child that installed nothing is looked at instead of as
 What a far side hands back is a handle, not an object of this side's tree, so the declared
 return type is `FoundProcess` (`AnyProcess | FarProcess`).  A handle is a name, what the
 process holds, the methods it announced and a way to end it.  Reading `.state` on one reports
-nothing until `tune(["state"])` has been asked for, because a process that crossed is silent:
-how a consumer reads state on a handle is its own decision, not something a search decides
-for it.
+nothing until it is waited for — `ready()` is the asking and the waiting in one act, since a
+process that crossed is silent until something here wants to hear it — and how a consumer
+reads state on a handle is its own decision, not something a search decides for it.
 
 **Tests:** `src/plugins/tree-introspection.test.ts` — a child that announced the method is
 asked and its answer is returned; every child that can answer is asked and the first answer is

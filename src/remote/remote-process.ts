@@ -61,6 +61,8 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   private pvtExitWaiter: Waiter<RemoteExit> | null = null;
   private pvtMessageSubs: Array<RemoteMessage<OutMsg>> = [];
   private pvtStateSubs: Array<() => void> = [];
+  /** Whoever is waiting to hear what it holds, settled by the first word of it. */
+  private pvtReadyWaiters: Array<() => void> = [];
   /** What this side has asked to be told about it.  A process that crosses is
    *  silent, so a handle starts out having asked for nothing and hears nothing
    *  until something here wants it — which is the same rule the far side holds,
@@ -99,6 +101,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
     if (!this.pvtConnected) return;
     this.pvtConnected = false;
     this.pvtStateSubs.forEach((fn) => fn());
+    this.pvtSettleReady();
     // Whoever is waiting for it to end is waiting for news that can no longer come.
     this.pvtExitWaiter?.reject(new Error(`${this.pname} cannot be reached: the connection is closed`));
   }
@@ -121,6 +124,28 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
   private pvtRequireAskable(): void {
     const why = this.pvtWhyNotAskable();
     if (why !== null) throw new Error(why);
+  }
+
+  /**
+   * Wait until what it holds is here.
+   *
+   * A handle starts out knowing nothing about the process: the far side says what a
+   * process holds when something over here asks to hear it, so the asking and the waiting
+   * are one act, and this is both.  It settles with whatever has arrived when nothing more
+   * can: a process that has ended has said its last, and a connection that has gone has
+   * nothing left to say.  Asking twice is asking about what is already here.
+   */
+  ready(): Promise<void> {
+    if (this.state !== null || this.pvtWhyNotAskable() !== null) return Promise.resolve();
+    this.pvtWant("state");
+    return new Promise<void>((resolve) => this.pvtReadyWaiters.push(resolve));
+  }
+
+  /** Everyone waiting for what it holds has heard it, or never will. */
+  private pvtSettleReady(): void {
+    const waiting = this.pvtReadyWaiters;
+    this.pvtReadyWaiters = [];
+    for (const resolve of waiting) resolve();
   }
 
   /**
@@ -168,6 +193,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
     this.pvtReleased = true;
     this.pvtLetGo?.(this.ref.id);
     this.pvtSend({ $release: {} }, this.ref.id);
+    this.pvtSettleReady();
   }
 
   /** Stop feeding it messages.  It is still there: `send` still reaches it. */
@@ -257,6 +283,7 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
     if (this.pvtReleased) return;
     this.state = Object.assign(this.state ?? {}, state);
     this.pvtStateSubs.forEach((fn) => fn());
+    this.pvtSettleReady();
   }
 
   /** A message it emitted. */
@@ -272,6 +299,9 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
     if (this.pvtExit !== null || this.pvtReleased) return;
     this.pvtExit = exit;
     this.pvtExitWaiter?.resolve(exit);
+    // Nobody is waiting for state from a process that has ended: what it left is all
+    // there is, and nothing more is coming.
+    this.pvtSettleReady();
   }
 
   /** The methods it can answer, as functions that ask it for an answer.  `call`
