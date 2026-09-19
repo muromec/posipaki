@@ -22,7 +22,10 @@ A handle counts what keeps it.
 
 - `holdRef()` keeps a reference and returns the handle, so a table of what is held reads as one
   line: `this.pvtRemoteRefsHeld.push(ref.holdRef())`.
-- `releaseRef()` gives a count back.  Whoever gives the last one back lets the reference go.
+- `releaseRef()` gives a count back.  Whoever gives the last one back lets the reference go —
+  by telling the far side, when there is still something to ask; a process that has ended, or
+  one whose connection went, has nothing left to be told, and what is dropped is the binding
+  here.
 - `refCount()` says how many times it has been kept.
 - Nothing is heard from an unkept reference: `tune()`, `subscribe()` and `ready()` throw and say
   to call `holdRef()` or `releaseRef()`.  A reference with count zero is nothing in every sense

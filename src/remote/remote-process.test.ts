@@ -170,6 +170,22 @@ describe("RemoteProcess", () => {
     expect(handle.isConnected()).toBe(false);
   });
 
+  it("gives the last count back without asking anything of a process that is gone", () => {
+    const ended = makeHandle();
+    ended.handle.receiveExit({ code: 0, state: { pings: 1 } });
+
+    // Nothing is left to ask it for and nothing to tell the far side: the count going back
+    // is the end of it, and the words for an ended process are not an error here.
+    expect(() => ended.handle.releaseRef()).not.toThrow();
+    expect(ended.letGo).toEqual([2]);
+    expect(ended.handle.hasEnded()).toBe(true);
+
+    const gone = makeHandle();
+    gone.handle.disconnect();
+    expect(() => gone.handle.releaseRef()).not.toThrow();
+    expect(gone.letGo).toEqual([2]);
+  });
+
   it("keeps the references sitting in what it holds, and lets them go with it", () => {
     const parent = makeHandle();
     const child = makeHandle([], { id: 4, pname: "remote:kid:leaf" }, false);

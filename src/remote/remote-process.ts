@@ -192,7 +192,25 @@ export class RemoteProcess<InMsg extends Message = Message, OutMsg extends Messa
    */
   releaseRef(): void {
     if (this.pvtRefCount > 0) this.pvtRefCount -= 1;
-    if (this.pvtRefCount === 0 && !this.pvtReleased) this.release();
+    if (this.pvtRefCount > 0) return;
+    // The last count going means this reference is nobody's here.  One that can still be
+    // asked is let go of, which is what tells the far side to stop saying anything about it.
+    // One that has ended, or whose connection went, has nothing left to be told: what there
+    // is to drop is the binding here, and there is nobody to ask about it.
+    if (this.pvtWhyNotAskable() === null) {
+      this.release();
+      return;
+    }
+    this.pvtDropBinding();
+  }
+
+  /** Let go of the binding here without asking the far side for anything: what the process
+   *  was is over, or the wire that carried it is. */
+  private pvtDropBinding(): void {
+    if (this.pvtReleased) return;
+    this.pvtReleased = true;
+    this.pvtLetGo?.(this.ref.id);
+    this.pvtSettleReady();
   }
 
   /** How many times this reference has been kept. */
