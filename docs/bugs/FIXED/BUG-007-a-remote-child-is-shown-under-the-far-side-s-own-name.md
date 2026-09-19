@@ -27,11 +27,17 @@ spells its whole subtree off it, and the client's own table of the far side is k
 well.  The side that started the connection is the one that knows a better name — the pname the
 proxy was forked as — and nothing asks it.
 
-**Fix:** open.  The agreement belongs at the seam, where the connection is made: the name the
-client uses for the far root is its own process's pname, so what is missing is a way to state
-it — in the way-in arguments one spawn composes, or in the handshake that opens the channel —
-and the far side spawns (or renames) its root under it.  Rewriting the names where they are
-*presented* (the introspection plugin) was tried and thrown away: the mismatch is upstream of
-the walk, and every reader would need the same translator.
+**Fix:** the name is settled at the seam, where the connection is made, instead of being
+rewritten where it is read.  `$init` states the root's name fully qualified — the process a
+payload serves is the client's own end of the connection, so it is called over there what it is
+called here — and the server spawns the served root under it, which spells the whole subtree off
+the same name (`838f8d7`, released as 0.37.1).  `SERVED_ROOT_NAME` is what a connection that
+states nothing still gets.  Rewriting the names where they are *presented* (the introspection
+plugin) was tried first and thrown away: the mismatch was upstream of the walk, and every reader
+would have needed the same translator.
 
-**Tests:** none yet.
+**Tests:** `src/remote/reflection.integration.test.ts` — over a real fifo payload, a host that
+forks the client walks its own tree and reads `host:tools` and `host:tools:kid`;
+`src/remote/client.test.ts` asserts the frame carries `rootName`, and
+`src/remote/reflection.test.ts` that a reference to the far root is the handle this side already
+holds, named as this side named it.

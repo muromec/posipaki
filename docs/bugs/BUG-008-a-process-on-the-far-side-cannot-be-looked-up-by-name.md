@@ -2,10 +2,9 @@
 
 **Found:** 2026-09-19, live, in the same walk that found BUG-007.
 
-**Symptom:** the tree shows a far process by a name, and handing that name back does not
-resolve it: `actor_state` answers `(actor not found: …)`.  Today the name shown is the far
-side's own (`remote:task-1`, BUG-007); once the naming is settled it would be a name of this
-side's, and the answer would still be the same, because the search never leaves this side.
+**Symptom:** the tree shows a far process by a name — `…:tools:isolated:task-1` since BUG-007
+— and handing that name back does not resolve it: `actor_state` answers `(actor not found: …)`,
+because the search never leaves this side.
 
 **Root cause:** `findProcess` (`src/plugins/tree-introspection.ts`) walks `selfCtx.children`,
 which holds this side's processes.  A child that is a handle on a process over the seam keeps
