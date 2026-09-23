@@ -176,8 +176,8 @@ describe("remoteClient (unit)", () => {
         await this.fork(proxy, { start: 0 }, {});
         return { reasons: [] as unknown[] };
       },
-      onChildExit(_name, reason) {
-        this.state.reasons.push(reason.reason);
+      onChildExit(_name, _exit, reason) {
+        this.state.reasons.push(reason);
       },
       handlers: {},
     });

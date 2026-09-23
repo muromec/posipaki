@@ -225,10 +225,11 @@ describe("hooks.onChildExit", () => {
       name: "parent",
       async setup() {
         await this.fork(Child, undefined, {});
-        return { reasons: [] as unknown[] };
+        return { reasons: [] as unknown[], messages: [] as string[] };
       },
-      onChildExit(_name, reason) {
-        this.state.reasons.push(reason.reason);
+      onChildExit(_name, exit, reason) {
+        this.state.reasons.push(reason);
+        this.state.messages.push(exit.type);
         this.exit("done");
       },
       handlers: {},
@@ -237,6 +238,7 @@ describe("hooks.onChildExit", () => {
     const proc = await Parent.spawn({});
     await proc.wait();
     expect(proc.state!.reasons).toEqual(["work finished"]);
+    expect(proc.state!.messages).toEqual(["EXIT"]);
   });
 
   it("calls a stop that was agreed to a stop", async () => {
@@ -250,10 +252,11 @@ describe("hooks.onChildExit", () => {
       async setup() {
         const child = await this.fork(Child, undefined, {});
         await child.stop();
-        return { reasons: [] as unknown[] };
+        return { reasons: [] as unknown[], messages: [] as string[] };
       },
-      onChildExit(_name, reason) {
-        this.state.reasons.push(reason.reason);
+      onChildExit(_name, exit, reason) {
+        this.state.reasons.push(reason);
+        this.state.messages.push(exit.type);
         this.exit("done");
       },
       handlers: {},

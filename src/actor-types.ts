@@ -182,7 +182,14 @@ export type ActorConfig<
 
   onUnhandled?: (msg: Message, sender: SenderInfo) => void | Promise<void>;
 
-  onChildExit?: (name: string, reason: ExitMessage) => HookResult | Promise<HookResult>;
+  /** A child ended.  `exit` is what it sent — its orphans travel there — and `reason` is what it
+   *  ended *for*: the value `exit(reason)` was given, `"stopped"` for a stop that was agreed to,
+   *  `CHANNEL_LOST` when the wire under a proxy went, or undefined when nobody asked. */
+  onChildExit?: (
+    name: string,
+    exit: ExitMessage,
+    reason: unknown,
+  ) => HookResult | Promise<HookResult>;
 
   /** Fires for each orphan a child leaves behind (in its EXIT).  Return the
    *  policy: `'adopt'` (promote to a child, draining its buffer), `'force-stop'`

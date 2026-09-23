@@ -278,6 +278,7 @@ export function defineActor<
               self,
               childName,
               msg as ExitMessage,
+              (msg as ExitMessage).reason,
             );
             // Orphan policy: a child that exits may leave still-running
             // grandchildren behind (see ctx-orphans / orphan-policy).
