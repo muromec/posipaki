@@ -211,6 +211,58 @@ describe("hooks.onChildExit", () => {
     await proc.wait();
     expect(proc.state!.exits).toContain("parent:child");
   });
+
+  it("carries the child's own reason to the parent", async () => {
+    const Child = defineActor({
+      name: "child",
+      afterStart() {
+        this.exit("work finished");
+      },
+      handlers: {},
+    });
+
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        await this.fork(Child, undefined, {});
+        return { reasons: [] as unknown[] };
+      },
+      onChildExit(_name, reason) {
+        this.state.reasons.push(reason.reason);
+        this.exit("done");
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.wait();
+    expect(proc.state!.reasons).toEqual(["work finished"]);
+  });
+
+  it("calls a stop that was agreed to a stop", async () => {
+    const Child = defineActor({
+      name: "child",
+      handlers: {},
+    });
+
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        const child = await this.fork(Child, undefined, {});
+        await child.stop();
+        return { reasons: [] as unknown[] };
+      },
+      onChildExit(_name, reason) {
+        this.state.reasons.push(reason.reason);
+        this.exit("done");
+      },
+      handlers: {},
+    });
+
+    const proc = await Parent.spawn({});
+    await proc.wait();
+    expect(proc.state!.reasons).toEqual(["stopped"]);
+  });
 });
 
 // ── onStart / beforeEnd ordering (plugin chain via mergeConfigs) ─────────────

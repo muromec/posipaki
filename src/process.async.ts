@@ -274,7 +274,13 @@ export class AsyncProcess<
       // Hand surviving children and inherited orphans up to the parent for adoption (see ctx-orphans proposal).
       // In-process only.
       this.pvtPrepareHandoff(orphans);
-      ctx.toParent({ type: "EXIT", orphans });
+      // Why it ended, when it said: a stop that was agreed to is not the news a wire that went
+      // away is (`CHANNEL_LOST`), and neither is a child that finished what it was for.
+      ctx.toParent({
+        type: "EXIT",
+        ...(ctx.exitReason === undefined ? {} : { reason: ctx.exitReason }),
+        orphans,
+      });
       // Unsubscribe from children/monitored processes so a dead parent
       // doesn't keep receiving their messages (handoff collectors stay on the orphans).
       this.pvtUnsubscribeAll();

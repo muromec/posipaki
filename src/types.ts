@@ -37,6 +37,10 @@ export type WithoutSender<T extends WithSender<any>> = T[0];
  *  The sender's identity is carried in the {@link SenderInfo} tuple. */
 export type ExitMessage = {
   type: "EXIT";
+  /** Why it ended, when it said: what `ActorContext.exit(reason)` was given, or the word for a
+   *  stop that was agreed to.  Absent for an end nobody asked for — a process that died of a
+   *  throw reports that as the failure it is, and not as a reason here. */
+  reason?: unknown;
   /** Still-running children of the exiting process, handed up to the parent
    *  for adoption (in-process only). */
   orphans?: Array<AnyProcess>;
@@ -103,6 +107,10 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
    *  flag set from outside the loop (see `ActorContext.exit()`).  No-op when
    *  the loop is already running, or the process is dead.  Internal. */
   wake: () => void;
+  /** What this process is ending with, when the end was asked for: the `reason` it was exited
+   *  with, or `"stopped"` for a stop it agreed to.  Read when EXIT goes to the parent, so the
+   *  parent is told *why* and not only *that*.  Internal. */
+  exitReason?: unknown;
   /** Invoked by the runtime after the process emits EXIT to its parent.
    *  Best-effort teardown that must not delay the exit signal. */
   afterExit?: () => Promise<void> | void;

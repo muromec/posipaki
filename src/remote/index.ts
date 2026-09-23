@@ -8,7 +8,7 @@
 export { serveRemoteActor } from "./server.js";
 export { makeSender } from "./sender.js";
 export type { Spawner } from "./server.js";
-export { remoteClient } from "./client.js";
+export { CHANNEL_LOST, remoteClient } from "./client.js";
 export type { ClientSpawner } from "./client.js";
 
 // what a process on the far side is, once it is not just a reference

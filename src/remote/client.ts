@@ -44,6 +44,17 @@ import { CallSide, answerCall } from "./call-side.js";
 export type ClientSpawner<Args> = (args: Args) => Promise<Channel>;
 
 
+/**
+ * Why a proxy ends when the wire under it goes.
+ *
+ * The far side is *unreachable*, which is not the same as ended: the handles that came across are
+ * still here and still readable, and what the far process left behind is still what it left behind.
+ * But nothing it says can arrive and nothing here can reach it, and that is news of its own — so the
+ * proxy ends with this reason rather than sitting there silent.  Whoever forked the proxy hears it
+ * where it hears everything else about a child, in `onChildExit`.
+ */
+export const CHANNEL_LOST = "channel-lost";
+
 export function remoteClient<
   Args,
   State,
@@ -307,6 +318,12 @@ export function remoteClient<
         // A wire that goes before the far root does leaves nothing to wait for: the
         // handles are gone, and the far root's end is the connection's end, which is
         // what `wait()` on it rejects about.
+        //
+        // The proxy itself is done here, and it says so: it stood for a process that can no
+        // longer be reached, and a proxy that stayed up would be one whose parent believes the
+        // far side is still listening — which is exactly the belief a display panel that went
+        // dark punishes.
+        this.exit(CHANNEL_LOST);
       });
 
       await start;

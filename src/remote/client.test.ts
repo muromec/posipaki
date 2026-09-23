@@ -1,7 +1,8 @@
 // ── remoteClient unit tests (in-memory fake channel) ───────────────────────
 
 import { describe, it, expect } from "vitest";
-import { remoteClient } from "./client.js";
+import { defineActor } from "../define-actor.js";
+import { CHANNEL_LOST, remoteClient } from "./client.js";
 import { frameTo, isInit, isMsg, isStop } from "./channel.js";
 import type { Channel } from "./channel.js";
 import { rootIdFor } from "./process-ref.js";
@@ -160,6 +161,39 @@ describe("remoteClient (unit)", () => {
     while (!channel.sent.some(isStop)) await sleep(1);
     channel.handler!({ to: SERVER_ROOT, $exit: { code: 0, state: { count: 5 } } });
     await proc.wait();
+  });
+
+  it("ends the proxy when the wire closes, and says why", async () => {
+    const channel = new FakeChannel();
+    const proxy = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
+      "counter",
+      () => Promise.resolve(channel),
+    );
+
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        await this.fork(proxy, { start: 0 }, {});
+        return { reasons: [] as unknown[] };
+      },
+      onChildExit(_name, reason) {
+        this.state.reasons.push(reason.reason);
+      },
+      handlers: {},
+    });
+
+    // awaitReady: false — the parent waits for the proxy, and the proxy waits for the far side to
+    // say what it holds, which is the test's to send.
+    const parent = await Parent.spawn({}, { awaitReady: false });
+    while (!channel.handler) await sleep(1);
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 0 } });
+    while (parent.state === null) await sleep(1);
+
+    channel.closeHandler!();
+
+    while (parent.state!.reasons.length === 0) await sleep(1);
+    expect(parent.state!.reasons).toEqual([CHANNEL_LOST]);
+    await parent.stop();
   });
 
   it("closes the channel when the proxy stops", async () => {

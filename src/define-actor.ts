@@ -119,6 +119,22 @@ export function defineActor<
       let exitReason: unknown;
       let rawState: InternalState = undefined as unknown as InternalState;
 
+      /**
+       * End this actor, and write the reason down twice: the hooks (`beforeEnd`, `afterEnd`) read
+       * the local copy, and the EXIT the parent receives carries it as well.  An exit that says
+       * only *that* something ended leaves the parent to guess — and a stop that was agreed to, a
+       * wire that closed (`CHANNEL_LOST`) and a child that finished are three different things to
+       * whoever has to react.
+       */
+      const endWith = (reason: unknown, wake = false): void => {
+        exitReason = reason;
+        ctx.exitReason = reason;
+        done = true;
+        // The loop only re-reads `done` when it is resumed: an idle actor is
+        // parked at its dispatch yield and would sit there forever.
+        if (wake) ctx.wake();
+      };
+
       const decorated = new Map();
       const self: ActorContext<
         Args,
@@ -144,15 +160,10 @@ export function defineActor<
           ctx.toParent(msg);
         },
         agreeToStop() {
-          exitReason = "stopped";
-          done = true;
+          endWith("stopped");
         },
         exit(reason: unknown) {
-          exitReason = reason;
-          done = true;
-          // The loop only re-reads `done` when it is resumed: an idle actor is
-          // parked at its dispatch yield and would sit there forever.
-          ctx.wake();
+          endWith(reason, true);
         },
         $child: {} as Record<string, AnyProcess>,
         decorators: {},
@@ -249,8 +260,7 @@ export function defineActor<
               await callHook(assembly.onStopRequested, hookErrorHandler, self);
               // Hook may call agreeToStop(). If not, actor keeps running.
             } else {
-              exitReason = "stopped";
-              done = true;
+              endWith("stopped");
             }
             return;
           }
