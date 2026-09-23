@@ -146,6 +146,13 @@ export async function serveRemoteActor<
   streams.crossed(proc, table.rootId());
   streams.flush();
 
+  // A wire that goes takes the reason to be served with it: nobody is left to answer, so the actor
+  // is stopped — children and all, the way any other stop works.  Left alone it outlives every
+  // client that ever dropped, and the teardown below, which waits for exactly this end, never runs.
+  channel.onClose(() => {
+    void proc.stop();
+  });
+
   // bridge channel input → actor
   function dispatch(raw: Record<string, unknown>): void {
     const frame = decodeFrame(raw, handleFor);

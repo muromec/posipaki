@@ -90,6 +90,51 @@ describe("serveRemoteActor (unit)", () => {
     expect(channel.sent.find(isExit)!.$exit.code).toBe(0);
   });
 
+  it("stops the served actor when the wire goes", async () => {
+    let stopped = false;
+    const Watched = defineActor({
+      name: "watched",
+      inMessages: defineMessages<{ type: "PING"; count: number }>(),
+      outMessages: defineMessages<{ type: "PONG"; count: number }>(),
+      setup: () => ({ pings: 0 }),
+      onStopRequested() {
+        stopped = true;
+        this.agreeToStop();
+      },
+      handlers: {
+        async PING(msg: { type: "PING"; count: number }) {
+          this.state.pings += 1;
+          await this.emit({ type: "PONG", count: msg.count });
+        },
+      },
+    });
+
+    const channel = new FakeChannel();
+    const serve = serveRemoteActor(Watched, () => Promise.resolve(channel));
+
+    await waitUntil(() => channel.handler !== null, "$init handler");
+    channel.handler!({ $init: { parentName: "root", parentIdName: "root" } });
+
+    // The dispatch handler replaces the one that took the handshake a moment later, and nothing is
+    // said to a far side that has not asked to hear it: ask for the streams and say a word, until
+    // the word is answered.  A frame dropped into the gap between the two handlers is a frame lost.
+    const deadline = Date.now() + 5000;
+    while (!channel.sent.some(isMsg) && Date.now() < deadline) {
+      if (channel.handler) {
+        channel.handler({ to: ROOT, $tune: { streams: ["message", "state", "exit"] } });
+        channel.handler({ to: ROOT, $msg: { fromName: "root", body: { type: "PING", count: 1 } } });
+      }
+      await sleep(5);
+    }
+    expect(channel.sent.some(isMsg)).toBe(true);
+
+    // The wire goes: the client is gone, and the actor has nobody left to answer.
+    channel.closeHandler!();
+
+    await serve;
+    expect(stopped).toBe(true);
+  });
+
   it("does not emit initial $state before $init", async () => {
     const channel = new FakeChannel();
     const serve = serveRemoteActor(makeEcho(), () => Promise.resolve(channel));
