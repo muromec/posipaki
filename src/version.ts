@@ -12,4 +12,4 @@
 // fails the suite rather than shipping a lie.
 
 /** posipaki's release version.  Must equal package.json's `version`. */
-export const LIB_VERSION = "0.38.0";
+export const LIB_VERSION = "0.39.0";
