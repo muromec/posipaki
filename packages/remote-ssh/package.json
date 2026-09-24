@@ -1,6 +1,6 @@
 {
   "name": "posipaki-remote-ssh",
-  "version": "0.39.1",
+  "version": "0.40.0",
   "description": "Run a posipaki actor on another machine, over ssh",
   "homepage": "https://posipaki-docs.muromec.nl/",
   "repository": {
@@ -25,6 +25,6 @@
     "test": "bash ../../scripts/test.sh"
   },
   "dependencies": {
-    "posipaki": "^0.39.0"
+    "posipaki": "^0.40.0"
   }
 }
