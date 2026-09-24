@@ -4,7 +4,7 @@
 // to reference the config/context/definition shapes without importing the
 // implementation module directly.
 
-import type { SenderInfo, AsyncProcessFn, Message, ProcessCtx, ExitMessage } from "./types.js";
+import type { SenderInfo, AsyncProcessFn, Message, ProcessCtx, ExitMessage, ForkSite } from "./types.js";
 import type { ActorDecorated, ActorReflection } from "./hooks.js";
 import type { AnyProcess, AsyncProcess } from "./process.async.js";
 
@@ -84,8 +84,8 @@ export interface ActorDefinition<
   /** Spawn this actor as a child of the calling process.
    *  `ctx` must be able to fork children that emit `OutMsg` — i.e. the
    *  parent's in-message is a supertype of this actor's out-message. */
-  spawnAsChild<PMO extends Message>(
-    ctx: ProcessCtx<unknown, unknown, OutMsg, PMO>,
+  spawnAsChild(
+    ctx: ForkSite,
     args: Args,
     opts?: {
       name?: string;
@@ -301,6 +301,18 @@ export type ActorContext<
     state: InternalState;
     name: string;
     id: symbol;
+    /** This actor as a process: the handle another process can be given so that it can
+     *  send here.  There is no other way to obtain one — a process is reachable because
+     *  somebody holds it, and this is how it hands itself over.  The same object as
+     *  `ctx.self`, and as the one a spawner, a parent or a remote handle stands for.
+     *  Erased, like every handle that leaves: whoever receives it declares what it is. */
+    self: AsyncProcess<
+      Args,
+      HidePrivate<InternalState>,
+      InMsg,
+      OutMsg,
+      ReflectionMethods & ActorReflection
+    >;
 
     emit: (msg: OutMsg) => void;
     agreeToStop: () => void;

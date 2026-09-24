@@ -95,10 +95,24 @@ export type ForkSync<ChildArgs, ChildState, ChildIM extends Message, ChildOM ext
 export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   pname: string;
   id: symbol;
+  /**
+   * This process, as the thing others address: the handle that makes it reachable
+   * rather than merely named.  A name and a symbol say who a message came from; only a
+   * handle can be sent to, so this is what a process hands over when it says "here I
+   * am" — put it in a message body and whoever receives it can talk back, locally or
+   * across a seam, where the reference crosses like any other.
+   *
+   * It is the process itself, not a copy of its identity: `self.pname` and `self.id` are
+   * this ctx's, and `sendSelf` is the same act through a narrower door.  Typed as a handle
+   * is typed everywhere it crosses (`children`, a message body): the ctx's generics are
+   * this process's own, and what a reference is passed *to* is declared by whoever
+   * receives it, not by whoever hands it over.
+   */
+  self: AsyncProcess<Args, State, IM, OM, {}>;
   parentName: string | null;
   parentId: symbol | null;
   sendSelf: (msg: IM | StopMessage) => void;
-  toParent: ProcessMessageCb<OM>;
+  toParent: ProcessMessageCb<OM | ExitMessage>;
   /** Fire this process's state subscribers now (no message round-trip).
    *  Used when something outside the dispatch loop — e.g. a remote $state
    *  frame — mutates `state` and the change must still be observed. */
@@ -119,4 +133,22 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   "fork" | "forkSync" | "children" | "orphans" | "adopt" | "monitor"
 >;
 export type AnyProcessCtx = ProcessCtx<unknown, unknown, Message, Message>;
+
+// ---- ForkSite ----------------------------------------------------------------
+
+/**
+ * A place a process can be forked from: the parent's `fork`, and nothing else.
+ *
+ * This is what spawning a child needs of the process it is spawned under, and it is
+ * deliberately not a `ProcessCtx`.  A context is typed by its own argument, state and
+ * message shapes — with `self` in it, that is a type no other shape can be mistaken for —
+ * while a child's spawn depends on exactly one of its members.  Naming the whole context
+ * here would say the child's birth depends on the parent's shapes, which it does not, and
+ * would leave `spawnAsChild` acceptable only from a context of the same shape as its own.
+ *
+ * The link that does matter — the child's out-messages reaching the parent's handlers — is
+ * checked where the parent's own type is in hand: `this.fork(child)`, whose child's
+ * out-messages must fit the parent's in-messages.
+ */
+export type ForkSite = Pick<ProcessCtx<unknown, unknown, Message, Message>, "fork">;
 

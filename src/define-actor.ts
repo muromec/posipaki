@@ -16,6 +16,7 @@ import type {
   AsyncProcessFn,
   Message,
   ExitMessage,
+  ForkSite,
   ProcessCtx,
 } from "./types.js";
 import type {
@@ -136,7 +137,7 @@ export function defineActor<
       };
 
       const decorated = new Map();
-      const self: ActorContext<
+      const actorCtx: ActorContext<
         Args,
         InternalState,
         InMsg,
@@ -146,6 +147,17 @@ export function defineActor<
         ReflectionMethods & ActorReflection
       > = {
         ctx,
+        // The process itself, as the ctx knows it: the same object this actor is being
+        // run as, handed out by an actor that wants to be reached rather than named.
+        self: ctx.self as unknown as ActorContext<
+          Args,
+          InternalState,
+          InMsg,
+          OutMsg,
+          Methods,
+          Handlers,
+          ReflectionMethods & ActorReflection
+        >['self'],
         ...((assembly.methods || {}) as Methods),
         ...((assembly.$decorate || {}) as ActorDecorated),
         reflection: {} as ReflectionMethods & ActorReflection,
@@ -153,7 +165,7 @@ export function defineActor<
         name: ctx.pname,
         id: ctx.id,
         async emit(msg: OutMsg) {
-          await callHook(assembly.onEmit, undefined, self, msg, {
+          await callHook(assembly.onEmit, undefined, actorCtx, msg, {
             fromName: ctx.pname,
             fromId: ctx.id,
           });
@@ -174,7 +186,7 @@ export function defineActor<
         ): Promise<AsyncProcess<A, HidePrivate<S>, IM, OM, R & ActorReflection>> => {
           let child: AsyncProcess<A, HidePrivate<S>, IM, OM, R & ActorReflection>;
           const childName =
-            forkOpts?.name ?? childActor?.name ?? `child-${Object.keys(self.$child).length}`;
+            forkOpts?.name ?? childActor?.name ?? `child-${Object.keys(actorCtx.$child).length}`;
           const treeName = `${ctx.pname}:${childName}`;
           const childAddPlugins = [...(assembly.addPlugins || []), ...(forkOpts?.addPlugins || [])];
           child = await childActor.spawnAsChild(ctx, childArgs!, {
@@ -182,11 +194,11 @@ export function defineActor<
             parentPlugins: assembly.resolvedPlugins || [],
             ...(childAddPlugins.length ? { addPlugins: childAddPlugins } : {}),
           });
-          self.$child[child.pname] = child as unknown as AnyProcess;
+          actorCtx.$child[child.pname] = child as unknown as AnyProcess;
           return child;
         },
       };
-      actorCtxMap.set(ctx.id, self);
+      actorCtxMap.set(ctx.id, actorCtx);
       /**
        * Lifecycle hooks are the actor's own control flow: if one throws, the
        * state machine is half-applied, so the error is fatal — `onError` still
@@ -202,24 +214,24 @@ export function defineActor<
        */
       const hookErrorHandler = async (e: unknown): Promise<unknown> => {
         try {
-          await assembly.onError?.call(self, e);
+          await assembly.onError?.call(actorCtx, e);
         } catch {
           // An error in the error handler must not mask the original one.
         }
         return PROPAGATE_SENTINEL;
       };
       ctx.afterExit = async () => {
-        await callHook(assembly.afterEnd, hookErrorHandler, self, exitReason);
+        await callHook(assembly.afterEnd, hookErrorHandler, actorCtx, exitReason);
       };
 
       for (const [k, v] of decorated) {
-        (self as Record<string, unknown>)[k] = v;
+        (actorCtx as Record<string, unknown>)[k] = v;
       }
 
       await callHook(
         assembly.beforeStart,
         hookErrorHandler,
-        self as ActorContext<
+        actorCtx as ActorContext<
           Args,
           never, // state not set yet
           InMsg,
@@ -232,7 +244,7 @@ export function defineActor<
 
       if (assembly.setup) {
         rawState = await assembly.setup.call(
-          self as ActorContext<
+          actorCtx as ActorContext<
             Args,
             never, // break inference cycle here
             InMsg,
@@ -246,9 +258,9 @@ export function defineActor<
       } else {
         rawState = null as InternalState;
       }
-      self.state = rawState;
+      actorCtx.state = rawState;
       yield hidePrivate(rawState);
-      await callHook(assembly.afterStart, hookErrorHandler, self);
+      await callHook(assembly.afterStart, hookErrorHandler, actorCtx);
 
       yield* runDispatchAsync<WithSender<InMsg | ExitMessage>>(
         ctx.pname,
@@ -257,7 +269,7 @@ export function defineActor<
           if (msg.type === INTERNAL_ADVANCE) return; // framework traffic, not a message
           if (msg.type === "STOP") {
             if (assembly.onStopRequested) {
-              await callHook(assembly.onStopRequested, hookErrorHandler, self);
+              await callHook(assembly.onStopRequested, hookErrorHandler, actorCtx);
               // Hook may call agreeToStop(). If not, actor keeps running.
             } else {
               endWith("stopped");
@@ -269,13 +281,13 @@ export function defineActor<
             // and should not be used for indexing so
             // we don't get into name conflicts
             const childName = sender.fromName;
-            if (childName && self.$child[childName]) {
-              delete self.$child[childName];
+            if (childName && actorCtx.$child[childName]) {
+              delete actorCtx.$child[childName];
             }
             await callHook(
               assembly.onChildExit,
               hookErrorHandler,
-              self,
+              actorCtx,
               childName,
               msg as ExitMessage,
               (msg as ExitMessage).reason,
@@ -287,13 +299,13 @@ export function defineActor<
               for (const orphan of orphans) {
                 // Default when no hook is defined: hard-kill the orphan.
                 const decision = assembly.onOrphan
-                  ? await callHook(assembly.onOrphan, hookErrorHandler, self, orphan)
+                  ? await callHook(assembly.onOrphan, hookErrorHandler, actorCtx, orphan)
                   : "force-stop";
                 if (decision === "adopt") {
                   ctx.adopt(orphan);
                   const idx = ctx.orphans.indexOf(orphan);
                   if (idx >= 0) ctx.orphans.splice(idx, 1);
-                  self.$child[orphan.pname] = orphan;
+                  actorCtx.$child[orphan.pname] = orphan;
                 } else if (decision === "force-stop") {
                   orphan.forceStop({ cascade: true });
                   const idx = ctx.orphans.indexOf(orphan);
@@ -310,7 +322,7 @@ export function defineActor<
             const result = await callHook(
               assembly.onMessage,
               assembly.onError,
-              self,
+              actorCtx,
               msg as InMsg,
               sender,
             );
@@ -322,13 +334,13 @@ export function defineActor<
                 msg.type as keyof Handlers
               ] as HandlerFn<InMsg>) || assembly.onUnhandled;
 
-            await callHook(handler, assembly.onError, self, msg as InMsg, sender);
+            await callHook(handler, assembly.onError, actorCtx, msg as InMsg, sender);
           }
         },
         () => done,
       );
 
-      await callHook(assembly.beforeEnd, hookErrorHandler, self, exitReason);
+      await callHook(assembly.beforeEnd, hookErrorHandler, actorCtx, exitReason);
     };
   }
 
@@ -340,14 +352,14 @@ export function defineActor<
     proc: ReflectableProcess,
     reflectionMethods: ReflectionMethods | undefined,
   ): void {
-    const self = actorCtxMap.get(proc.id);
-    if (self) {
+    const actorCtx = actorCtxMap.get(proc.id);
+    if (actorCtx) {
       // One object under two names: the surface the handle exposes as
       // `$reflection` and the one the actor's own hooks see as `reflection`.
       // Handing the same object to both is what lets a method be added after
       // assembly — the first caller that needs that is a remote peer saying
       // which methods it can answer.
-      proc.$reflection = self.reflection as unknown as Record<string, Function>;
+      proc.$reflection = actorCtx.reflection as unknown as Record<string, Function>;
     }
     if (!reflectionMethods) return;
     const refl = proc.$reflection as Record<string, Function>;
@@ -360,7 +372,7 @@ export function defineActor<
     for (const [k, m] of written) {
       // A promise whatever the method was written as, so a caller reads the same
       // call the same way whether the actor is here or behind a wire.
-      refl[k] = async (...args: unknown[]) => await m.apply(self, args);
+      refl[k] = async (...args: unknown[]) => await m.apply(actorCtx, args);
     }
   }
 
@@ -416,7 +428,7 @@ export function defineActor<
       >;
     },
     async spawnAsChild(
-      ctx: ProcessCtx<unknown, unknown, OutMsg, Message>,
+      ctx: ForkSite,
       args: Args,
       opts?: {
         name?: string;

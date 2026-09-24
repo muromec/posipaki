@@ -170,9 +170,10 @@ export class AsyncProcess<
   start(arg0: Args, parentName?: string | null, parentId?: symbol | null) {
     const selfCtx: SenderInfo = { fromName: this.pname, fromId: this.id };
 
-    const ctx: ProcessCtx<Args, State, InMessage, OutMessage | ExitMessage> = {
+    const ctx: ProcessCtx<Args, State, InMessage, OutMessage> = {
       pname: this.pname,
       id: this.id,
+      self: this,
       parentName: parentName ?? null,
       parentId: parentId ?? null,
       fork: this.fork.bind(this),
@@ -251,7 +252,7 @@ export class AsyncProcess<
 
   /** Wrap the user's generator so EXIT/STOP logic fires on completion. */
   private async *pvtWatchExit(
-    ctx: ProcessCtx<Args, State, InMessage, OutMessage | ExitMessage>,
+    ctx: ProcessCtx<Args, State, InMessage, OutMessage>,
     arg0: Args,
   ): AsyncProcessGenerator<State, InMessage> {
     try {

@@ -69,7 +69,7 @@ describe("Process", () => {
   });
 
   function* p3(
-    ctx: ProcessCtx<unknown, null, Message, ExitMessage | PongM>,
+    ctx: ProcessCtx<null, null, Message, ExitMessage | PongM>,
   ): Generator<null, void, WithSender<Message>> {
     yield null;
     const [msg, _s] = yield null;
@@ -95,7 +95,7 @@ describe("Process", () => {
   type CountStore = { seq: number };
 
   function* p4(
-    ctx: ProcessCtx<unknown, { seq: number }, PingM, ExitMessage | PongM>,
+    ctx: ProcessCtx<null, CountStore, PingM, ExitMessage | PongM>,
   ): Generator<{ seq: number } | null, void, WithSender<PingM>> {
     const state = { seq: 0 };
     yield state;
