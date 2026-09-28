@@ -14,7 +14,6 @@ import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
 import {
   ProcessTable,
-  SERVED_ROOT_NAME,
   isRemoteProcess,
   type ProcessHandle,
   type ProcessRef,
@@ -25,8 +24,10 @@ import { makeSender } from "./sender.js";
 import {
   REFLECT_METHODS,
   asReflectionCall,
+  badReason,
   decodeFrame,
   encodeFrame,
+  errorReason,
   frameTo,
   isExit,
   isMsg,
@@ -213,7 +214,46 @@ export function remoteClient<
         () => ({ code: null, state: currentState as State }),
       );
 
+      /**
+       * The wire is over, whoever ended it: the far side stopped talking, or stopped making sense.
+       * What was in flight fails, handles disconnect, nothing more is said about the processes of
+       * this side's own, and the proxy ends with CHANNEL_LOST — a proxy that stayed up would be one
+       * whose parent still believes the far side is listening, which is exactly the belief a display
+       * panel that went dark punishes.
+       *
+       * Said once: a wire can go in more than one way at once, and it only goes once.
+       */
+      let wireEnded = false;
+      const wireGone = (): void => {
+        if (wireEnded) return;
+        wireEnded = true;
+        // A call that was in flight when the wire went away has no answer coming; it fails
+        // here rather than hanging forever.
+        calls.rejectAll();
+        // Handles live on this connection: with it gone there is nothing to reach, and
+        // nothing to wait for either.
+        for (const held of table.handles()) {
+          if (isRemoteProcess(held)) held.disconnect();
+        }
+        // And nothing more is said about the processes of this side's own that were handed
+        // over: there is no one left to say it to.
+        streams.stopAll();
+        this.exit(CHANNEL_LOST);
+      };
+
       channel.onMessage((raw) => {
+        // A frame about the wire ends the wire: what the far side says it could not read, and what
+        // it says when the connection is over, are the same news here.  A frame that could not be
+        // *read* leaves nothing after it trustworthy — a wire that has lost its framing can still
+        // deliver something, and what it delivers is not the far side's meaning — so this is where
+        // the connection ends.  A frame that reads fine and is not understood is not this, and is
+        // answered about itself rather than by breaking the connection.
+        const wireProblem = badReason(raw) ?? errorReason(raw);
+        if (wireProblem !== null) {
+          void channel.close();
+          wireGone();
+          return;
+        }
         const frame = decodeFrame(raw, handleFor);
         // An answer is about the call waiting for it and not about a process: it names
         // the seq, and is settled before anything is looked up.
@@ -303,28 +343,9 @@ export function remoteClient<
         const call = asReflectionCall(frame);
         if (call) void answerCall(call, mine, write, table);
       });
-      channel.onClose(() => {
-        // A call that was in flight when the wire went away has no answer
-        // coming; it fails here rather than hanging forever.
-        calls.rejectAll();
-        // Handles live on this connection: with it gone there is nothing to
-        // reach, and nothing to wait for either.
-        for (const held of table.handles()) {
-          if (isRemoteProcess(held)) held.disconnect();
-        }
-        // And nothing more is said about the processes of this side's own that
-        // were handed over: there is no one left to say it to.
-        streams.stopAll();
-        // A wire that goes before the far root does leaves nothing to wait for: the
-        // handles are gone, and the far root's end is the connection's end, which is
-        // what `wait()` on it rejects about.
-        //
-        // The proxy itself is done here, and it says so: it stood for a process that can no
-        // longer be reached, and a proxy that stayed up would be one whose parent believes the
-        // far side is still listening — which is exactly the belief a display panel that went
-        // dark punishes.
-        this.exit(CHANNEL_LOST);
-      });
+      // A wire that goes before the far root does leaves nothing to wait for: the handles are gone,
+      // and the far root's end is the connection's end, which is what `wait()` on it rejects about.
+      channel.onClose(() => wireGone());
 
       await start;
 

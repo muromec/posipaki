@@ -216,4 +216,68 @@ describe("remoteClient (unit)", () => {
 
     expect(channel.closed).toBe(true);
   });
+  it("does not end the proxy over a frame it merely does not understand", async () => {
+    const channel = new FakeChannel();
+    const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
+      "counter",
+      () => Promise.resolve(channel),
+    );
+
+    const proc = await actor.spawn({ start: 0 }, { awaitReady: false });
+    while (!channel.handler) await sleep(1);
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 0 } });
+    while (proc.state?.count !== 0) await sleep(1);
+
+    // A frame that reads fine and is not understood belongs to whoever can answer it, and not to
+    // an ending.  What makes a wire unusable is losing its framing; an unknown word on a wire that
+    // is still framed is a thing to say nothing about, exactly as it is on the server side.
+    channel.handler!({ to: SERVER_ROOT, $op: "something-newer" });
+    proc.send({ type: "INCREMENT", by: 1 });
+    while (!channel.sent.some(isMsg)) await sleep(1);
+    expect(channel.closed).toBe(false);
+    expect(channel.sent.find(isMsg)!.$msg).toMatchObject({ body: { type: "INCREMENT", by: 1 } });
+
+    // And the connection is still whole: the far side's end ends it, the way any wire ends.
+    proc.send({ type: "STOP" });
+    while (!channel.sent.some(isStop)) await sleep(1);
+    channel.handler!({ to: SERVER_ROOT, $exit: { code: 0, state: { count: 0 } } });
+    await proc.wait();
+  });
+
+  it("ends the proxy when the far side says a frame could not be read", async () => {
+    const channel = new FakeChannel();
+    const proxy = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
+      "counter",
+      () => Promise.resolve(channel),
+    );
+
+    const Parent = defineActor({
+      name: "parent",
+      async setup() {
+        await this.fork(proxy, { start: 0 }, {});
+        return { reasons: [] as unknown[] };
+      },
+      onChildExit(_name, _exit, reason) {
+        this.state.reasons.push(reason);
+      },
+      handlers: {},
+    });
+
+    // awaitReady: false — the parent waits for the proxy, and the proxy waits for the far side to
+    // say what it holds, which is the test's to send.
+    const parent = await Parent.spawn({}, { awaitReady: false });
+    while (!channel.handler) await sleep(1);
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 0 } });
+    while (parent.state === null) await sleep(1);
+
+    // What a far side says when a line of this side's was not a frame to it.  Nothing said after a
+    // wire that lost its framing can be trusted to mean what it says, so this is an ending — the
+    // same one a wire that plain goes gets, and the same reason.
+    channel.handler!({ $bad: { reason: "Unexpected end of JSON input", length: 4, prefix: "oops" } });
+
+    while (parent.state!.reasons.length === 0) await sleep(1);
+    expect(parent.state!.reasons).toEqual([CHANNEL_LOST]);
+    expect(channel.closed).toBe(true);
+    await parent.stop();
+  });
 });

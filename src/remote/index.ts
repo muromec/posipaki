@@ -30,9 +30,11 @@ export {
   isResume,
   isRelease,
 } from "./channel.js";
+// what a wire that could not be read says: unreadable frames never arrive as exceptions
+export { BAD_PREFIX_LIMIT, badFrame, badReason, errorFrame, errorReason, isBad, isError } from "./channel.js";
 
 // json1 protocol
-export { VERSION, encode, decode, json1Channel } from "./protocols/json1.js";
+export { VERSION, encode, decode, readFrame, json1Channel } from "./protocols/json1.js";
 
 // transports
 export { WebSocketTransport, WS_OPEN, type WebSocketLike } from "./transports/websocket.js";

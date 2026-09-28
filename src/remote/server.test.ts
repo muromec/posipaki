@@ -4,7 +4,7 @@ import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "../index.js";
 import { serveRemoteActor } from "./server.js";
 import { rootIdFor } from "./process-ref.js";
-import { isState, isMsg, isExit } from "./channel.js";
+import { errorReason, isError, isExit, isMsg, isState } from "./channel.js";
 import type { Channel } from "./channel.js";
 import { sleep } from "../util.js";
 
@@ -148,5 +148,84 @@ describe("serveRemoteActor (unit)", () => {
     await waitUntil(() => channel.handler !== null, "message handler");
     channel.handler!({ to: ROOT, $msg: { fromName: "root", body: { type: "STOP" } } });
     await serve;
+  });
+  it("refuses a connection whose first frame could not be read, and says why", async () => {
+    const channel = new FakeChannel();
+    const serve = serveRemoteActor(makeEcho(), () => Promise.resolve(channel));
+
+    await waitUntil(() => channel.handler !== null, "$init handler");
+    // What the codec hands the seam for a line that is not a frame at all: here it arrives where
+    // the connection is being made, which is a failed start like any other — refused to whoever
+    // opened the connection, and the far side told what was wrong with what it said.
+    channel.handler!({ $bad: { reason: "Unexpected token 'n'", length: 13, prefix: "not-json-17" } });
+
+    await expect(serve).rejects.toThrow(/expected \$init/);
+    expect(errorReason(channel.sent.find(isError)!)).toContain("expected $init");
+  });
+
+  it("says what it could not read, and ends that connection", async () => {
+    const channel = new FakeChannel();
+    const serve = serveRemoteActor(makeEcho(), () => Promise.resolve(channel));
+
+    await waitUntil(() => channel.handler !== null, "$init handler");
+    channel.handler!({ $init: { parentName: "root", parentIdName: "root" } });
+
+    // The dispatch handler replaces the one that took the handshake a moment later, and a frame
+    // dropped into the gap between the two is a frame lost: ask to hear about the root, and say the
+    // unreadable frame, until it is answered.
+    const deadline = Date.now() + 5000;
+    while (!channel.sent.some(isError) && Date.now() < deadline) {
+      channel.handler?.({ to: ROOT, $tune: { streams: ["message", "state", "exit"] } });
+      channel.handler?.({ $bad: { reason: "Unexpected token 'n'", length: 13, prefix: "not-json-17" } });
+      await sleep(5);
+    }
+
+    // The connection is over: the actor spawned for it ends with it, and the serving call returns
+    // to whoever opened the connection.
+    await serve;
+    expect(channel.closed).toBe(true);
+
+    // What was said, in the order it was said: what could not be read, then the end of the root.
+    const said = channel.sent
+      .map((frame) => (isError(frame) ? "$error" : isExit(frame) ? "$exit" : null))
+      .filter((what) => what !== null);
+    expect(said).toEqual(["$error", "$exit"]);
+    expect(errorReason(channel.sent.find(isError)!)).toBe("Unexpected token 'n'");
+  });
+
+  it("costs one connection, and not the process", async () => {
+    // Two connections, the way a host process serves them: one actor each, and a bad frame on one
+    // of them is not news the other one ever hears.
+    const broken = new FakeChannel();
+    const brokenServe = serveRemoteActor(makeEcho(), () => Promise.resolve(broken));
+    await waitUntil(() => broken.handler !== null, "$init handler");
+    broken.handler!({ $init: { parentName: "root", parentIdName: "root" } });
+
+    const serving = new FakeChannel();
+    const servingServe = serveRemoteActor(makeEcho(), () => Promise.resolve(serving));
+    await waitUntil(() => serving.handler !== null, "$init handler");
+    serving.handler!({ $init: { parentName: "root", parentIdName: "root" } });
+
+    const deadline = Date.now() + 5000;
+    while (!broken.sent.some(isError) && Date.now() < deadline) {
+      broken.handler?.({ $bad: { reason: "not a frame", length: 3, prefix: "no!" } });
+      await sleep(5);
+    }
+    await brokenServe;
+    expect(broken.closed).toBe(true);
+
+    // The other connection is still served: still asked, still answered.
+    let answered: unknown = null;
+    const until = Date.now() + 5000;
+    while (answered === null && Date.now() < until) {
+      serving.handler?.({ to: ROOT, $tune: { streams: ["message", "state", "exit"] } });
+      serving.handler?.({ to: ROOT, $msg: { fromName: "root", body: { type: "PING", count: 3 } } });
+      answered = serving.sent.find(isMsg) ?? null;
+      await sleep(5);
+    }
+    expect((answered as { $msg: { body: unknown } }).$msg.body).toEqual({ type: "PONG", count: 3 });
+
+    serving.handler!({ to: ROOT, $msg: { fromName: "root", body: { type: "STOP" } } });
+    await servingServe;
   });
 });

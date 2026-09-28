@@ -1,8 +1,36 @@
 // ── json1 protocol tests ───────────────────────────────────────────────────
 
 import { describe, it, expect } from "vitest";
-import { encode, decode, VERSION } from "./json1.js";
-import { isProto, isInit, isState, isMsg, isExit } from "../channel.js";
+import { encode, decode, json1Channel, VERSION } from "./json1.js";
+import { BAD_PREFIX_LIMIT, badReason, isProto, isInit, isState, isMsg, isExit } from "../channel.js";
+import type { StringTransport } from "../channel.js";
+
+/** As much of a transport as reading a frame needs: the handler the codec installs, and a way to
+ *  call it the way a socket's `message` event does — which is the call an unreadable frame used to
+ *  escape through, as an uncaught exception with nobody to catch it. */
+function lineTransport() {
+  let handler: ((line: string) => void) | null = null;
+  const transport: StringTransport = {
+    send() {},
+    onMessage(h) {
+      handler = h;
+    },
+    removeHandler() {
+      handler = null;
+    },
+    onClose() {},
+    async close() {},
+  };
+  return { transport, deliver: (line: string) => handler!(line) };
+}
+
+function readLines(lines: string[]): Record<string, unknown>[] {
+  const { transport, deliver } = lineTransport();
+  const frames: Record<string, unknown>[] = [];
+  json1Channel(transport).onMessage((frame) => frames.push(frame));
+  for (const line of lines) deliver(line);
+  return frames;
+}
 
 describe("json1 protocol", () => {
   it("round-trips frames", () => {
@@ -25,5 +53,62 @@ describe("json1 protocol", () => {
     expect(isState(decode(encode({ $state: {} })))).toBe(true);
     expect(isMsg(decode(encode({ $msg: { fromName: "x", body: { type: "T" } } })))).toBe(true);
     expect(isExit(decode(encode({ $exit: { code: 0, state: null } })))).toBe(true);
+  });
+});
+
+describe("json1 reading a line", () => {
+  it("hands a frame through as it is", () => {
+    const [frame, ...rest] = readLines([encode({ $state: { pings: 1 } })]);
+    expect(frame).toEqual({ $state: { pings: 1 } });
+    expect(rest).toEqual([]);
+  });
+
+  it("reports a line that is not JSON instead of throwing at the transport", () => {
+    // The throw would land in the transport's own callback — a socket's message event — where
+    // nothing owns it: one unreadable frame would take the host process, and every other
+    // connection in it, down.  What comes back instead is the frame that says so.
+    const frames = readLines(["not json at all"]);
+    expect(frames).toHaveLength(1);
+    expect(badReason(frames[0])).toBeTruthy();
+    expect(frames[0].$bad).toEqual({
+      reason: expect.any(String),
+      length: "not json at all".length,
+      prefix: "not json at all",
+    });
+  });
+
+  it("reports a line that is JSON but not a frame", () => {
+    // Parsing is not framing: a document that is a number, a string, an array or null reads as a
+    // frame further up (`"$init" in 7` throws) just as surely as a line that never parsed.
+    const frames = readLines(["7", '"hello"', "[1,2]", "null"]);
+    expect(frames.map(badReason)).toEqual([
+      expect.stringContaining("a number"),
+      expect.stringContaining("a string"),
+      expect.stringContaining("an array"),
+      expect.stringContaining("null"),
+    ]);
+    for (const frame of frames) {
+      expect(typeof (frame.$bad as { reason: string }).reason).toBe("string");
+    }
+  });
+
+  it("keeps a short head of what it could not read, and says how long it was", () => {
+    const long = "x".repeat(500);
+    const [frame] = readLines([long]);
+    expect(frame.$bad).toEqual({
+      reason: expect.any(String),
+      length: 500,
+      prefix: "x".repeat(BAD_PREFIX_LIMIT) + "…",
+    });
+  });
+
+  it("says nothing more about a line than what it was", () => {
+    // A line that failed to parse is the one line nobody vouched for: what it holds is not this
+    // protocol's business, and must not be carried whole into a log, a transcript or a context.
+    const secret = `token=${"s".repeat(80)}`;
+    const [frame] = readLines([secret]);
+    const kept = (frame.$bad as { prefix: string }).prefix;
+    expect(kept.length).toBe(BAD_PREFIX_LIMIT + 1);
+    expect(secret.startsWith(kept.slice(0, -1))).toBe(true);
   });
 });

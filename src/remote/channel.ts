@@ -94,6 +94,73 @@ export function isExit(
   return "$exit" in msg;
 }
 
+// ── a wire that could not be read ─────────────────────────────────────────
+//
+// Two frames are about the wire itself and not about a process: what a codec could
+// not read, and what a side says when the wire is over.  Neither is addressed to
+// anything, and both are decided before a frame is looked up as news or as an ask —
+// a frame about the wire is about the ground the other frames stand on.
+//
+//   {"$bad": {"reason": "…", "raw": "…"}}   this side could not read that frame
+//   {"$error": "…"}                          the wire cannot be spoken over, and why
+//
+// They are frames rather than raised errors on purpose.  A frame is read inside the
+// transport's own callback — a socket's `message` event, a stream's line reader —
+// where a throw belongs to nobody: it arrives at the host as an uncaught exception,
+// and one unreadable frame from one peer takes the process down, every other
+// connection in it included.  An unreadable frame is the connection's business, not
+// the process's, so it is carried as a frame the connection can answer: `$bad` is how
+// a reader says it inward, and `$error` is how a side says it outward before ending
+// that connection.
+//
+// `$error` is not a refused call — a call that is refused says so about itself, in
+// `$r.result.<name>` (see below).  This one is about the wire the calls travel on.
+
+const BAD_KEY = "$bad";
+
+/** How much of an unreadable line is carried: enough to see what it was, never enough to be it.
+ *  A line that failed to parse is the one line nobody vouched for, so quoting it whole would move
+ *  whatever it holds — a credential in a paste accident is how that happens — into every log,
+ *  transcript and context window that later reads the frame.  Why, how long, and a short head of
+ *  it.  (`reason` carries a little of the line on its own: a JSON parser says where it gave up and
+ *  quotes what it was looking at.  That is the parser's business, not a promise this file makes.) */
+export const BAD_PREFIX_LIMIT = 32;
+
+export function isBad(msg: Record<string, unknown>): msg is { $bad: { reason: string } } {
+  return BAD_KEY in msg;
+}
+
+/** The frame that says a frame could not be read: why, how long it was, and the head of it. */
+export function badFrame(reason: string, raw: string): Record<string, unknown> {
+  const prefix = raw.length > BAD_PREFIX_LIMIT ? `${raw.slice(0, BAD_PREFIX_LIMIT)}…` : raw;
+  return { [BAD_KEY]: { reason, length: raw.length, prefix } };
+}
+
+/** Why a frame could not be read, or null when it is not a frame that says so. */
+export function badReason(msg: Record<string, unknown>): string | null {
+  const body = msg[BAD_KEY];
+  if (typeof body !== "object" || body === null) return null;
+  const reason = (body as { reason?: unknown }).reason;
+  return typeof reason === "string" ? reason : null;
+}
+
+const ERROR_KEY = "$error";
+
+export function isError(msg: Record<string, unknown>): msg is { $error: string } {
+  return ERROR_KEY in msg;
+}
+
+/** The frame that says the wire is over: the reason, and the connection ends with it. */
+export function errorFrame(reason: string): Record<string, unknown> {
+  return { [ERROR_KEY]: reason };
+}
+
+/** The reason a wire error carries, or null when it is not one. */
+export function errorReason(msg: Record<string, unknown>): string | null {
+  const reason = msg[ERROR_KEY];
+  return typeof reason === "string" ? reason : null;
+}
+
 // ── what is said about a crossed process ────────────────────────────────────
 //
 // A process that crossed can be asked for less than everything, or for nothing at

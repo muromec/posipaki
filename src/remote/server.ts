@@ -21,8 +21,11 @@ import { makeSender } from "./sender.js";
 import {
   REFLECT_METHODS,
   asReflectionCall,
+  badReason,
   decodeFrame,
   encodeFrame,
+  errorFrame,
+  errorReason,
   frameTo,
   isExit,
   isInit,
@@ -113,7 +116,16 @@ export async function serveRemoteActor<
     });
   });
   channel.removeHandler();
-  const initFrame = decodeFrame(waiting.shift() as Record<string, unknown>, handleFor);
+  const firstFrame = waiting.shift() as Record<string, unknown>;
+  // A first frame that could not be read is a failed start like any other: the far side is told
+  // what could not be read, and this connection is refused to its caller — the spawner that opened
+  // it — rather than raised into the host.  Nothing is served yet, so nothing is stopped here.
+  const initProblem = badReason(firstFrame) ?? errorReason(firstFrame);
+  if (initProblem !== null) {
+    await write(errorFrame(`expected $init: ${initProblem}`)).catch(() => undefined);
+    throw new Error(`serveRemoteActor: expected $init (${initProblem})`);
+  }
+  const initFrame = decodeFrame(firstFrame, handleFor);
   if (!isInit(initFrame)) {
     throw new Error("serveRemoteActor: expected $init");
   }
@@ -153,8 +165,36 @@ export async function serveRemoteActor<
     void proc.stop();
   });
 
+  /**
+   * A frame that was not a frame is the connection's problem and not the process's: the far side is
+   * told what could not be read, and then this connection ends — the actor it was serving ends with
+   * it, that being what it was spawned for.  The host everything else runs in is never the cost of
+   * one peer that is not speaking the protocol.
+   *
+   * The write is awaited only so the reason is out before the wire closes.  A wire that has already
+   * gone ends nothing twice, and the ending is the part that matters.
+   */
+  const endUnreadable = async (reason: string): Promise<void> => {
+    console.warn(`a frame from the far side could not be read: ${reason}`);
+    try {
+      await write(errorFrame(reason));
+    } catch {
+      // The wire went before the reason could; the ending below is the same either way.
+    }
+    await proc.stop();
+  };
+
   // bridge channel input → actor
   function dispatch(raw: Record<string, unknown>): void {
+    // A frame about the wire is settled before anything else is looked up: what a codec could not
+    // read, and a far side saying the connection is over, are one piece of news here — this
+    // connection cannot be spoken over any more, and nothing said after it could be trusted.  The
+    // connection ends; the process does not.
+    const wireProblem = badReason(raw) ?? errorReason(raw);
+    if (wireProblem !== null) {
+      void endUnreadable(wireProblem);
+      return;
+    }
     const frame = decodeFrame(raw, handleFor);
     // An answer is about the call waiting for it and not about a process: it names
     // the seq, and is settled before anything is looked up.

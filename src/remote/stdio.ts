@@ -21,7 +21,13 @@
 import { createReadStream, createWriteStream } from "node:fs";
 import * as readline from "node:readline";
 import type { Readable, Writable } from "node:stream";
-import { isProto, type Channel, type StringTransport } from "./channel.js";
+import {
+  errorFrame as wireErrorFrame,
+  errorReason as wireErrorReason,
+  isProto,
+  type Channel,
+  type StringTransport,
+} from "./channel.js";
 import { VERSION, json1Channel } from "./protocols/json1.js";
 
 /** The stream pair a line transport talks over. */
@@ -40,8 +46,6 @@ export type OutputSink = (fd: OutputFd, data: string) => void;
 export const HANDSHAKE_TIMEOUT_MS = 15_000;
 
 const OUTPUT_KEY = "$fd";
-
-const ERROR_KEY = "$error";
 
 /** Raised when the wire itself fails: no frame, the wrong protocol, a peer that went away. */
 export class StdioWireError extends Error {
@@ -81,14 +85,16 @@ export function parseOutputFrame(line: string): OutputFrame | null {
   return { fd, data: typeof data === "string" ? data : JSON.stringify(data) };
 }
 
+/** An `$error` frame as a line.  The word and its shape are the shared vocabulary's
+ *  (channel.ts) — one word for a wire that cannot be spoken over, whether the failure was at
+ *  the start of a session or in the middle of one; what this file owns is its line form. */
 export function errorFrame(reason: string): string {
-  return JSON.stringify({ [ERROR_KEY]: reason });
+  return JSON.stringify(wireErrorFrame(reason));
 }
 
 /** The reason an `$error` frame carries, or null when it is not one. */
 export function errorReason(frame: Record<string, unknown>): string | null {
-  const reason = frame[ERROR_KEY];
-  return typeof reason === "string" ? reason : null;
+  return wireErrorReason(frame);
 }
 
 // ── transports ─────────────────────────────────────────────────────────────
