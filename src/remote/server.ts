@@ -75,10 +75,20 @@ export async function serveRemoteActor<
   const sendToFrame = (frame: Record<string, unknown>, to: number): Promise<void> =>
     write(encodeFrame(frame, table, to));
 
+  /** Set once the connection is winding down: from here a frame that cannot be delivered has
+   *  nowhere to go by construction, and saying so with a stack is noise (see the sink below). */
+  let pvtWindDown = false;
+
   /** Every frame leaves this way.  The answer is handed back, since the one frame that
    *  has to be out before the wire closes is awaited by the side that owns the wire. */
   const sendTo: FrameSink = (frame, to) =>
     sendToFrame(frame, to).catch((e: unknown) => {
+      // Two different things wear the same words.  On a live wire a frame that did not go is a
+      // loss and belongs in the log with its stack; during the wind-down the peer is gone by
+      // construction and every stream still saying its last word fails the same way.  Measured on
+      // the voice service, 2026-09-28: half a dozen raw stacks per restart from the teardown paths
+      // alone, which is how a reader — twice that evening — comes to mistake a deploy for an outage.
+      if (pvtWindDown) return;
       console.error("Error sending out the frame", e);
     });
 
@@ -290,7 +300,9 @@ export async function serveRemoteActor<
     code = 1;
   }
   // The root is over, which is the last thing said about it.  It is said and awaited
-  // here, because the wire closes right after it.
+  // here, because the wire closes right after it.  From this line on, the wire is going: what
+  // cannot be delivered is expected, and the sink stops reporting it.
+  pvtWindDown = true;
   await streams.sayEnded(table.rootId(), code);
   // And nothing more about anything else of this side's: there is no one left to say
   // it to.

@@ -117,10 +117,17 @@ export function remoteClient<
       const write = (frame: Record<string, unknown>): Promise<void> =>
         Promise.resolve(channel.send(frame)).then(() => streams.flush());
 
+      /** Set once the wire is going: after that, a frame that cannot be delivered has nowhere to
+       *  go by construction, and a stack for it is noise rather than news (see the sink below). */
+      let pvtWindDown = false;
+
       /** Every frame leaves this way: the processes in it become references, and
        *  what the frame is addressed to becomes the id the far side knows. */
       const sendTo: FrameSink = (frame, to) => {
         void write(encodeFrame(frame, table, to)).catch((error: unknown) => {
+          // A live wire reports a lost frame loudly; a wire that is ending reports nothing, because
+          // its last words are exactly what cannot be delivered any more (see server.ts).
+          if (pvtWindDown) return;
           console.error("Error sending out the frame", error);
         });
       };
@@ -238,6 +245,7 @@ export function remoteClient<
         // And nothing more is said about the processes of this side's own that were handed
         // over: there is no one left to say it to.
         streams.stopAll();
+        pvtWindDown = true;
         this.exit(CHANNEL_LOST);
       };
 
