@@ -63,3 +63,14 @@ happened.
 **Not the fix:** a process-level `uncaughtException` handler. A library must not install
 one, and a service that continues after an unknown fault is a service lying about what
 still works — the throw belonged to the connection, so it is the connection that ends.
+
+**Fixed in:** 0.41.0, `5b23160`. The voice service on the box with the audio was rebuilt
+with it the same evening and checked against the live socket in both shapes: a line that is
+not JSON before the handshake (answered `expected $init: …`, the connection ended) and one
+after it (answered `$error: …`, the connection ended). In both the process kept its
+`NRestarts=0` and the next connection was greeted, and its journal carries the two markers
+worth grepping for — `a frame from the far side could not be read: <reason>` for the second
+shape, and the listener's `could not be served: Error: serveRemoteActor: expected $init
+(<reason>)` for the first. That deployment's bundles were built from this tree rather than
+from the registry copy of the package (0.41.0 is not published yet), which is why the
+release line here names the commit.

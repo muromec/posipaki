@@ -17,7 +17,7 @@
 | BUG-006 | [A hook's `this:` annotation erases the methods surface](FIXED/BUG-006-a-hook-s-this-annotation-erases-the-methods-surface.md) | — | fixed 0.35.2, `d31a585` |
 | BUG-007 | [A remote child is shown under the far side's own name](FIXED/BUG-007-a-remote-child-is-shown-under-the-far-side-s-own-name.md) | 🟡 MEDIUM | fixed 0.37.1, `838f8d7` |
 | BUG-008 | [A process on the far side cannot be looked up by name](FIXED/BUG-008-a-process-on-the-far-side-cannot-be-looked-up-by-name.md) | 🟡 MEDIUM | fixed 0.38.0, `73a26d9` |
-| BUG-009 | [A frame that cannot be read takes the host process down](BUG-009-a-frame-that-cannot-be-read-takes-the-host-down.md) | 🔴 HIGH | open |
+| BUG-009 | [A frame that cannot be read takes the host process down](FIXED/BUG-009-a-frame-that-cannot-be-read-takes-the-host-down.md) | 🔴 HIGH | fixed 0.41.0, `5b23160` |
 
 ## Filing one
 
