@@ -65,6 +65,31 @@ describe("wsClientSpawner", () => {
     FakeClientWebSocket.last!.openAndSend({ $proto: "wrong.v1" });
     await expect(channelPromise).rejects.toThrow(/unsupported protocol/);
   });
+
+  it("names what a failed open was, rather than the event that carried it", async () => {
+    // A WHATWG WebSocket reports an open failure as an ErrorEvent, and `String(event)`
+    // is `[object ErrorEvent]`: every field that says what happened is dropped by
+    // stringifying it (2026-10-01 — 24 such lines in forty minutes, nothing to act on).
+    class FailingClientWebSocket extends FakeClientWebSocket {
+      constructor(url: string) {
+        super(url);
+        queueMicrotask(() =>
+          this.onerror?.({
+            type: "error",
+            message: "",
+            error: new Error("connect ECONNREFUSED 127.0.0.1:1"),
+          }),
+        );
+      }
+    }
+
+    const spawner = wsClientSpawner(
+      "ws://127.0.0.1:1/actor",
+      FailingClientWebSocket as unknown as WebSocketCtor,
+    );
+
+    await expect(spawner({})).rejects.toThrow(/ECONNREFUSED/);
+  });
 });
 
 describe("wsServerSpawner", () => {
