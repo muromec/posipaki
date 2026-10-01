@@ -22,11 +22,27 @@ export type WebSocketCtor = new (url: string) => {
 
 const defaultWebSocket = (globalThis as { WebSocket?: WebSocketCtor }).WebSocket;
 
+/** What a socket failure says about itself.
+ *
+ * A WHATWG WebSocket reports an open failure as an ErrorEvent, and `String(event)` is
+ * `[object ErrorEvent]`: its type, its message and the underlying error are all in its
+ * own fields, so read those rather than stringify the event that carries them.
+ */
+function describeSocketError(err: unknown): string {
+  if (typeof err !== "object" || err === null) return String(err);
+  const event = err as { type?: unknown; message?: unknown; error?: unknown };
+  const cause = event.error instanceof Error ? event.error.message : event.error;
+  const parts = [event.type, event.message, cause].filter(
+    (part): part is string => typeof part === "string" && part.length > 0,
+  );
+  return parts.length > 0 ? parts.join(": ") : String(err);
+}
+
 function openWebSocket(ws: { readonly readyState: number; onopen: (() => void) | null; onerror: ((err: unknown) => void) | null }): Promise<void> {
   return new Promise((resolve, reject) => {
     if (ws.readyState === 1 /* OPEN */) return resolve();
     ws.onopen = () => resolve();
-    ws.onerror = (err) => reject(new Error(`websocket failed to open: ${String(err)}`));
+    ws.onerror = (err) => reject(new Error(`websocket failed to open: ${describeSocketError(err)}`));
   });
 }
 
