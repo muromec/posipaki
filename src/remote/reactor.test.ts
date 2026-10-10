@@ -140,9 +140,14 @@ describe("reactor", () => {
   it("reports the meta the factory added, not the listener's", async () => {
     const listener = new QueueListener<{ who: string }>();
     const sessions: Session<{ who: string }>[] = [];
-    const r = reactor(listener, () => ({ actor: makeEcho(), meta: { who: "from the factory" } }), {
-      onSession: (session) => sessions.push(session),
-    });
+    const r = reactor(
+      listener,
+      async (_connection, init) => ({
+        proc: await makeEcho().spawn(init.args, { name: init.rootName }),
+        meta: { who: "from the factory" },
+      }),
+      { onSession: (session) => sessions.push(session) },
+    );
 
     const transport = new FakeTransport();
     listener.offer({ meta: { who: "from the listener" }, transport });
@@ -150,6 +155,52 @@ describe("reactor", () => {
 
     await waitUntil(() => sessions.length === 1, "the session report");
     expect(sessions[0]!.meta).toEqual({ who: "from the factory" });
+    await r.stop();
+  });
+
+  it("runs the factory's cleanup, and leaves a process it did not spawn running", async () => {
+    const listener = new QueueListener<{ who: string }>();
+    const closed: Session<{ who: string }>[] = [];
+    const sessions: Session<{ who: string }>[] = [];
+    const proc = await makeEcho().spawn(undefined, { name: "kept" });
+    let ended = false;
+    void proc.wait().then(
+      () => {
+        ended = true;
+      },
+      () => {
+        ended = true;
+      },
+    );
+    let cleaned = 0;
+    const r = reactor(
+      listener,
+      () => ({
+        proc,
+        cleanup: () => {
+          cleaned += 1;
+        },
+      }),
+      {
+        onSession: (session) => sessions.push(session),
+        onClosed: (session) => closed.push(session),
+      },
+    );
+
+    const transport = new FakeTransport();
+    listener.offer({ meta: { who: "first" }, transport });
+    await connected(transport);
+    // The session is reported before the connection goes: that is when the serve is wired to it.
+    await waitUntil(() => sessions.length === 1, "the session report");
+
+    // The connection goes: the session ends, and the cleanup the factory answered with is what runs.
+    await transport.close();
+    await waitUntil(() => closed.length === 1, "the close report");
+    expect(cleaned).toBe(1);
+    // A process the connection did not own is still up, and only its own stop ends it.
+    expect(ended).toBe(false);
+    await proc.stop();
+    expect(ended).toBe(true);
     await r.stop();
   });
 

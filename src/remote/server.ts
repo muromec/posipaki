@@ -1,11 +1,10 @@
 // ── Server side of the seam ────────────────────────────────────────────────
 //
-// serveChannel serves one posipaki actor over a frame Channel that is already through
-// the `$proto` handshake. It knows only the frame vocabulary (channel.ts) — no protocol,
-// no transport, no spawner. The reactor calls it once for each connection it accepts,
-// and serveRemoteActor (reactor.ts) is the same thing for a single connection.
-import type { ActorDefinition, ReflectionOptions, SpawnedFrom } from "../actor-types.js";
-import type { Message } from "../types.js";
+// serveChannel serves one process over a frame Channel that is already through the `$proto` handshake, and
+// takes a factory for the process rather than spawning one itself. It knows only the frame vocabulary
+// (channel.ts) — no protocol, no transport, no spawner. The reactor calls it once for each connection it
+// accepts, and serveRemoteActor (reactor.ts) is the same thing for a single connection.
+import type { ActorDefinition, SpawnedFrom } from "../actor-types.js";
 import { isProcess } from "../process.async.js";
 import type { Channel } from "./channel.js";
 import {
@@ -46,6 +45,35 @@ export type Spawner = () => Promise<Channel>;
 /** The process a definition's spawn gives back: what a caller reports when it serves one. */
 export type ServedProcess<T extends ActorDefinition<any, any, any, any, any>> = SpawnedFrom<T>;
 
+/** A process, whatever definition it came from: all the serving half needs of one. */
+export type AnyProcess = ServedProcess<ActorDefinition<any, any, any, any, any>>;
+
+/** What the far side stated when it opened the connection: the args it asks to be spawned with, and its own
+ *  name for its end of the connection. */
+export interface Init<Args = unknown> {
+  readonly args: Args;
+  /** The name the process answers to as a sender: the far side's word, or the default when it stated none. */
+  readonly rootName: string;
+  readonly parentName: string | null;
+  readonly parentId: symbol | null;
+}
+
+/** What a factory answers: the process to serve, and what the serving half has to know about it. */
+export interface Served<Meta = unknown> {
+  readonly proc: AnyProcess;
+  /** What the factory resolved, when it has more to say about the session than the connection did. */
+  readonly meta?: Meta;
+  /**
+   * What ends this session: run once, when the connection closes and when the reactor stops.  It defaults to
+   * stopping the process, which is what a factory that spawned one wants; a factory that hands over a process
+   * it did not spawn returns its own, since that process outlives every connection.
+   */
+  readonly cleanup?: () => void | Promise<void>;
+}
+
+/** A factory, as the serving half sees it: the connection and the meta are its caller's business. */
+export type MakeProcess<Meta = unknown> = (init: Init) => Served<Meta> | Promise<Served<Meta>>;
+
 /** The name the served actor is spawned under, and the one it answers to as a sender when
  *  it talks to a process of the far side's: what the client states in `$init`, since the
  *  process being served is the one its proxy was forked as over there.  The fallback is for
@@ -53,20 +81,14 @@ export type ServedProcess<T extends ActorDefinition<any, any, any, any, any>> = 
  *  far side's name for its own end is all there is to go on. */
 let rootName: string = SERVED_ROOT_NAME;
 
-export async function serveChannel<
-  Args,
-  State,
-  InMsg extends Message,
-  OutMsg extends Message,
-  R extends ReflectionOptions,
->(
-  actor: ActorDefinition<Args, State, InMsg, OutMsg, R>,
+export async function serveChannel<Meta = unknown>(
   channel: Channel,
+  makeProc: MakeProcess<Meta>,
   /**
-   * Called once the served process is up and wired to the connection, with the process itself: the
-   * handle a caller reports.  Nothing about the serve changes because of it.
+   * Called once the served process is up and wired to the connection, with what the factory answered and the
+   * one function that ends this session.  Nothing about the serve changes because of it.
    */
-  onSpawned?: (proc: ServedProcess<ActorDefinition<Args, State, InMsg, OutMsg, R>>) => void,
+  onSpawned?: (served: Served<Meta>, ended: () => Promise<void>) => void,
 ): Promise<void> {
   // The table takes the even ids: the odd ones are the far side's, so the same
   // number can never name a process on both ends at once.  A process that is
@@ -157,13 +179,30 @@ export async function serveChannel<
   const parentId = parentIdName ? Symbol.for(parentIdName) : null;
   const { parentName: _pn, parentIdName: _pid, ...initArgs } = init;
 
-  const proc = await actor.spawn(initArgs as unknown as Args, {
-    name: rootName,
+  const opening: Init = {
+    args: initArgs,
+    rootName,
     parentName,
     parentId,
-  });
+  };
+  const served = await makeProc(opening);
+  const proc = served.proc;
 
-  // This side's own end of the connection is the process it just spawned: id 0
+  // What ends this session, run once: the factory's cleanup when it returned one, and stopping the process
+  // when it did not.  A factory that hands a process over without one is saying that process outlives the
+  // connection, and this is where that is honoured.  The call is kept, so whoever asks second waits for the
+  // ending rather than returning before it.
+  let pvtEnding: Promise<void> | null = null;
+  const end = (): Promise<void> => {
+    if (pvtEnding === null) {
+      pvtEnding = (async () => {
+        await (served.cleanup ?? (() => proc.stop()))();
+      })();
+    }
+    return pvtEnding;
+  };
+
+  // This side's own end of the connection is the process this session serves: id 0
   // here, and on the other side the proxy that asked for it.
   table.bindRoot(proc);
 
@@ -177,16 +216,22 @@ export async function serveChannel<
   streams.crossed(proc, table.rootId());
   streams.flush();
 
-  // A wire that goes takes the reason to be served with it: nobody is left to answer, so the actor
-  // is stopped — children and all, the way any other stop works.  Left alone it outlives every
-  // client that ever dropped, and the teardown below, which waits for exactly this end, never runs.
+  // The session is over when either side is: the process ended, or the connection went.  That is the same
+  // moment for a process the session owns, since its cleanup stops it, and not the same at all for one that
+  // outlives the connection.  A close handler is one slot, so the promise the teardown waits on is settled
+  // from the same place the cleanup runs.
+  let pvtGone: () => void = () => {};
+  const connectionGone = new Promise<void>((resolve) => {
+    pvtGone = resolve;
+  });
   channel.onClose(() => {
-    void proc.stop();
+    pvtGone();
+    void end();
   });
 
   // The process is up and wired: whoever asked for the handle of what is served gets it here, which is
   // the only moment it exists and the connection is still open.
-  onSpawned?.(proc);
+  onSpawned?.(served, end);
 
   /**
    * A frame that was not a frame is the connection's problem and not the process's: the far side is
@@ -204,7 +249,7 @@ export async function serveChannel<
     } catch {
       // The wire went before the reason could; the ending below is the same either way.
     }
-    await proc.stop();
+    await end();
   };
 
   // bridge channel input → actor
@@ -292,8 +337,8 @@ export async function serveChannel<
       // A message for a process this side holds goes into it, the root included.  One
       // about a process the far side holds — a handle here — is that process talking,
       // and goes to whoever subscribed to the handle.
-      if (isProcess(mine)) mine.send(body as InMsg, makeSender(fromName, parentName, parentId));
-      else if (isRemoteProcess(news)) news.receiveMessage(body as OutMsg, fromName);
+      if (isProcess(mine)) mine.send(body, makeSender(fromName, parentName, parentId));
+      else if (isRemoteProcess(news)) news.receiveMessage(body, fromName);
       return;
     }
     const call = asReflectionCall(frame);
@@ -304,14 +349,19 @@ export async function serveChannel<
   channel.onMessage(dispatch);
   for (const frame of waiting.splice(0)) dispatch(frame);
 
-  // await actor exit, announce it, close
+  // The session is awaited here: the process's end, or the connection going, whichever is first.
   let code = 0;
-  try {
-    await proc.wait();
-  } catch (err) {
-    console.error("server actor error:", err);
-    code = 1;
-  }
+  const procEnded = proc.wait().then(
+    () => undefined,
+    (err: unknown) => {
+      console.error("server actor error:", err);
+      code = 1;
+    },
+  );
+  await Promise.race([procEnded, connectionGone]);
+  // Whichever it was, the session's cleanup runs here: the process stops, unless the factory answered with
+  // something else to do.
+  await end();
   // The root is over, which is the last thing said about it.  It is said and awaited
   // here, because the wire closes right after it.  From this line on, the wire is going: what
   // cannot be delivered is expected, and the sink stops reporting it.

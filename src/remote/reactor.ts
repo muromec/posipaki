@@ -8,7 +8,7 @@ import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel, StringTransport } from "./channel.js";
 import { json1Channel, VERSION } from "./protocols/json1.js";
-import { serveChannel, type ServedProcess, type Spawner } from "./server.js";
+import { serveChannel, type AnyProcess, type Init, type Served, type ServedProcess, type Spawner } from "./server.js";
 
 /** Any actor definition: the reactor serves it, and does not care which one it is. */
 export type AnyActorDefinition = ActorDefinition<any, any, any, any, any>;
@@ -45,10 +45,24 @@ export interface Session<Meta = unknown> {
   readonly done: Promise<void>;
 }
 
-/** What a connection becomes: an actor to serve, and any meta to report about it. */
+/** What a connection becomes: the process to serve.  It is called once the `$init` has been read, so the
+ *  args the far side asked for are in hand.  A bare actor definition is the shortcut for a factory that
+ *  spawns one with them. */
 export type SessionFactory<Meta = unknown> = (
   connection: Connection<Meta>,
-) => AnyActorDefinition | { actor: AnyActorDefinition; meta?: Meta };
+  init: Init,
+) => Served<Meta> | AnyProcess | Promise<Served<Meta> | AnyProcess>;
+
+/** The shortcut, as a factory: spawn the definition with what the far side asked for. */
+export function spawnFactory<Meta = unknown>(definition: AnyActorDefinition): SessionFactory<Meta> {
+  return async (_connection, init) => ({
+    proc: await definition.spawn(init.args, {
+      name: init.rootName,
+      parentName: init.parentName,
+      parentId: init.parentId,
+    }),
+  });
+}
 
 export interface ReactorOptions<Meta = unknown> {
   /** A connection was admitted and its process is up. */
@@ -76,44 +90,51 @@ export function reactor<Meta = unknown>(
   serve: AnyActorDefinition | SessionFactory<Meta>,
   options: ReactorOptions<Meta> = {},
 ): Reactor {
-  const factory: SessionFactory<Meta> = typeof serve === "function" ? serve : () => serve;
+  const factory: SessionFactory<Meta> = typeof serve === "function" ? serve : spawnFactory(serve);
   const stopping = new AbortController();
-  const live = new Set<ServedProcess<AnyActorDefinition>>();
+  // What is being served: the one function that ends each session, and the promise that says it is over.
+  const live = new Map<() => Promise<void>, Promise<void>>();
 
   const serveOne = async (connection: Connection<Meta>): Promise<void> => {
     // Held in an object: the session is built inside the seam's callback, and a local `let` assigned
     // only there is narrowed to null by the compiler by the time the teardown reads it.
-    const held: { session: Session<Meta> | null } = { session: null };
+    const held: { session: Session<Meta> | null; end: (() => Promise<void>) | null } = {
+      session: null,
+      end: null,
+    };
     let settle: () => void = () => {};
     const done = new Promise<void>((resolve) => {
       settle = resolve;
     });
 
     try {
-      const requested = factory(connection);
-      const added = "actor" in requested;
-      const actor = added ? requested.actor : requested;
-      const meta = added ? (requested.meta ?? connection.meta) : connection.meta;
       // The way in: a transport this side runs the protocol step on, or a channel somebody else already
       // handshaked.  Either way the frame hook goes on before the serve sees a frame.
       const channel = connection.channel
         ? withFrameHook(connection.channel, options.onIncomingFrame)
         : await protocolStep(connection.transport, options);
 
-      await serveChannel(actor, channel, (proc) => {
-        live.add(proc);
-        const session: Session<Meta> = { proc, meta, done };
-        held.session = session;
-        options.onSession?.(session);
-      });
+      await serveChannel(
+        channel,
+        // The factory is asked where the args are: the serve reads the `$init` and hands it over.
+        async (init) => {
+          const answer = await factory(connection, init);
+          return "proc" in answer ? answer : { proc: answer };
+        },
+        (served, ended) => {
+          live.set(ended, done);
+          held.end = ended;
+          const session: Session<Meta> = { proc: served.proc, meta: served.meta ?? connection.meta, done };
+          held.session = session;
+          options.onSession?.(session);
+        },
+      );
     } catch (error) {
       options.onError?.(error, connection);
     } finally {
       const session = held.session;
-      if (session) {
-        live.delete(session.proc);
-        options.onClosed?.(session);
-      }
+      if (held.end) live.delete(held.end);
+      if (session) options.onClosed?.(session);
       settle();
     }
   };
@@ -145,7 +166,12 @@ export function reactor<Meta = unknown>(
     async stop(): Promise<void> {
       stopping.abort();
       await listener.close();
-      await Promise.all([...live].map((proc) => proc.stop()));
+      // Every live session is ended, and the stop waits for them to be over: something that asks whether a
+      // reactor is still serving gets its answer from here rather than from a race.
+      const ending = [...live.keys()].map((end) => end());
+      const over = [...live.values()];
+      await Promise.all(ending);
+      await Promise.all(over);
       await accepting;
     },
   };

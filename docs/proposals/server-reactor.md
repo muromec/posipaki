@@ -90,7 +90,7 @@ export interface Session<Meta = unknown> {
  *  name for its end of the connection. */
 export interface Init<Args = unknown> {
   readonly args: Args;
-  readonly rootName?: string;
+  readonly rootName: string;
   readonly parentName: string | null;
   readonly parentId: symbol | null;
 }
