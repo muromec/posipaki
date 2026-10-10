@@ -89,3 +89,7 @@ export { socketClientSpawner } from "./spawners/socket-client.js";
 // a fifo pair: a listener for the reactor, and a client for whoever holds the other end
 export { fifoClientSpawner, fifoListener, makeFifoPair } from "./fifo.js";
 export type { FifoListenerOptions, FifoPair } from "./fifo.js";
+
+// the websocket listener: an HTTP server's upgrades, taken in order, with admission before the handshake
+export { webSocketListener } from "./websocket.js";
+export type { UpgradeSource, WebSocketListenerOptions, WebSocketUpgrade } from "./websocket.js";

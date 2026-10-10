@@ -1,9 +1,10 @@
 # posipaki: a server reactor, with a unix socket as its first new listener
 
-> **Status**: The reactor, the unix socket listener and client spawner, `oneConnection`, and the fifo listener
-> and client spawner are built and tested; `serveRemoteActor` is a one-connection reactor, and the subprocess
-> spawners below `defineSubprocessActor` are re-expressed on the pair's client half.  Not built: the websocket
-> listener, the host-running path's `$fd` frames, and the reactor-as-actor wrapper.
+> **Status**: The reactor, the unix socket listener and client spawner, `oneConnection`, the fifo listener and
+> client spawner, and the websocket listener are built and tested; `serveRemoteActor` is a one-connection
+> reactor, and the subprocess spawners below `defineSubprocessActor` are re-expressed on the pair's client
+> half.  Not built: a WebSocket implementation of its own (the websocket listener takes the handshake as its
+> one argument), the host-running path's `$fd` frames, and the reactor-as-actor wrapper.
 
 ## Summary
 
@@ -175,24 +176,23 @@ The transport-specific half.  Two things a medium has, and the transport-agnosti
 live here: **admission**, and the arguments that arrive with the connection rather than with the actor.
 
 ```ts
-export interface Upgrade<Raw = unknown> {
-  /** The transport's own object: for a websocket, the request that asked to upgrade. */
-  readonly raw: Raw;
-  /** The URL asked for, when the transport has one.  Arguments arrive with the request — in its URL or
-   *  in its headers, whichever the medium and the deployment put them in. */
-  readonly url?: URL;
+/** What arrived: the request that asked to upgrade, and the URL it asked for. */
+export interface WebSocketUpgrade {
+  readonly request: IncomingMessage;
+  readonly url: URL;
 }
 
 export function webSocketListener<Meta = unknown>(options: {
-  /** The HTTP(S) server whose upgrades become connections. */
-  server: HttpServer;
-  /** Which path upgrades; every upgrade when it is not given. */
+  /** The server whose upgrades become connections: one that reports an upgrade before answering it. */
+  server: UpgradeSource;
+  /** Which path upgrades.  Every other path is left as it arrived. */
   path?: string;
-  /**
-   * Admission and identity.  What it returns is the connection's meta; throwing refuses the
-   * connection *before any actor exists*: a refused connection costs no actor.
-   */
-  identify?(upgrade: Upgrade<IncomingMessage>): Meta | Promise<Meta>;
+  /** Admission and identity; throwing refuses the upgrade before any actor exists. */
+  identify?(upgrade: WebSocketUpgrade): Meta | Promise<Meta>;
+  /** Complete the handshake and answer with the socket: the WebSocket implementation's own step. */
+  upgrade(request: IncomingMessage, socket: Duplex, head: Buffer): Promise<WebSocketLike>;
+  /** What a refused upgrade is told.  Default: `401`, and the socket closed. */
+  refuse?(socket: Duplex, error: unknown, upgrade: WebSocketUpgrade): void;
 }): Listener<Meta>;
 
 export function unixSocketListener<Meta = unknown>(options: {
@@ -214,6 +214,19 @@ export function fifoListener<Meta = unknown>(options: {
   identify?(connection: { read: string; write: string }): Meta | Promise<Meta>;
 }): Listener<Meta>;
 ```
+
+The websocket listener takes one thing from the consumer: `upgrade`, the call that completes the handshake and
+answers with the socket.  The library carries no WebSocket implementation of its own — the handshake and the
+framing belong to `ws`, or to the runtime — so what it is handed is the framed socket, and everything above
+that is the same as for any other medium.
+
+What a refused upgrade is told is the listener's: `401` and the socket closed by default, before the
+handshake, and `refuse` when a deployment has an answer of its own.  An upgrade on a path this listener was
+not given is left as it arrived, so one HTTP server can route its paths between several listeners.
+
+A runtime that completes the upgrade inside its own request handler decides admission there and has no
+upgrade event for a listener to take: Bun's `serve` must answer or upgrade before its handler returns, so on
+that runtime the accept loop is the consumer's own, as the integration test shows.
 
 A socket's `identify` receives the peer's credentials where the platform gives them (Linux `SO_PEERCRED`:
 uid, gid and pid), which is what a listener with no token can admit on.  A platform that does not expose
@@ -402,6 +415,8 @@ reactor work from anywhere.  The wrapper is drafted separately (`reactor-actor.m
 
 ## What it does not do
 
+- **No WebSocket implementation.**  A websocket listener is handed the call that completes the handshake, so
+  the handshake and the framing stay with `ws` or with the runtime's own server.
 - **No authentication of its own.**  Admission is the listener's `identify`, which for a socket means the
   file mode and the peer credentials, and for a websocket what an admission step already does with a token.  The
   reactor never sees a token, a URL or a file.
