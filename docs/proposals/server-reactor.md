@@ -80,16 +80,21 @@ export interface Session<Meta = unknown> {
   readonly done: Promise<void>;
 }
 
-/** What a connection becomes: an actor, or an actor plus the meta the reactor should report. */
+/** What a connection becomes: an actor to spawn, an existing process to serve, and any meta to report. */
 export type SessionFactory<Meta = unknown> = (
   connection: Connection<Meta>,
-) => ActorDefinition | { actor: ActorDefinition; meta?: Meta };
+) => ActorDefinition | { actor: ActorDefinition; meta?: Meta } | { proc: ServedProcess; meta?: Meta };
 
 export interface ReactorOptions<Meta = unknown> {
   /** A connection was admitted and its actor is up. */
   onSession?(session: Session<Meta>): void;
   /** Its connection closed, and the reactor stopped it. */
   onClosed?(session: Session<Meta>): void;
+  /**
+   * Every decoded frame, before the serve handles it.  Returning true swallows the frame, which is where a
+   * subprocess's own output frames (`$fd`) are captured instead of passed on.
+   */
+  onIncomingFrame?(frame: Record<string, unknown>): boolean | void;
 }
 
 export interface Reactor {
@@ -308,18 +313,19 @@ read that way — and reimplemented on it where that costs nothing.
 
 The parent's side of a subprocess carries the child's own stdout and stderr as frames of the protocol, and
 today the caller is handed a filter that sinks them.  When `defineSubprocessActor` becomes a reactor over a
-`subprocessListener`, those frames have to land in the same place, and there are three ways to do it:
+`subprocessListener`, they land through one option beside the two callbacks:
 
-- **a frame hook on the reactor** (`frames?: (frame) => "pass" | "handled"`): the reactor already runs the
-  framing, so the hook costs it four lines; the subprocess listener supplies the output sink as the default,
-  a caller can replace it, and the reactor never learns what `$fd` means.
-- **a plugin on the reactor**, in the shape actor plugins already have, if a second hook of the same kind
-  turns up.
-- **a tap inside the subprocess listener**, which decodes each line itself, sinks the output frames and hands
-  the rest on.  Nothing new on the reactor, at the price of decoding every line twice.
+```ts
+reactor(subprocessListener({ command, args, env }), payloadDef, {
+  // true: captured here, so it does not reach the served actor
+  onIncomingFrame: (frame) => captureOutput(frame),
+});
+```
 
-I would take the first.  The reimplementation is the last slice either way, so nothing before it depends on
-this choice.
+The reactor already decodes every frame, so the hook costs it four lines; the subprocess listener supplies
+the output sink as its default, a caller can replace it, and the reactor never learns what `$fd` means.  The
+two other shapes considered, a reactor plugin and a tap inside the subprocess listener that would decode every
+line twice, are not needed while this is the only hook of its kind.
 
 What this asks of a `Listener`, beyond a socket: `accept()` may reject for reasons that are the medium's
 own (a child that died, a connection that closed), a listener may have exactly one connection and then be done,
@@ -353,22 +359,17 @@ reactor work from anywhere.  The wrapper is drafted separately (`reactor-actor.m
 - **No TLS and no network sockets.**  A unix socket is local by definition; `net` could get the same
   treatment later, with a different set of questions (a port to secure).
 - **No framing of its own.**  Newline-delimited JSON via `json1Channel`, as the fifo and stdio transports are.
-- **No serving of a running process.**  What is served per connection is an actor `serveRemoteActor` spawns.  A
-  long-lived actor that is already running must therefore serve a per-connection session that talks to it,
-  rather than being served itself.  Serving a *running* actor directly would remove that session and needs
-  a primitive posipaki does not have (`serveRemoteActor` spawns what it serves); it is worth its own
-  proposal, and it is not needed for any of the three shapes above.
+- **No serving of a running process, yet.**  The factory may name one (see Open), while the serving side today
+  spawns what it serves and stops it when the connection closes.  A long-lived actor is therefore reached
+  through a per-connection session rather than being served itself.
 - **No accept loop of its own at the transport layer.**  The reactor owns the loop; a listener only says
   what has arrived.
 
 ## Open
 
-- **Where the protocol handshake lives.**  It is one function inside the reactor, so that a later version can
-  take the protocol as a parameter: a consumer that wants another one adds a knob rather than a fork of the
-  loop.
-- **The `$fd` output frames.**  When `defineSubprocessActor` is reimplemented on this, the child's own output
-  frames have to land somewhere.  The candidates are in the section above; the frame hook is the one I would
-  take, and its name is open.
-- **The actor-shaped wrapper** is drafted separately (`reactor-actor.md`) and is out of scope here.
-- **Serving a running actor** directly, which the wrapper would want if its sessions were its own children, is
-  the primitive `serveRemoteActor` does not have.  Its own proposal.
+- **Serving a running process.**  The factory asks for it by returning `{ proc }` rather than `{ actor }`, and
+  that shape is small; what it decides is not.  Nothing may stop such a process when a connection closes,
+  since it outlives every one of them; its out-messages have to reach every connection bound to it rather
+  than one; and the root id is per connection while the process is one.  That is what would let a long-lived
+  actor be served directly, with no per-connection session in front of it, and it is worth its own proposal.
+- **The wrapper** has open questions of its own, in `reactor-actor.md`.
