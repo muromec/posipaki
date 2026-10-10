@@ -85,3 +85,7 @@ export type { HostResult, HostRun, SpawnChild } from "./host.js";
 export { connectUnixSocket, unixSocketListener } from "./socket.js";
 export type { UnixSocketClientOptions, UnixSocketListenerOptions, UnixSocketPeer } from "./socket.js";
 export { socketClientSpawner } from "./spawners/socket-client.js";
+
+// a fifo pair: a listener for the reactor, and a client for whoever holds the other end
+export { fifoClientSpawner, fifoListener, makeFifoPair } from "./fifo.js";
+export type { FifoListenerOptions, FifoPair } from "./fifo.js";
