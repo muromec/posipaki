@@ -4,7 +4,7 @@
 
 ## Summary
 
-Every server that serves actors over a wire writes the same loop by hand: take a connection from a
+Every server that serves actors to a remote caller writes the same loop by hand: take a connection from a
 transport, admit or refuse it in the transport's own terms, serve one actor for it, and keep or not keep a
 registry of what is being served.  The shapes it takes are the same whether the medium is a socket, a
 websocket or a pair of named pipes, and so are the mistakes.
@@ -58,7 +58,7 @@ a file mode.
 export interface Connection<Meta = unknown> {
   /** The transport's own facts: what `identify` resolved, the URL, the peer, the request. */
   readonly meta: Meta;
-  /** The wire to the far side, ready to be served on. */
+  /** The connection to the far side, ready to be served on. */
   readonly transport: StringTransport;
 }
 
@@ -72,11 +72,11 @@ export interface Listener<Meta = unknown> {
 
 /** One served connection, as the reactor reports it. */
 export interface Session<Meta = unknown> {
-  /** The served actor, as a process handle: the seam spawns it, so it is a root process here. */
+  /** The served actor, as a process handle: `serveRemoteActor` spawns it, so it is a root process here. */
   readonly proc: ServedProcess;
   /** What `identify` said, plus whatever the factory added. */
   readonly meta: Meta;
-  /** Settles when the wire goes and the session is stopped. */
+  /** Settles when the connection closes and the session is stopped. */
   readonly done: Promise<void>;
 }
 
@@ -88,7 +88,7 @@ export type SessionFactory<Meta = unknown> = (
 export interface ReactorOptions<Meta = unknown> {
   /** A connection was admitted and its actor is up. */
   onSession?(session: Session<Meta>): void;
-  /** Its wire went, and the reactor stopped it. */
+  /** Its connection closed, and the reactor stopped it. */
   onClosed?(session: Session<Meta>): void;
 }
 
@@ -108,10 +108,10 @@ export function reactor<Meta>(
 
 The loop it runs, in words: `accept()`; build the channel and do the `$proto` handshake (the spawner's
 job, done here so a consumer never writes it); call the factory with the connection; spawn the actor and
-`serveRemoteActor` it; report it through `onSession`; when its wire goes — the seam stops the actor by
-itself (`src/remote/server.ts:174`) — report it through `onClosed`; accept again.  `stop()` closes the
-listener and stops every live session, so a client learns the server is gone from its wire closing.
-
+`serveRemoteActor` it; report it through `onSession`; when its connection closes, the actor is stopped
+by the serve itself (`src/remote/server.ts:174`), and that is reported through `onClosed`; accept
+again.  `stop()` closes the listener and stops every live session, so a client learns the server is
+gone when its connection closes.
 A bare `ActorDefinition` is the sugar for a factory that ignores the connection and adds no meta.
 
 ## Listeners
@@ -134,7 +134,7 @@ export function webSocketListener<Meta = unknown>(options: {
   path?: string;
   /**
    * Admission and identity.  What it returns is the connection's meta; throwing refuses the
-   * connection *before any actor exists*, which is the property a token-admitting door needs.
+   * connection *before any actor exists*, which is what an admission step is for.
    */
   identify?(upgrade: Upgrade<IncomingMessage>): Meta | Promise<Meta>;
 }): Listener<Meta>;
@@ -159,7 +159,7 @@ export function fifoListener<Meta = unknown>(options: {
 }): Listener<Meta>;
 ```
 
-A fifo pair is the one-connection listener that is not hypothetical: a pair is one wire, so the medium
+A fifo pair is the one-connection listener that is not hypothetical: a pair is one connection, so the
 gives exactly one client per lifetime, and `accept()` resolves once and then the listener is done.  The
 open order that makes a pair meet (the read end is opened only once somebody is writing, which is why
 `FifoUtf8NlineTransport` has `beginConnect` and `connect` at all) is the listener's business rather than
@@ -180,7 +180,7 @@ a spawner:
 /** Connect to a listener.  One call, and no open order: a socket is connected or it is not. */
 export function connectUnixSocket(path: string, options?: { timeoutMs?: number }): Promise<LineTransport>;
 
-/** The client half of the seam over a socket, as the websocket one is. */
+/** The spawner for a socket, in the shape the websocket one has. */
 export function socketClientSpawner<Args = unknown>(
   path: string | ((args: Args) => string),
   options?: { timeoutMs?: number },
@@ -192,7 +192,7 @@ export function fifoClientSpawner<Args = unknown>(
 ): ClientSpawner<Args>;
 ```
 
-Every medium the seam has, in one shape: a transport, a listener on the serving side, and a spawner on
+Every medium the remote module supports, in one shape: a transport, a listener on the serving side, and a
 the connecting side.  Only the medium's own facts differ, and only its listener knows them.
 
 | medium | transport | listener (the serving side) | spawner (the connecting side) |
@@ -219,7 +219,7 @@ reactor(webSocketListener({ server, path: "/ws" }), Session);
 No factory, no meta, no registry: its persistence is a store on disk, and each session is served as it
 arrives.
 
-**Admission at the door, and a registry reached by reference.**  What matters is kept — nothing is spawned
+**Admission before serving, and a registry reached by reference.**  What matters is kept, and nothing is spawned
 for a connection that is not admitted — and the hand-written loop goes:
 
 ```ts
@@ -237,7 +237,7 @@ reactor(listener, ({ meta }) => makeSession(meta.client), {
 ```
 
 The session keeps what is its own: it mints the conversation's id, and it relays.  What moves out of it is
-the announcement, which is now the reactor's report — and the report is a *handle*, not a name: the seam
+the announcement, which is now the reactor's report, and the report is a *handle*, not a name: `serveRemoteActor`
 spawns a served actor as a root process, so its name is the client's own word for it rather than an
 identity, and two connections can carry the same one.
 
@@ -286,11 +286,11 @@ read that way — and reimplemented on it where that costs nothing.
   reactor(subprocessListener({ command, args, env }), payloadDef);
   ```
 
-  The payload side reads the same way from the other end: a payload that serves its root over the wire it
-  was handed is a one-connection reactor whose listener is that wire.
+  The payload side reads the same way from the other end: a payload that serves its root over the connection it
+  was handed is a one-connection reactor whose listener is that connection.
 
 What this asks of a `Listener`, beyond a socket: `accept()` may reject for reasons that are the medium's
-own (a child that died, a wire that closed), a listener may have exactly one connection and then be done,
+own (a child that died, a connection that closed), a listener may have exactly one connection and then be done,
 and `close()` may own something with a lifetime (a child to end, a file to unlink).
 
 ## Generator, or emitter with a stop?
@@ -313,14 +313,14 @@ actor-shaped consumer wants it.
 ## What it does not do
 
 - **No authentication of its own.**  Admission is the listener's `identify`, which for a socket means the
-  file mode and the peer credentials, and for a websocket what the door already does with a token.  The
+  file mode and the peer credentials, and for a websocket what an admission step already does with a token.  The
   reactor never sees a token, a URL or a file.
-- **No reconnection.**  A wire that goes is a session that ends; a client that wants to come back
+- **No reconnection.**  A connection that closes is a session that ends; a client that wants to come back
   connects again, which is a new session.
 - **No TLS and no network sockets.**  A unix socket is local by definition; `net` could get the same
   treatment later, with a different set of questions (a port to secure).
-- **No framing of its own.**  Newline-delimited JSON via `json1Channel`, as the fifo and stdio wires are.
-- **No serving of a running process.**  What is served per connection is an actor the seam spawns.  A
+- **No framing of its own.**  Newline-delimited JSON via `json1Channel`, as the fifo and stdio transports are.
+- **No serving of a running process.**  What is served per connection is an actor `serveRemoteActor` spawns.  A
   long-lived actor that is already running must therefore serve a per-connection session that talks to it,
   rather than being served itself.  Serving a *running* actor directly would remove that session and needs
   a primitive posipaki does not have (`serveRemoteActor` spawns what it serves); it is worth its own
