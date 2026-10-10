@@ -38,7 +38,7 @@ const fakeCtor = FakeClientWebSocket as unknown as WebSocketCtor;
 
 describe("wsClientSpawner", () => {
   it("connects, validates $proto, and returns a ready channel", async () => {
-    const spawner = wsClientSpawner("ws://example.test/actor", { WebSocket: fakeCtor });
+    const spawner = wsClientSpawner("ws://example.test/actor", fakeCtor);
     const channelPromise = spawner({ start: 0 });
 
     FakeClientWebSocket.last!.openAndSend({ $proto: VERSION });
@@ -52,7 +52,7 @@ describe("wsClientSpawner", () => {
   });
 
   it("resolves the url from spawn args when given a factory", async () => {
-    const spawner = wsClientSpawner((args: { scope: string }) => `ws://h/counter/${args.scope}`, { WebSocket: fakeCtor });
+    const spawner = wsClientSpawner((args: { scope: string }) => `ws://h/counter/${args.scope}`, fakeCtor);
     const channelPromise = spawner({ scope: "abc" });
     FakeClientWebSocket.last!.openAndSend({ $proto: VERSION });
     await channelPromise;
@@ -60,7 +60,7 @@ describe("wsClientSpawner", () => {
   });
 
   it("rejects an unsupported protocol version", async () => {
-    const spawner = wsClientSpawner("ws://x", { WebSocket: fakeCtor });
+    const spawner = wsClientSpawner("ws://x", fakeCtor);
     const channelPromise = spawner({});
     FakeClientWebSocket.last!.openAndSend({ $proto: "wrong.v1" });
     await expect(channelPromise).rejects.toThrow(/unsupported protocol/);
@@ -85,32 +85,30 @@ describe("wsClientSpawner", () => {
 
     const spawner = wsClientSpawner(
       "ws://127.0.0.1:1/actor",
-      { WebSocket: FailingClientWebSocket as unknown as WebSocketCtor },
+      FailingClientWebSocket as unknown as WebSocketCtor,
     );
 
     await expect(spawner({})).rejects.toThrow(/ECONNREFUSED/);
   });
 
-  it("constructs the socket with the opener's options, where a token belongs", async () => {
-    // The URL is what a log carries, so a token that must not be read by whoever reads the logs is
-    // presented as a header rather than as a query.
-    class RecordingClientWebSocket extends FakeClientWebSocket {
-      static options: Record<string, unknown> | undefined;
-      constructor(url: string, options?: Record<string, unknown>) {
-        super(url);
-        RecordingClientWebSocket.options = options;
-      }
-    }
-    const spawner = wsClientSpawner("ws://example.test/actor", {
-      WebSocket: RecordingClientWebSocket as unknown as WebSocketCtor,
-      options: { headers: { authorization: "Bearer a-token" } },
+  it("opens the socket with the caller's opener, which sees the spawn args", async () => {
+    // A token belongs in a header rather than in the URL, which is what logs carry, and a value that
+    // varies per spawn needs the args: neither is expressible through a constructor alone.
+    const opened: Array<{ url: string; tenant: string }> = [];
+    const spawner = wsClientSpawner<{ tenant: string }>("ws://service.test/voice", undefined, {
+      open: (url, args) => {
+        opened.push({ url, tenant: args.tenant });
+        return new FakeClientWebSocket(url);
+      },
     });
-    const channelPromise = spawner({});
-    RecordingClientWebSocket.last!.openAndSend({ $proto: VERSION });
+
+    const channelPromise = spawner({ tenant: "acme" });
+    FakeClientWebSocket.last!.openAndSend({ $proto: VERSION });
     await channelPromise;
 
-    expect(RecordingClientWebSocket.options).toEqual({ headers: { authorization: "Bearer a-token" } });
-    expect(RecordingClientWebSocket.last!.url).toBe("ws://example.test/actor");
+    expect(opened).toEqual([{ url: "ws://service.test/voice", tenant: "acme" }]);
+    // Everything above the socket is unchanged: the $proto handshake is still read through it.
+    expect(FakeClientWebSocket.last!.url).toBe("ws://service.test/voice");
   });
 });
 

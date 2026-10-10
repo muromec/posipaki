@@ -5,23 +5,18 @@
 // wraps it in a WebSocketTransport, and returns a frame Channel with the $proto
 // handshake already validated.
 //
-// What the socket is constructed with is the caller's: a token, an authority the machine does not
-// already know, whatever that implementation accepts.  An option has nowhere else to go — the
-// spawner is handed a URL and nothing else — and a token put in the URL is a token in every log the
-// URL passes through.
+// How the socket is opened is the caller's.  The second parameter constructs one from a URL, which is
+// what a runtime's own client takes; an opener replaces it with a function of the connection, which is
+// where a header belongs — a token in a URL is a token in every log the URL passes through — and the
+// only place a value that varies per spawn can be attached at all.
 
 import { WebSocketTransport } from "../transports/websocket.js";
 import { json1Channel, VERSION } from "../protocols/json1.js";
 import { isProto } from "../channel.js";
 import type { ClientSpawner } from "../client.js";
 
-/** What a WebSocket implementation is constructed with.  Passed through untouched. */
-export type WebSocketOptions = Record<string, unknown>;
-
-export type WebSocketCtor = new (
-  url: string,
-  options?: WebSocketOptions,
-) => {
+/** The socket the spawner needs: what the transport reads and writes, and the open/error slots. */
+export type OpenedWebSocket = {
   readonly readyState: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
@@ -31,18 +26,19 @@ export type WebSocketCtor = new (
   onclose: (() => void) | null;
 };
 
-/** How the socket is made: which implementation, and what it is constructed with. */
-export interface WebSocketOpener {
-  /** The implementation to construct.  The runtime's global `WebSocket` when it is not given. */
-  WebSocket?: WebSocketCtor;
-  /**
-   * What it is constructed with — `{ headers }` to present a token, `{ tls: { ca } }` to trust a
-   * certificate this machine does not know, whichever else that implementation accepts.
-   *
-   * A browser's WebSocket takes no options and can set no headers, so a client that must present
-   * one is a program rather than a page.
-   */
-  options?: WebSocketOptions;
+export type WebSocketCtor = new (url: string) => OpenedWebSocket;
+
+/**
+ * How a socket is opened when a constructor is not enough: the URL to open, and the arguments this
+ * spawn was called with.  A per-tenant header, a bearer token, an authority the machine does not
+ * already know — each of them is a fact about the connection, and each of them is the caller's to
+ * express in its own runtime's shape rather than in one posipaki was taught.
+ */
+export type WebSocketOpener<Args = unknown> = (url: string, args: Args) => OpenedWebSocket;
+
+export interface WebSocketClientOptions<Args = unknown> {
+  /** Opens the socket.  Given, it replaces the constructor. */
+  open?: WebSocketOpener<Args>;
 }
 
 const defaultWebSocket = (globalThis as { WebSocket?: WebSocketCtor }).WebSocket;
@@ -73,12 +69,14 @@ function openWebSocket(ws: { readonly readyState: number; onopen: (() => void) |
 
 export function wsClientSpawner<Args = unknown>(
   url: string | ((args: Args) => string),
-  open: WebSocketOpener = {},
+  WebSocketImpl: WebSocketCtor = defaultWebSocket as WebSocketCtor,
+  opts: WebSocketClientOptions<Args> = {},
 ): ClientSpawner<Args> {
-  const WebSocketImpl = open.WebSocket ?? (defaultWebSocket as WebSocketCtor);
+  // The constructor is the default opener, so the socket is opened one way either way.
+  const open: WebSocketOpener<Args> = opts.open ?? ((target) => new WebSocketImpl(target));
   return async (args) => {
     const target = typeof url === "function" ? url(args) : url;
-    const ws = new WebSocketImpl(target, open.options);
+    const ws = open(target, args);
     const transport = new WebSocketTransport(ws);
     const channel = json1Channel(transport);
 

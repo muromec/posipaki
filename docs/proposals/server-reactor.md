@@ -272,11 +272,13 @@ export function fifoClientSpawner<Args = unknown>(
 
 Every medium the remote module supports, in one shape: a transport, a listener on the serving side, and a
 spawner on the connecting side.  Only the medium's own facts differ, and only its listener knows them.
-The connecting side carries options.  `wsClientSpawner` takes an opener: the implementation to construct,
-and what it is constructed with.  A token presented as a header rather than as a query is one that does
-not end up in every log the URL passes through, and admission reads the request either way, since
-`identify` is handed it.  A browser's WebSocket takes no options and can set no headers, so a client that
-must present a token is a program rather than a page.
+
+The connecting side opens the socket.  `wsClientSpawner` takes a constructor, and an opener that replaces it:
+`(url, args) => socket`.  A token belongs there rather than in the URL, which is what a log carries, and a
+value that varies per spawn can only be attached there, a constructor being fixed when the spawner is built.
+The runtime's own argument shape stays the caller's: an options object in Bun, `(url, [], options)` in node's
+`ws`, and nothing at all in a browser, where the constructor the default opener uses is the whole of it.
+`identify` is handed the request, so admission does not change with where the arguments travel.
 
 | medium | transport | listener (the serving side) | spawner (the connecting side) |
 | --- | --- | --- | --- |

@@ -1,7 +1,8 @@
 # ws-client: an opener, so a caller can connect with more than a URL
 
-**Status:** proposal — nothing implemented.  Written from a consumer's need (email-agent's
-voice service), after choosing the workaround this would replace.
+**Status:** implemented on 2026-10-10.  `wsClientSpawner` takes an opener, `(url, args) => socket`, as a third
+argument; the second stays the constructor and is the default opener.  Written from a consumer's need
+(email-agent's voice service), after choosing the workaround this would replace.
 **Follows:** [actor-remote-websocket.md](./actor-remote-websocket.md) for the seam, and the
 implemented [xfetch-headers-proposal.md](./xfetch-headers-proposal.md), which is the same
 problem on the HTTP side.
@@ -14,7 +15,7 @@ correlation id, a cookie — has nowhere to say so, and the consumer is left put
 credential in the query string, which is the one part of a connection that every log line,
 proxy and error message keeps a copy of.
 
-## What exists today
+## What existed before this landed
 
 ```ts
 export type WebSocketCtor = new (url: string) => {
@@ -156,6 +157,8 @@ connection without it, and only then hands the socket to the spawner.
 4. **Should `WebSocketImpl` and `open` both exist?**  They overlap — an opener can replace a
    subclass entirely — but `WebSocketImpl` is a published parameter with callers, and the
    default opener needs a constructor from somewhere.
+Landed as recommended on the two that the implementation decides: the opener takes the args, and the
+constructor stays, as the default opener.
 
 ## What the consumer does when it lands
 

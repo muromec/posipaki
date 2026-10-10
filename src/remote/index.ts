@@ -53,7 +53,13 @@ export { WebSocketTransport, WS_OPEN, type WebSocketLike } from "./transports/we
 export { WorkerTransport, WORKER_VERSION, type WorkerLike } from "./transports/worker.js";
 
 // spawners
-export { wsClientSpawner, type WebSocketCtor, type WebSocketOpener, type WebSocketOptions } from "./spawners/ws-client.js";
+export {
+  wsClientSpawner,
+  type OpenedWebSocket,
+  type WebSocketClientOptions,
+  type WebSocketCtor,
+  type WebSocketOpener,
+} from "./spawners/ws-client.js";
 export { wsServerSpawner, bunServerWebSocket, type BunServerWebSocketLike } from "./spawners/ws-server.js";
 export { workerClientSpawner, type WorkerCtor } from "./spawners/worker-client.js";
 export { workerSelfSpawner } from "./spawners/worker-self.js";
