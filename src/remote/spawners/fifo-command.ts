@@ -1,57 +1,47 @@
 // ── FIFO client spawner (command) ──────────────────────────────────────────
 //
-// Environment-specific: spawns a command, creates the two named fifos, and
-// returns a frame Channel with the $proto handshake already validated.
+// Environment-specific: spawns a command, makes the two named fifos it is to serve on, and hands back
+// the frame Channel whose far side is that child.  The pair's own half is fifo.ts's — connect, and wait
+// for the `$proto` — so what is left here is the child, the paths in its argv, and the cleanup.
 
-import { spawn, execSync } from "node:child_process";
+import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { unlink } from "node:fs/promises";
-import { FifoUtf8NlineTransport } from "../transports/fifo.js";
-import { json1Channel, VERSION } from "../protocols/json1.js";
-import { isProto } from "../channel.js";
 import type { Channel } from "../channel.js";
+import { fifoClientSpawner, makeFifoPair } from "../fifo.js";
 
 export function commandSpawner(command: string[]): () => Promise<Channel> {
   return async () => {
     const basePath = join(tmpdir(), `posipaki-${randomUUID()}`);
+    // The pair as the child meets it: it reads `.out` and writes `.in`.  Made before the child exists,
+    // so the child's own open finds it waiting rather than making it late.
+    await makeFifoPair({ read: `${basePath}.out`, write: `${basePath}.in` });
 
-    execSync(`mkfifo "${basePath}.in"`);
-    execSync(`mkfifo "${basePath}.out"`);
+    const child = spawn(
+      command[0],
+      [...command.slice(1), `--fifo-in=${basePath}.in`, `--fifo-out=${basePath}.out`],
+      {
+        cwd: process.cwd(),
+        stdio: ["inherit", "inherit", "inherit"],
+      },
+    );
 
-    const setup = FifoUtf8NlineTransport.beginConnect(basePath + ".in", basePath + ".out");
-
-    const childCmd = [
-      ...command,
-      `--fifo-in=${basePath + ".in"}`,
-      `--fifo-out=${basePath + ".out"}`,
-    ];
-    const childProc = spawn(childCmd[0], childCmd.slice(1), {
-      cwd: process.cwd(),
-      stdio: ["inherit", "inherit", "inherit"],
-    });
-
-    const transport = await setup.transport;
-    const channel = json1Channel(transport);
-
-    const protoFrame = await new Promise<Record<string, unknown>>((resolve) => {
-      channel.onMessage((frame) => resolve(frame));
-    });
-    channel.removeHandler();
-    if (!isProto(protoFrame) || protoFrame.$proto !== VERSION) {
-      throw new Error(`unsupported protocol: ${JSON.stringify(protoFrame).slice(0, 50)}`);
-    }
+    const channel = await fifoClientSpawner<unknown>({
+      read: `${basePath}.out`,
+      write: `${basePath}.in`,
+    })(undefined);
 
     let cleaned = false;
-    const cleanup = () => {
+    const cleanup = (): void => {
       if (cleaned) return;
       cleaned = true;
-      transport.close();
-      unlink(basePath + ".in").catch(() => {});
-      unlink(basePath + ".out").catch(() => {});
+      void channel.close();
+      unlink(`${basePath}.in`).catch(() => {});
+      unlink(`${basePath}.out`).catch(() => {});
     };
-    childProc.on("exit", cleanup);
+    child.on("exit", cleanup);
 
     return channel;
   };

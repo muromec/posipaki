@@ -1,8 +1,9 @@
 # posipaki: a server reactor, with a unix socket as its first new listener
 
 > **Status**: The reactor, the unix socket listener and client spawner, `oneConnection`, and the fifo listener
-> and client spawner are built and tested; `serveRemoteActor` is a one-connection reactor. Not built: the
-> websocket and subprocess listeners, and `defineSubprocessActor` reimplemented on this.
+> and client spawner are built and tested; `serveRemoteActor` is a one-connection reactor, and the subprocess
+> spawners below `defineSubprocessActor` are re-expressed on the pair's client half.  Not built: the websocket
+> listener, the host-running path's `$fd` frames, and the reactor-as-actor wrapper.
 
 ## Summary
 
@@ -26,7 +27,7 @@ const listener = subprocessListener({ command, args }); // the child is the conn
 
 Plus the pieces the media are missing: the unix socket end to end (`LineTransport` over the socket, its
 listener and its client spawner), a listener for a fifo pair that already exists, and the one-connection
-and subprocess listeners that turn `serveRemoteActor` and `defineSubprocessActor` into sugars over this.
+listener `serveRemoteActor` is built on.
 
 ## Motivation
 
@@ -222,7 +223,7 @@ spawner on the connecting side.  Only the medium's own facts differ, and only it
 | unix socket | `LineTransport` over the socket | `unixSocketListener` | `socketClientSpawner` |
 | websocket | `WebSocketTransport` | `webSocketListener` | `wsClientSpawner` |
 | fifo pair | `FifoUtf8NlineTransport` | `fifoListener` (one connection per lifetime) | `fifoClientSpawner` (a pair that exists), `fifoArgvSpawner` (a pair it makes, for a child) |
-| stdio | `LineTransport` over the stream pair | `subprocessListener` (it spawns the child) | `runRemoteRoot` (the payload side) |
+| stdio | `LineTransport` over the stream pair | `subprocessListener` (it spawns the child; not built here) | `runRemoteRoot` (the payload side) |
 
 The pair's client half is the one that is missing today: posipaki connects to a pair only when it spawned
 the child holding the other end (`fifoArgvSpawner`, `commandSpawner`), and a pair somebody else made has no
@@ -298,36 +299,39 @@ read that way — and reimplemented on it where that costs nothing.
   reactor(oneConnection(spawner), payloadDef, { onSession: ({ proc }) => ... });
   ```
 
-- **`defineSubprocessActor(...)`** is the same thing over a listener whose medium is a child process: it
-  spawns the command, the transport is the child's stdio (`LineTransport` over the stream pair, with the
-  `$fd` output frames as they are today), `accept()` rejects when the child dies before it connects, and
-  `close()` ends the child.  The rest of that bundle stays its own: staging the artifact, the host version,
-  the wait for the exit, and the sentence a failed start comes back as.
+- **`defineSubprocessActor(...)`** serves its actor over a spawned child, and that serve is the same
+  one-connection reactor: the payload is handed a fifo pair in its argv, and the actor is served on it.  The
+  medium below stays what it is — the two named pipes, `--fifo-in`/`--fifo-out`, the `$proto` handshake, one
+  client per pair — and the parent's spawner keeps making the pair and spawning the child, its connect and
+  handshake now the pair's client spawner.
 
   ```ts
-  reactor(subprocessListener({ command, args, env }), payloadDef);
+  // the payload's side, where the actor is served: one connection over the pair in its argv
+  serveRemoteActor(payloadDef, () => fifoArgvSpawner(own));
+  // = reactor(oneConnection(() => fifoArgvSpawner(own)), payloadDef)
+
+  // the parent's side, which holds the proxy: the pair is made here, and the child is told its paths
+  remoteClient(payloadDef.name ?? "actor", commandSpawner([runner, scriptPath, marker]));
   ```
 
-  The payload side reads the same way from the other end: a payload that serves its root over the connection it
-  was handed is a one-connection reactor whose listener is that connection.
+### The `$fd` frames, and where they belong
 
-### The `$fd` frames, when the reimplementation happens
-
-The parent's side of a subprocess carries the child's own stdout and stderr as frames of the protocol, and
-today the caller is handed a filter that sinks them.  When `defineSubprocessActor` becomes a reactor over a
-`subprocessListener`, they land through one option beside the two callbacks:
+A payload run on a host the caller cannot reach has a first stage between the two: that stage's stdin and
+stdout are the wire, and everything the payload prints comes back as `$fd` frames.  That is why the client side
+wraps the transport in a filter today.  The reactor decodes every frame, so it is the one place that can lift
+them out, and the hook is one option beside the two callbacks:
 
 ```ts
-reactor(subprocessListener({ command, args, env }), payloadDef, {
+reactor(listener, payloadDef, {
   // true: captured here, so it does not reach the served actor
   onIncomingFrame: (frame) => captureOutput(frame),
 });
 ```
 
-The reactor already decodes every frame, so the hook costs it four lines; the subprocess listener supplies
-the output sink as its default, a caller can replace it, and the reactor never learns what `$fd` means.  The
-two other shapes considered, a reactor plugin and a tap inside the subprocess listener that would decode every
-line twice, are not needed while this is the only hook of its kind.
+The option is built and tested; what uses it is that path, not the pair, where the child's own stdout stays
+free by construction and there is nothing to lift out.  The two other shapes considered, a reactor plugin and
+a tap inside the listener that would decode every line twice, are not needed while this is the only hook of
+its kind; the reactor never learns what `$fd` means.
 
 What this asks of a `Listener`, beyond a socket: `accept()` may reject for reasons that are the medium's
 own (a child that died, a connection that closed), a listener may have exactly one connection and then be done,
