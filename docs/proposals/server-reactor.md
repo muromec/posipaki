@@ -57,13 +57,16 @@ a file mode.
 ## The reactor
 
 ```ts
+/** The way in: a transport the reactor runs the protocol step on, or a channel already through one. */
+export type Incoming =
+  | { readonly transport: StringTransport; readonly channel?: undefined }
+  | { readonly channel: Channel; readonly transport?: undefined };
+
 /** What a listener hands the reactor: an admitted connection and whatever the transport knows about it. */
-export interface Connection<Meta = unknown> {
+export type Connection<Meta = unknown> = Incoming & {
   /** The transport's own facts: what `identify` resolved, the URL, the peer, the request. */
   readonly meta: Meta;
-  /** The transport over the connection, before the `$proto` handshake. */
-  readonly transport: StringTransport;
-}
+};
 
 /** Where connections come from.  Transport-specific, and the only part that knows a medium. */
 export interface Listener<Meta = unknown> {
@@ -75,23 +78,49 @@ export interface Listener<Meta = unknown> {
 
 /** One served connection, as the reactor reports it. */
 export interface Session<Meta = unknown> {
-  /** The served actor, as a process handle: `serveRemoteActor` spawns it, so it is a root process here. */
+  /** The process being served, as a handle: whichever side of the connection spawned it. */
   readonly proc: ServedProcess;
   /** What `identify` said, plus whatever the factory added. */
   readonly meta: Meta;
-  /** Settles when the connection closes and the session is stopped. */
+  /** Settles when the connection closes and the session is over. */
   readonly done: Promise<void>;
 }
 
-/** What a connection becomes: an actor to spawn, an existing process to serve, and any meta to report. */
+/** What the far side stated when it opened the connection: the args it asks to be spawned with, and its own
+ *  name for its end of the connection. */
+export interface Init<Args = unknown> {
+  readonly args: Args;
+  readonly rootName?: string;
+  readonly parentName: string | null;
+  readonly parentId: symbol | null;
+}
+
+/** What a factory answers: the process to serve, and what the reactor has to know about it. */
+export interface Served<Meta = unknown> {
+  readonly proc: ServedProcess;
+  /** What the factory resolved, when it has more to say about the session than the connection did. */
+  readonly meta?: Meta;
+  /**
+   * Whether the process's life is this connection's.  True, the default, means the reactor stops it when the
+   * connection closes and when the reactor stops; false is a process that outlives every connection, and
+   * nothing here stops it.
+   */
+  readonly owned?: boolean;
+}
+
+/**
+ * What a connection becomes: the process to serve.  It is called once the `$init` has been read, so the args
+ * it carries are in hand — an actor definition is the shortcut for a factory that spawns one with them.
+ */
 export type SessionFactory<Meta = unknown> = (
   connection: Connection<Meta>,
-) => ActorDefinition | { actor: ActorDefinition; meta?: Meta } | { proc: ServedProcess; meta?: Meta };
+  init: Init,
+) => Served<Meta> | ServedProcess | Promise<Served<Meta> | ServedProcess>;
 
 export interface ReactorOptions<Meta = unknown> {
-  /** A connection was admitted and its actor is up. */
+  /** A connection was admitted and the process it is served on is up. */
   onSession?(session: Session<Meta>): void;
-  /** Its connection closed, and the reactor stopped it. */
+  /** Its connection closed, and the session is over. */
   onClosed?(session: Session<Meta>): void;
   /**
    * Every decoded frame, before the serve handles it.  Returning true swallows the frame, which is where a
@@ -114,19 +143,22 @@ export function reactor<Meta>(
 ): Reactor;
 ```
 
-The loop it runs, in words: `accept()`; build the channel and do the `$proto` handshake (the spawner's
-job, done here so a consumer never writes it); call the factory with the connection; spawn the actor and
-`serveRemoteActor` it; report it through `onSession`; when its connection closes, the actor is stopped
-by the serve itself (`src/remote/server.ts:174`), and that is reported through `onClosed`; accept
-again.  `stop()` closes the listener and stops every live session, so a client learns the server is
-gone when its connection closes.
+The loop it runs, in words: `accept()`; build the channel and do the `$proto` handshake (the spawner's job,
+done here so a consumer never writes it); read the `$init` the far side opened with; call the factory with the
+connection and that statement; serve the process it answers with; report it through `onSession`; when its
+connection closes, stop it if it is the connection's, and report that through `onClosed`; accept again.
+`stop()` closes the listener and stops every live session whose process is the connection's, so a client
+learns the server is gone when its connection closes.
 
 The protocol step is one function of the loop: wrap the transport in `json1Channel`, send or await the
 `$proto` frame, and hand the channel on.  A later version can take that as a parameter rather than writing it
 in, which is why it stays in one place.
 
-The reactor reports and does not answer: `onSession` and `onClosed` are notifications about a session that
-A bare `ActorDefinition` is the sugar for a factory that ignores the connection and adds no meta.
+`onSession` and `onClosed` are the whole report: a connection was admitted and is being served, and a
+connection is over.
+
+A bare `ActorDefinition` is the shortcut for a factory that spawns it: the same call, with the definition
+wrapped into a factory that spawns it with the `$init`'s args, name and parent, and reports no meta of its own.
 
 ## Listeners
 
@@ -365,17 +397,17 @@ reactor work from anywhere.  The wrapper is drafted separately (`reactor-actor.m
 - **No TLS and no network sockets.**  A unix socket is local by definition; `net` could get the same
   treatment later, with a different set of questions (a port to secure).
 - **No framing of its own.**  Newline-delimited JSON via `json1Channel`, as the fifo and stdio transports are.
-- **No serving of a running process, yet.**  The factory may name one (see Open), while the serving side today
-  spawns what it serves and stops it when the connection closes.  A long-lived actor is therefore reached
-  through a per-connection session rather than being served itself.
+- **No promise that a process is served once.**  A factory may hand over a process it did not spawn (`owned:
+  false`), and one process may then be served on several connections, each a session of its own with its own
+  root id.
 - **No accept loop of its own at the transport layer.**  The reactor owns the loop; a listener only says
   what has arrived.
 
 ## Open
 
-- **Serving a running process.**  The factory asks for it by returning `{ proc }` rather than `{ actor }`, and
-  that shape is small; what it decides is not.  Nothing may stop such a process when a connection closes,
-  since it outlives every one of them; its out-messages have to reach every connection bound to it rather
-  than one; and the root id is per connection while the process is one.  That is what would let a long-lived
-  actor be served directly, with no per-connection session in front of it, and it is worth its own proposal.
+- **Serving one process on several connections.**  The shape is settled — the factory returns the process and
+  says whether its life is the connection's — but a long-lived actor served directly needs its out-messages to
+  reach every connection bound to it, and each connection numbers the root in its own table.  Worth verifying
+  when it is first used that way, since it is what would let a long-lived actor be served with no
+  per-connection session in front of it.
 - **The wrapper** has open questions of its own, in `reactor-actor.md`.
