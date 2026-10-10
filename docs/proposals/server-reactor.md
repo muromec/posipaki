@@ -321,10 +321,10 @@ actor-shaped consumer wants it.
   treatment later, with a different set of questions (a port to secure).
 - **No framing of its own.**  Newline-delimited JSON via `json1Channel`, as the fifo and stdio wires are.
 - **No serving of a running process.**  What is served per connection is an actor the seam spawns.  A
-  actor is already running when a client arrives, so a per-connection session is served that talks to
-  it.  Serving a *running* actor would remove that session and needs a primitive posipaki does not have
-  (`serveRemoteActor` spawns what it serves); it is worth its own proposal, and it is not needed for any
-  of the three cases above.
+  long-lived actor that is already running must therefore serve a per-connection session that talks to it,
+  rather than being served itself.  Serving a *running* actor directly would remove that session and needs
+  a primitive posipaki does not have (`serveRemoteActor` spawns what it serves); it is worth its own
+  proposal, and it is not needed for any of the three shapes above.
 - **No accept loop of its own at the transport layer.**  The reactor owns the loop; a listener only says
   what has arrived.
 
@@ -336,9 +336,9 @@ actor-shaped consumer wants it.
   it), which means a consumer that wants a different protocol needs a knob.  The alternative is that a
   listener hands back a spawner instead of a transport.
 - **Whether the reactor reports only, or also answers.**  Today `onSession` is a notification.  A
-  consumer that wants to refuse a connection *after* admission (one that refuses a delivery rather than a
-  refuses a delivery, not a connection) does it in the actor it serves, which keeps admission the
-  listener's and policy the actor's.
+  consumer that wants to refuse *after* admission does it in the actor it serves, which is where a refusal
+  of a *delivery* rather than of a connection belongs: admission stays the listener's and policy the
+  actor's.
 - **The actor-shaped wrapper** (`reactorActor`: out-messages instead of callbacks), and whether it ships
   with this or with its first consumer.
 - **Peer credentials on a socket.**  `SO_PEERCRED` gives uid, gid and pid on Linux; the listener should
