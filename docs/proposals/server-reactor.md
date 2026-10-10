@@ -18,10 +18,13 @@ const reactor = reactor(listener, factory, { onSession, onClosed });
 // a listener owns its medium and its own admission, and answers Connections
 const listener = unixSocketListener({ path: "/run/dopje/console.sock", mode: 0o600 });
 const listener = webSocketListener({ server, path: "/ws", identify });
+const listener = fifoListener({ read, write }); // one connection per lifetime
+const listener = subprocessListener({ command, args }); // the child is the connection
 ```
 
-Plus the client half of the one medium that is missing here, the unix socket, in the shape the websocket
-pair already has.
+Plus the pieces the media are missing: the unix socket end to end (`LineTransport` over the socket, its
+listener and its client spawner), a listener for a fifo pair that already exists, and the one-connection
+and subprocess listeners that turn `serveRemoteActor` and `defineSubprocessActor` into sugars over this.
 
 ## Motivation
 
@@ -146,7 +149,24 @@ export function unixSocketListener<Meta = unknown>(options: {
   /** Admission and identity, and the peer credentials where the runtime gives them. */
   identify?(connection: { path: string; peer?: PeerCredentials }): Meta | Promise<Meta>;
 }): Listener<Meta>;
+export function fifoListener<Meta = unknown>(options: {
+  /** The two paths: lines arrive on `read`, and what this side says goes out on `write`. */
+  read: string;
+  write: string;
+  /** Make the pair when it is missing, and refuse a path that exists and is not a fifo. */
+  make?: boolean;   // default true
+  identify?(connection: { read: string; write: string }): Meta | Promise<Meta>;
+}): Listener<Meta>;
 ```
+
+A fifo pair is the one-connection listener that is not hypothetical — it is what the console runs on
+today.  The medium gives exactly one client per lifetime, so `accept()` resolves once and then the
+listener is done; the open order that makes a pair meet (the read end is opened only once somebody is
+writing, which is why `FifoUtf8NlineTransport` has `beginConnect` and `connect` at all) is the listener's
+business rather than the consumer's; `close()` releases a wait that is still pending, which is the dance
+the harness writes by hand today.  A second client means a second pair, and that is the medium's
+property, not the reactor's: "one attach at a time" stops being something the console's own code has to
+enforce.
 
 What a listener does *not* do: frame anything (the transport's job), handshake `$proto` (the reactor's),
 or know what an actor is.
@@ -166,15 +186,27 @@ export function socketClientSpawner<Args = unknown>(
   path: string | ((args: Args) => string),
   options?: { timeoutMs?: number },
 ): ClientSpawner<Args>;
+
+/** The other half of a pair: connect to one that already exists, and do the handshake. */
+export function fifoClientSpawner<Args = unknown>(
+  paths: { read: string; write: string } | ((args: Args) => { read: string; write: string }),
+): ClientSpawner<Args>;
 ```
 
-Three media, one shape, which is the point: a transport, a listener on one side, a spawner on the other.
+Every medium the seam has, in one shape: a transport, a listener on the serving side, and a spawner on
+the connecting side.  Only the medium's own facts differ, and only its listener knows them.
 
-| medium | transport | listener (server) | spawner (client) |
+| medium | transport | listener (the serving side) | spawner (the connecting side) |
 | --- | --- | --- | --- |
 | unix socket | `LineTransport` over the socket | `unixSocketListener` | `socketClientSpawner` |
 | websocket | `WebSocketTransport` | `webSocketListener` | `wsClientSpawner` |
-| stdio | `LineTransport` over the stream pair | — (a child process) | `fifoArgvSpawner`, `commandSpawner` |
+| fifo pair | `FifoUtf8NlineTransport` | `fifoListener` (one connection per lifetime) | `fifoClientSpawner` (a pair that exists), `fifoArgvSpawner` (a pair it makes, for a child) |
+| stdio | `LineTransport` over the stream pair | `subprocessListener` (it spawns the child) | `runRemoteRoot` (the payload side) |
+
+The pair's client half is the one that is missing today: posipaki connects to a pair only when it spawned
+the child holding the other end (`fifoArgvSpawner`, `commandSpawner`), and a pair somebody else made has no
+spawner of its own.  `fifoClientSpawner` is the five-line counterpart, over the `connect` the transport
+already has.
 
 ## The three servers, on this API
 
@@ -232,6 +264,12 @@ once, a thing the console already supports and the fifo pair does not.
 
 A run whose stdin is a terminal is not special: the console spawns the same terminal program as a child,
 pointing it at the socket, and it arrives through the same listener as any other client.
+
+The same call, with a different listener, is what the console runs on **today**: `reactor(fifoListener({
+read, write }), …)` is exactly what the harness writes by hand in `pair.ts` and `wire.ts`, including the
+one-client-at-a-time property, which is the medium's and not the reactor's.  That is the consequence worth
+keeping in view: the media differ and the reactor does not, so moving the console from a pair to a socket
+is a new listener and almost nothing else.
 
 ## What this absorbs: the entry points that become sugar
 
