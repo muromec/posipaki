@@ -3,8 +3,7 @@
 // serveRemoteActor serves a posipaki actor over a frame Channel produced by a
 // spawner. It knows only the frame vocabulary (channel.ts) — no protocol, no
 // transport, no spawner. The spawner has already done the $proto handshake.
-
-import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
+import type { ActorDefinition, ReflectionOptions, SpawnedFrom } from "../actor-types.js";
 import type { Message } from "../types.js";
 import { isProcess } from "../process.async.js";
 import type { Channel } from "./channel.js";
@@ -43,6 +42,9 @@ import { CallSide, answerCall } from "./call-side.js";
 
 export type Spawner = () => Promise<Channel>;
 
+/** The process a definition's spawn gives back: what a caller reports when it serves one. */
+export type ServedProcess<T extends ActorDefinition<any, any, any, any, any>> = SpawnedFrom<T>;
+
 /** The name the served actor is spawned under, and the one it answers to as a sender when
  *  it talks to a process of the far side's: what the client states in `$init`, since the
  *  process being served is the one its proxy was forked as over there.  The fallback is for
@@ -56,7 +58,15 @@ export async function serveRemoteActor<
   InMsg extends Message,
   OutMsg extends Message,
   R extends ReflectionOptions,
->(actor: ActorDefinition<Args, State, InMsg, OutMsg, R>, spawner: Spawner): Promise<void> {
+>(
+  actor: ActorDefinition<Args, State, InMsg, OutMsg, R>,
+  spawner: Spawner,
+  /**
+   * Called once the served process is up and wired to the connection, with the process itself: the
+   * handle a caller reports.  Nothing about the serve changes because of it.
+   */
+  onSpawned?: (proc: ServedProcess<ActorDefinition<Args, State, InMsg, OutMsg, R>>) => void,
+): Promise<void> {
   const channel = await spawner();
 
   // The table takes the even ids: the odd ones are the far side's, so the same
@@ -114,18 +124,18 @@ export async function serveRemoteActor<
     return handle;
   };
 
-  // await $init, keeping everything that arrives with it.  The channel has one handler
-  // slot, and a frame that arrives while the actor is still starting has nothing to be
-  // dispatched to yet, so the frames wait here and are replayed below.  The $init is the
-  // first of them, that being what the connection is made by.
+  // The first frame is the $init.  A connection that goes before it will never be served, so the wait
+  // settles on the close as well: pending forever is one promise and one channel left behind per peer
+  // that dials and hangs up.  The collecting handler stays until the actor can be dispatched to, so
+  // frames that arrive while it starts wait here and are replayed rather than dropped for want of a slot.
   const waiting: Record<string, unknown>[] = [];
-  await new Promise<void>((resolve) => {
+  await new Promise<void>((resolve, reject) => {
     channel.onMessage((frame) => {
       waiting.push(frame);
       resolve();
     });
+    channel.onClose(() => reject(new Error("serveRemoteActor: the connection went before $init")));
   });
-  channel.removeHandler();
   const firstFrame = waiting.shift() as Record<string, unknown>;
   // A first frame that could not be read is a failed start like any other: the far side is told
   // what could not be read, and this connection is refused to its caller — the spawner that opened
@@ -174,6 +184,10 @@ export async function serveRemoteActor<
   channel.onClose(() => {
     void proc.stop();
   });
+
+  // The process is up and wired: whoever asked for the handle of what is served gets it here, which is
+  // the only moment it exists and the connection is still open.
+  onSpawned?.(proc);
 
   /**
    * A frame that was not a frame is the connection's problem and not the process's: the far side is

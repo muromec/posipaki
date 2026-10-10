@@ -7,9 +7,21 @@
 // seam
 export { serveRemoteActor } from "./server.js";
 export { makeSender } from "./sender.js";
-export type { Spawner } from "./server.js";
+export type { Spawner, ServedProcess } from "./server.js";
 export { CHANNEL_LOST, remoteClient } from "./client.js";
 export type { ClientSpawner } from "./client.js";
+
+// the server reactor: one loop for every medium, with the medium in a Listener
+export { reactor } from "./reactor.js";
+export type {
+  AnyActorDefinition,
+  Connection,
+  Listener,
+  Reactor,
+  ReactorOptions,
+  Session,
+  SessionFactory,
+} from "./reactor.js";
 
 // what a process on the far side is, once it is not just a reference
 export { RemoteProcess } from "./remote-process.js";
