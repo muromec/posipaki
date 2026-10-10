@@ -1,8 +1,9 @@
 // ── Server side of the seam ────────────────────────────────────────────────
 //
-// serveRemoteActor serves a posipaki actor over a frame Channel produced by a
-// spawner. It knows only the frame vocabulary (channel.ts) — no protocol, no
-// transport, no spawner. The spawner has already done the $proto handshake.
+// serveChannel serves one posipaki actor over a frame Channel that is already through
+// the `$proto` handshake. It knows only the frame vocabulary (channel.ts) — no protocol,
+// no transport, no spawner. The reactor calls it once for each connection it accepts,
+// and serveRemoteActor (reactor.ts) is the same thing for a single connection.
 import type { ActorDefinition, ReflectionOptions, SpawnedFrom } from "../actor-types.js";
 import type { Message } from "../types.js";
 import { isProcess } from "../process.async.js";
@@ -52,7 +53,7 @@ export type ServedProcess<T extends ActorDefinition<any, any, any, any, any>> = 
  *  far side's name for its own end is all there is to go on. */
 let rootName: string = SERVED_ROOT_NAME;
 
-export async function serveRemoteActor<
+export async function serveChannel<
   Args,
   State,
   InMsg extends Message,
@@ -60,15 +61,13 @@ export async function serveRemoteActor<
   R extends ReflectionOptions,
 >(
   actor: ActorDefinition<Args, State, InMsg, OutMsg, R>,
-  spawner: Spawner,
+  channel: Channel,
   /**
    * Called once the served process is up and wired to the connection, with the process itself: the
    * handle a caller reports.  Nothing about the serve changes because of it.
    */
   onSpawned?: (proc: ServedProcess<ActorDefinition<Args, State, InMsg, OutMsg, R>>) => void,
 ): Promise<void> {
-  const channel = await spawner();
-
   // The table takes the even ids: the odd ones are the far side's, so the same
   // number can never name a process on both ends at once.  A process that is
   // numbered here is one that is about to cross, and its stream follows the frame

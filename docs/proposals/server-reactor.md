@@ -1,6 +1,8 @@
 # posipaki: a server reactor, with a unix socket as its first new listener
 
-> **Status**: Draft proposal. No code written yet.
+> **Status**: The reactor, the unix socket listener and client spawner, `oneConnection`, and the fifo listener
+> and client spawner are built and tested; `serveRemoteActor` is a one-connection reactor. Not built: the
+> websocket and subprocess listeners, and `defineSubprocessActor` reimplemented on this.
 
 ## Summary
 

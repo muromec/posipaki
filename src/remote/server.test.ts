@@ -2,7 +2,7 @@
 
 import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "../index.js";
-import { serveRemoteActor } from "./server.js";
+import { serveRemoteActor } from "./reactor.js";
 import { rootIdFor } from "./process-ref.js";
 import { errorReason, isError, isExit, isMsg, isState } from "./channel.js";
 import type { Channel } from "./channel.js";

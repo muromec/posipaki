@@ -7,7 +7,7 @@ import { join, dirname } from "node:path";
 import { createHash } from "node:crypto";
 import { fileURLToPath } from "node:url";
 
-vi.mock("./server.js", () => ({
+vi.mock("./reactor.js", () => ({
   serveRemoteActor: vi.fn(() => Promise.resolve()),
 }));
 

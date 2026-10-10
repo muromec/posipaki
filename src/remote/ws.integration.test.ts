@@ -2,7 +2,7 @@
 
 import { describe, it, expect, afterEach } from "vitest";
 import { defineActor, defineMessages } from "../index.js";
-import { serveRemoteActor } from "./server.js";
+import { serveRemoteActor } from "./reactor.js";
 import { remoteClient } from "./client.js";
 import { wsServerSpawner, bunServerWebSocket, type BunServerWebSocketLike } from "./spawners/ws-server.js";
 import { wsClientSpawner } from "./spawners/ws-client.js";

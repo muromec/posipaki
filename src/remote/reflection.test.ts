@@ -8,7 +8,7 @@
 import { describe, it, expect } from "vitest";
 import { defineActor } from "../index.js";
 import { remoteClient } from "./client.js";
-import { serveRemoteActor } from "./server.js";
+import { serveRemoteActor } from "./reactor.js";
 import {
   REFLECT_CALL,
   REFLECT_METHODS,

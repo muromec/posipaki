@@ -12,7 +12,7 @@ import type { ActorDefinition, HandlerOptions, MethodOptions, ReflectionOptions 
 import type { KitApp } from "./kit.js";
 import { hostVersion } from "./kit.js";
 import { remoteClient } from "./client.js";
-import { serveRemoteActor } from "./server.js";
+import { serveRemoteActor } from "./reactor.js";
 import { commandSpawner } from "./spawners/fifo-command.js";
 import { fifoArgvSpawner } from "./spawners/fifo-argv.js";
 

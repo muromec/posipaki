@@ -2,11 +2,13 @@
 //
 // One loop for every medium: accept a connection, serve one actor for it, report what is being served,
 // and stop when asked.  What a medium is lives in a Listener, so nothing here knows a transport.
+// serveRemoteActor is the same loop for a listener that carries exactly one connection.
 
-import type { ActorDefinition } from "../actor-types.js";
+import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
+import type { Message } from "../types.js";
 import type { Channel, StringTransport } from "./channel.js";
 import { json1Channel, VERSION } from "./protocols/json1.js";
-import { serveRemoteActor, type ServedProcess, type Spawner } from "./server.js";
+import { serveChannel, type ServedProcess, type Spawner } from "./server.js";
 
 /** Any actor definition: the reactor serves it, and does not care which one it is. */
 export type AnyActorDefinition = ActorDefinition<any, any, any, any, any>;
@@ -94,12 +96,11 @@ export function reactor<Meta = unknown>(
       const meta = added ? (requested.meta ?? connection.meta) : connection.meta;
       // The way in: a transport this side runs the protocol step on, or a channel somebody else already
       // handshaked.  Either way the frame hook goes on before the serve sees a frame.
-      const spawner: Spawner = () =>
-        connection.channel
-          ? Promise.resolve(withFrameHook(connection.channel, options.onIncomingFrame))
-          : protocolStep(connection.transport, options);
+      const channel = connection.channel
+        ? withFrameHook(connection.channel, options.onIncomingFrame)
+        : await protocolStep(connection.transport, options);
 
-      await serveRemoteActor(actor, spawner, (proc) => {
+      await serveChannel(actor, channel, (proc) => {
         live.add(proc);
         const session: Session<Meta> = { proc, meta, done };
         held.session = session;
@@ -215,4 +216,33 @@ function withFrameHook(
     onClose: (handler) => channel.onClose(handler),
     close: () => channel.close(),
   };
+}
+
+/**
+ * One actor over one connection: the reactor with a listener that carries exactly one.  A caller that
+ * has a spawner and no loop of its own gets the same serving, the same reports and the same teardown a
+ * listener gets.  The promise settles when the serve is over, and rejects when the connection could not
+ * be served at all — the two outcomes the seam has always had.
+ */
+export async function serveRemoteActor<
+  Args,
+  State,
+  InMsg extends Message,
+  OutMsg extends Message,
+  R extends ReflectionOptions,
+>(
+  actor: ActorDefinition<Args, State, InMsg, OutMsg, R>,
+  spawner: Spawner,
+  onSpawned?: (proc: ServedProcess<ActorDefinition<Args, State, InMsg, OutMsg, R>>) => void,
+): Promise<void> {
+  // A medium that cannot be reached fails the caller's await rather than the loop's: the loop reads an
+  // accept that ends as nothing more coming.
+  const channel = await spawner();
+  await new Promise<void>((resolve, reject) => {
+    reactor(oneConnection(async () => channel), actor, {
+      onSession: ({ proc }) => onSpawned?.(proc),
+      onClosed: () => resolve(),
+      onError: (error) => reject(error),
+    });
+  });
 }
