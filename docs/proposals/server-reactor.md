@@ -101,11 +101,11 @@ export interface Served<Meta = unknown> {
   /** What the factory resolved, when it has more to say about the session than the connection did. */
   readonly meta?: Meta;
   /**
-   * Whether the process's life is this connection's.  True, the default, means the reactor stops it when the
-   * connection closes and when the reactor stops; false is a process that outlives every connection, and
-   * nothing here stops it.
+   * What ends this session: run once, when the connection closes and when the reactor stops.  It defaults to
+   * stopping the process, which is what a factory that spawned one wants; a factory that hands over a process
+   * it did not spawn returns its own, since that process outlives every connection.
    */
-  readonly owned?: boolean;
+  readonly cleanup?: () => void | Promise<void>;
 }
 
 /**
@@ -146,9 +146,10 @@ export function reactor<Meta>(
 The loop it runs, in words: `accept()`; build the channel and do the `$proto` handshake (the spawner's job,
 done here so a consumer never writes it); read the `$init` the far side opened with; call the factory with the
 connection and that statement; serve the process it answers with; report it through `onSession`; when its
-connection closes, stop it if it is the connection's, and report that through `onClosed`; accept again.
-`stop()` closes the listener and stops every live session whose process is the connection's, so a client
-learns the server is gone when its connection closes.
+connection closes, run the session's cleanup (which stops the process unless the factory returned its own)
+and report that through `onClosed`; accept again.
+`stop()` closes the listener and ends every live session the same way, so a client learns the server is gone
+when its connection closes.
 
 The protocol step is one function of the loop: wrap the transport in `json1Channel`, send or await the
 `$proto` frame, and hand the channel on.  A later version can take that as a parameter rather than writing it
@@ -397,17 +398,17 @@ reactor work from anywhere.  The wrapper is drafted separately (`reactor-actor.m
 - **No TLS and no network sockets.**  A unix socket is local by definition; `net` could get the same
   treatment later, with a different set of questions (a port to secure).
 - **No framing of its own.**  Newline-delimited JSON via `json1Channel`, as the fifo and stdio transports are.
-- **No promise that a process is served once.**  A factory may hand over a process it did not spawn (`owned:
-  false`), and one process may then be served on several connections, each a session of its own with its own
-  root id.
+- **No promise that a process is served once.**  A factory may hand over a process it did not spawn and return
+  its own cleanup for it, and one process may then be served on several connections, each a session of its own
+  with its own root id.
 - **No accept loop of its own at the transport layer.**  The reactor owns the loop; a listener only says
   what has arrived.
 
 ## Open
 
-- **Serving one process on several connections.**  The shape is settled — the factory returns the process and
-  says whether its life is the connection's — but a long-lived actor served directly needs its out-messages to
-  reach every connection bound to it, and each connection numbers the root in its own table.  Worth verifying
-  when it is first used that way, since it is what would let a long-lived actor be served with no
-  per-connection session in front of it.
+- **Serving one process on several connections.**  The shape is settled: the factory returns the process and
+  says what ends it.  What a long-lived actor served directly still needs is its out-messages reaching every
+  connection bound to it, and each connection numbers the root in its own table.  Worth verifying when it is
+  first used that way, since that is what would let a long-lived actor be served with no per-connection
+  session in front of it.
 - **The wrapper** has open questions of its own, in `reactor-actor.md`.
