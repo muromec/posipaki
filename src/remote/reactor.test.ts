@@ -6,10 +6,9 @@
 import { describe, expect, it } from "vitest";
 
 import { defineActor, defineMessages } from "../index.js";
-import { isMsg, isProto, isState } from "./channel.js";
-import type { StringTransport } from "./channel.js";
+import { isMsg, isProto, isState, type Channel, type StringTransport } from "./channel.js";
 import { rootIdFor } from "./process-ref.js";
-import { reactor, type Connection, type Listener, type Session } from "./reactor.js";
+import { oneConnection, reactor, type Connection, type Listener, type Session } from "./reactor.js";
 import { sleep } from "../util.js";
 
 /** A transport the test drives: what the reactor writes is recorded, what the test writes is delivered. */
@@ -226,5 +225,74 @@ describe("reactor", () => {
     await waitUntil(() => sessions.length === 1, "the second session");
 
     await r.stop();
+  });
+});
+
+/** A channel the test holds both ends of: what the serve writes is recorded, what it reads is delivered. */
+class FakeChannel implements Channel {
+  readonly sent: Record<string, unknown>[] = [];
+  private handler: ((frame: Record<string, unknown>) => void) | null = null;
+  private closeHandler: (() => void) | null = null;
+
+  send(frame: Record<string, unknown>): void {
+    this.sent.push(frame);
+  }
+  onMessage(handler: (frame: Record<string, unknown>) => void): void {
+    this.handler = handler;
+  }
+  removeHandler(): void {
+    this.handler = null;
+  }
+  onClose(handler: () => void): void {
+    this.closeHandler = handler;
+  }
+  async close(): Promise<void> {
+    this.closeHandler?.();
+  }
+  /** Whether the serve has set its handler: the moment a frame from the far side would be heard. */
+  get listening(): boolean {
+    return this.handler !== null;
+  }
+  receive(frame: Record<string, unknown>): void {
+    this.handler?.(frame);
+  }
+}
+
+describe("oneConnection", () => {
+  it("serves over a channel somebody else opened, and takes it once", async () => {
+    const channel = new FakeChannel();
+    const listener = oneConnection<Record<string, never>>(() => Promise.resolve(channel));
+    const sessions: Session<Record<string, never>>[] = [];
+    const r = reactor(listener, makeEcho(), { onSession: (session) => sessions.push(session) });
+
+    await waitUntil(() => channel.listening, "the serve to be listening");
+    channel.receive({ $init: { rootName: "echo", parentName: "root", parentIdName: "root" } });
+    await waitUntil(() => sessions.length === 1, "the session report");
+
+    channel.receive({ to: ROOT, $tune: { streams: ["message", "state"] } });
+    await waitUntil(() => channel.sent.some(isState), "the initial state");
+    channel.receive({ to: ROOT, $msg: { fromName: "root", body: { type: "PING", count: 3 } } });
+    await waitUntil(() => channel.sent.some(isMsg), "the reply");
+    expect(channel.sent.find(isMsg)!.$msg).toMatchObject({ body: { type: "PONG", count: 3 } });
+
+    // The connection is taken once, and saying so beats hanging on a second one.
+    const again = listener.accept().then(
+      () => "taken twice",
+      (error: Error) => error.message,
+    );
+    expect(await again).toMatch(/already been taken/);
+
+    await r.stop();
+  });
+
+  it("releases an accept that is still waiting when it is closed", async () => {
+    const listener = oneConnection(() => new Promise<never>(() => {}));
+    const settled = listener.accept().then(
+      () => "arrived",
+      (error: Error) => error.message,
+    );
+
+    await listener.close();
+    expect(await settled).toMatch(/closed before a connection arrived/);
   });
 });

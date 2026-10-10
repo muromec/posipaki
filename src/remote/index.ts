@@ -12,7 +12,7 @@ export { CHANNEL_LOST, remoteClient } from "./client.js";
 export type { ClientSpawner } from "./client.js";
 
 // the server reactor: one loop for every medium, with the medium in a Listener
-export { reactor } from "./reactor.js";
+export { oneConnection, reactor } from "./reactor.js";
 export type {
   AnyActorDefinition,
   Connection,

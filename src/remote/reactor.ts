@@ -11,13 +11,19 @@ import { serveRemoteActor, type ServedProcess, type Spawner } from "./server.js"
 /** Any actor definition: the reactor serves it, and does not care which one it is. */
 export type AnyActorDefinition = ActorDefinition<any, any, any, any, any>;
 
-/** An admitted connection, and whatever the listener knows about it. */
-export interface Connection<Meta = unknown> {
+/**
+ * A way in, as a listener hands it over: a transport the reactor runs the protocol step on, or a channel
+ * that has already been through one (a spawner's, where the handshake is not the reactor's to do).
+ */
+export type Incoming =
+  | { readonly transport: StringTransport; readonly channel?: undefined }
+  | { readonly channel: Channel; readonly transport?: undefined };
+
+/** An admitted connection: the way in, and whatever the listener knows about it. */
+export type Connection<Meta = unknown> = Incoming & {
   /** The transport's own facts: what the listener resolved, the URL, the peer. */
   readonly meta: Meta;
-  /** The transport over the connection, before the protocol handshake. */
-  readonly transport: StringTransport;
-}
+};
 
 /** Where connections come from.  A listener owns its medium and its own admission. */
 export interface Listener<Meta = unknown> {
@@ -86,7 +92,12 @@ export function reactor<Meta = unknown>(
       const added = "actor" in requested;
       const actor = added ? requested.actor : requested;
       const meta = added ? (requested.meta ?? connection.meta) : connection.meta;
-      const spawner: Spawner = () => handshake(connection.transport, options);
+      // The way in: a transport this side runs the protocol step on, or a channel somebody else already
+      // handshaked.  Either way the frame hook goes on before the serve sees a frame.
+      const spawner: Spawner = () =>
+        connection.channel
+          ? Promise.resolve(withFrameHook(connection.channel, options.onIncomingFrame))
+          : protocolStep(connection.transport, options);
 
       await serveRemoteActor(actor, spawner, (proc) => {
         live.add(proc);
@@ -117,9 +128,9 @@ export function reactor<Meta = unknown>(
         return;
       }
       if (stopping.signal.aborted) {
-        // A connection admitted as the reactor stops is closed rather than served: it asked for a server
+        // A connection admitted as the reactor stops is ended rather than served: it asked for a server
         // that is no longer taking any.
-        await connection.transport.close();
+        await (connection.channel ?? connection.transport).close();
         return;
       }
       void serveOne(connection);
@@ -139,15 +150,58 @@ export function reactor<Meta = unknown>(
   };
 }
 
-/** The protocol step: the frame channel, the `$proto` frame, and the incoming-frame hook. */
-async function handshake(
+/**
+ * A listener with exactly one connection: what a caller serves on when the medium is already open for it,
+ * as a spawner that hands back a channel is.  The connection is taken once, a second `accept()` is a
+ * mistake worth naming, and `close()` releases an accept that is still waiting for one.
+ */
+export function oneConnection<Meta = unknown>(
+  spawner: Spawner,
+  meta: Meta = undefined as Meta,
+): Listener<Meta> {
+  let taken = false;
+  let closed = false;
+  let release: (() => void) | null = null;
+
+  return {
+    async accept(signal?: AbortSignal): Promise<Connection<Meta>> {
+      if (taken) throw new Error("oneConnection: the connection has already been taken");
+      if (closed) throw new Error("oneConnection: closed");
+      taken = true;
+      const channel = await Promise.race([
+        spawner(),
+        new Promise<never>((_resolve, reject) => {
+          release = () => reject(new Error("oneConnection: closed before a connection arrived"));
+          signal?.addEventListener("abort", release, { once: true });
+        }),
+      ]);
+      return { channel, meta };
+    },
+    async close(): Promise<void> {
+      closed = true;
+      release?.();
+    },
+  };
+}
+
+/** The protocol step: the frame channel over a transport, and the `$proto` frame that opens it. */
+async function protocolStep(
   transport: StringTransport,
   options: ReactorOptions<unknown>,
 ): Promise<Channel> {
   const channel = json1Channel(transport);
   await channel.send({ $proto: VERSION });
+  return withFrameHook(channel, options.onIncomingFrame);
+}
 
-  const hook = options.onIncomingFrame;
+/**
+ * The frame hook, as the channel the serve gets: every decoded frame is offered to it, and one it claims
+ * with `true` goes no further.
+ */
+function withFrameHook(
+  channel: Channel,
+  hook: ReactorOptions<unknown>["onIncomingFrame"],
+): Channel {
   if (!hook) return channel;
 
   return {
