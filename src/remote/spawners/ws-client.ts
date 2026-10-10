@@ -4,13 +4,24 @@
 // Environment-specific: connects to a `ws://` URL with the WHATWG WebSocket,
 // wraps it in a WebSocketTransport, and returns a frame Channel with the $proto
 // handshake already validated.
+//
+// What the socket is constructed with is the caller's: a token, an authority the machine does not
+// already know, whatever that implementation accepts.  An option has nowhere else to go — the
+// spawner is handed a URL and nothing else — and a token put in the URL is a token in every log the
+// URL passes through.
 
 import { WebSocketTransport } from "../transports/websocket.js";
 import { json1Channel, VERSION } from "../protocols/json1.js";
 import { isProto } from "../channel.js";
 import type { ClientSpawner } from "../client.js";
 
-export type WebSocketCtor = new (url: string) => {
+/** What a WebSocket implementation is constructed with.  Passed through untouched. */
+export type WebSocketOptions = Record<string, unknown>;
+
+export type WebSocketCtor = new (
+  url: string,
+  options?: WebSocketOptions,
+) => {
   readonly readyState: number;
   send(data: string): void;
   close(code?: number, reason?: string): void;
@@ -19,6 +30,20 @@ export type WebSocketCtor = new (url: string) => {
   onmessage: ((event: { data: unknown }) => void) | null;
   onclose: (() => void) | null;
 };
+
+/** How the socket is made: which implementation, and what it is constructed with. */
+export interface WebSocketOpener {
+  /** The implementation to construct.  The runtime's global `WebSocket` when it is not given. */
+  WebSocket?: WebSocketCtor;
+  /**
+   * What it is constructed with — `{ headers }` to present a token, `{ tls: { ca } }` to trust a
+   * certificate this machine does not know, whichever else that implementation accepts.
+   *
+   * A browser's WebSocket takes no options and can set no headers, so a client that must present
+   * one is a program rather than a page.
+   */
+  options?: WebSocketOptions;
+}
 
 const defaultWebSocket = (globalThis as { WebSocket?: WebSocketCtor }).WebSocket;
 
@@ -48,11 +73,12 @@ function openWebSocket(ws: { readonly readyState: number; onopen: (() => void) |
 
 export function wsClientSpawner<Args = unknown>(
   url: string | ((args: Args) => string),
-  WebSocketImpl: WebSocketCtor = defaultWebSocket as WebSocketCtor,
+  open: WebSocketOpener = {},
 ): ClientSpawner<Args> {
+  const WebSocketImpl = open.WebSocket ?? (defaultWebSocket as WebSocketCtor);
   return async (args) => {
     const target = typeof url === "function" ? url(args) : url;
-    const ws = new WebSocketImpl(target);
+    const ws = new WebSocketImpl(target, open.options);
     const transport = new WebSocketTransport(ws);
     const channel = json1Channel(transport);
 

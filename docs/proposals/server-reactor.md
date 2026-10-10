@@ -178,7 +178,8 @@ live here: **admission**, and the arguments that arrive with the connection rath
 export interface Upgrade<Raw = unknown> {
   /** The transport's own object: for a websocket, the request that asked to upgrade. */
   readonly raw: Raw;
-  /** The URL, when the transport has one: its query is how arguments arrive with the connection. */
+  /** The URL asked for, when the transport has one.  Arguments arrive with the request — in its URL or
+   *  in its headers, whichever the medium and the deployment put them in. */
   readonly url?: URL;
 }
 
@@ -258,6 +259,11 @@ export function fifoClientSpawner<Args = unknown>(
 
 Every medium the remote module supports, in one shape: a transport, a listener on the serving side, and a
 spawner on the connecting side.  Only the medium's own facts differ, and only its listener knows them.
+The connecting side carries options.  `wsClientSpawner` takes an opener: the implementation to construct,
+and what it is constructed with.  A token presented as a header rather than as a query is one that does
+not end up in every log the URL passes through, and admission reads the request either way, since
+`identify` is handed it.  A browser's WebSocket takes no options and can set no headers, so a client that
+must present a token is a program rather than a page.
 
 | medium | transport | listener (the serving side) | spawner (the connecting side) |
 | --- | --- | --- | --- |
