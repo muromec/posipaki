@@ -4,10 +4,10 @@
 
 ## Summary
 
-Three servers in our own world wire the same thing by hand: the voice service's door, prsquare-sign's
-`/ws` upgrade, and the operator console's fifo pair. Each takes connections from a transport, refuses or
-admits them in the transport's own terms, and serves one actor per connection — and each writes that
-loop itself, in a different idiom, over a different medium.
+Every server that serves actors over a wire writes the same loop by hand: take a connection from a
+transport, admit or refuse it in the transport's own terms, serve one actor for it, and keep or not keep a
+registry of what is being served.  The shapes it takes are the same whether the medium is a socket, a
+websocket or a pair of named pipes, and so are the mistakes.
 
 The proposal is one transport-agnostic piece for that loop, and the media that feed it:
 
@@ -16,7 +16,7 @@ The proposal is one transport-agnostic piece for that loop, and the media that f
 const reactor = reactor(listener, factory, { onSession, onClosed });
 
 // a listener owns its medium and its own admission, and answers Connections
-const listener = unixSocketListener({ path: "/run/dopje/console.sock", mode: 0o600 });
+const listener = unixSocketListener({ path: "/run/service.sock", mode: 0o600 });
 const listener = webSocketListener({ server, path: "/ws", identify });
 const listener = fifoListener({ read, write }); // one connection per lifetime
 const listener = subprocessListener({ command, args }); // the child is the connection
@@ -28,28 +28,28 @@ and subprocess listeners that turn `serveRemoteActor` and `defineSubprocessActor
 
 ## Motivation
 
-**What the three servers share.**  All three: take a connection from a medium; decide in that medium's
-terms whether to admit it (a token in an upgrade, a file mode, nothing at all); serve one actor for it,
-spawned when the connection arrives; and keep, or deliberately do not keep, a registry of what is being
-served.  Today each writes those four pieces by hand, and each gets a slightly different answer:
+**What every such server shares.**  Each takes a connection from a medium; decides in that medium's terms
+whether to admit it (a token in an upgrade, a file mode, nothing at all); serves one actor for it, spawned
+when the connection arrives; and keeps, or deliberately does not keep, a registry of what is being served.
+Each writes those four pieces by hand today, and each gets a slightly different answer:
 
-- the **voice server** (`email-agent`, `vendored/voice-server/src/listener.ts`) authenticates at the
-  upgrade *before any actor exists*, then serves one `makeConnection(name)` per socket, with the resolved
-  name arriving through a closure, and tells its router about the connection from inside the connection;
-- **prsquare-sign** (`src/server/ws.ts`) serves one `JournalSession` per `/ws` connection with no
-  admission step and no registry at all — its persistence is a store on disk;
-- the **operator console** serves nothing itself yet: the terminal program serves the terminal and the
-  console connects to it, one client at a time, over a fifo pair.
+- one admits by a token at the upgrade, *before any actor exists*, then serves one actor per socket, with
+  the resolved name arriving through a closure, and tells a registry about the connection from inside the
+  connection;
+- one serves a session per connection with no admission step at all and keeps no registry: its state is a
+  store on disk rather than an actor;
+- one's medium is a pair of named pipes, whose open order is a handshake and which carries one client per
+  lifetime, so its accept loop and the release of a pending wait are written by hand in the consumer.
 
 **What the reactor is for.**  A consumer should write the part it is about (the actor a connection
 becomes, and what to do when one arrives or leaves) and nothing else.  The medium's own things — a token
 in a query string, a socket's file mode or peer credentials — stay in the medium, in the listener; the
 loop, the spawning, the registry of live sessions and the stop belong to the reactor.
 
-**Why the socket comes with it.**  The console's medium is a fifo pair today, and the case that asks for
-this work wants it replaced: an open order that is a handshake, one client at a time, a path a dead
-client can poison, and a lifetime nobody owns.  A unix socket has none of those, and it is the medium
-whose access control is a file mode.
+**Why the socket comes with it.**  The medium that asks for this work is a pair of named pipes, and what it
+costs is a list: an open order that is a handshake, one client at a time, a path a dead client can poison,
+and a lifetime nobody owns.  A unix socket has none of those, and it is the medium whose access control is
+a file mode.
 
 ## The reactor
 
@@ -134,7 +134,7 @@ export function webSocketListener<Meta = unknown>(options: {
   path?: string;
   /**
    * Admission and identity.  What it returns is the connection's meta; throwing refuses the
-   * connection *before any actor exists*, which is the property the voice service's door has today.
+   * connection *before any actor exists*, which is the property a token-admitting door needs.
    */
   identify?(upgrade: Upgrade<IncomingMessage>): Meta | Promise<Meta>;
 }): Listener<Meta>;
@@ -159,14 +159,13 @@ export function fifoListener<Meta = unknown>(options: {
 }): Listener<Meta>;
 ```
 
-A fifo pair is the one-connection listener that is not hypothetical — it is what the console runs on
-today.  The medium gives exactly one client per lifetime, so `accept()` resolves once and then the
-listener is done; the open order that makes a pair meet (the read end is opened only once somebody is
-writing, which is why `FifoUtf8NlineTransport` has `beginConnect` and `connect` at all) is the listener's
-business rather than the consumer's; `close()` releases a wait that is still pending, which is the dance
-the harness writes by hand today.  A second client means a second pair, and that is the medium's
-property, not the reactor's: "one attach at a time" stops being something the console's own code has to
-enforce.
+A fifo pair is the one-connection listener that is not hypothetical: a pair is one wire, so the medium
+gives exactly one client per lifetime, and `accept()` resolves once and then the listener is done.  The
+open order that makes a pair meet (the read end is opened only once somebody is writing, which is why
+`FifoUtf8NlineTransport` has `beginConnect` and `connect` at all) is the listener's business rather than
+the consumer's, and `close()` releases a wait that is still pending.  A second client means a second pair,
+and that is the medium's property rather than the reactor's, so "one at a time" stops being something a
+consumer's own code has to enforce.
 
 What a listener does *not* do: frame anything (the transport's job), handshake `$proto` (the reactor's),
 or know what an actor is.
@@ -208,21 +207,20 @@ the child holding the other end (`fifoArgvSpawner`, `commandSpawner`), and a pai
 spawner of its own.  `fifoClientSpawner` is the five-line counterpart, over the `connect` the transport
 already has.
 
-## The three servers, on this API
+## Three shapes a server takes, on this API
 
-**prsquare-sign** — what it writes today is a `WebSocketServer`, an upgrade handler and a
-`WebSocketLike` adapter; what it would write:
+**A session per connection, and nothing kept.**  What such a server writes today is a listener, an upgrade
+handler and a socket adapter; what it would write:
 
 ```ts
-reactor(webSocketListener({ server, path: "/ws" }), JournalSession);
+reactor(webSocketListener({ server, path: "/ws" }), Session);
 ```
 
-No factory, no meta, no registry: the store on disk is the persistence, and each session is served as it
-arrives.  (The node `ws` adapter moves into the listener, where every consumer of a websocket listener
-needs it.)
+No factory, no meta, no registry: its persistence is a store on disk, and each session is served as it
+arrives.
 
-**The voice server** — its door keeps the property that matters (nothing is spawned for a connection
-that is not admitted) and loses its hand-written loop:
+**Admission at the door, and a registry reached by reference.**  What matters is kept — nothing is spawned
+for a connection that is not admitted — and the hand-written loop goes:
 
 ```ts
 const listener = webSocketListener<{ client: string }>({
@@ -231,46 +229,37 @@ const listener = webSocketListener<{ client: string }>({
   identify: ({ url }) => ({ client: tokens.resolve(url?.searchParams.get("token")) }),
 });
 
-reactor(listener, ({ meta }) => makeConnection(meta.client), {
-  onSession: ({ proc, meta }) => router.send({ type: "CONNECTION_ANNOUNCED", conn: handleOf(proc), client: meta.client }),
-  onClosed: ({ proc }) => router.send({ type: "CONNECTION_GONE", conn: handleOf(proc) }),
+reactor(listener, ({ meta }) => makeSession(meta.client), {
+  onSession: ({ proc, meta }) =>
+    registry.send({ type: "SESSION_OPENED", session: handleOf(proc), client: meta.client }),
+  onClosed: ({ proc }) => registry.send({ type: "SESSION_CLOSED", session: handleOf(proc) }),
 });
 ```
 
-Two things stay the connection's own business: it mints the conversation's id, and it relays.  What moves
-out of it is the announcement, which is now the reactor's report — and the report is a *handle*, not a
-name, because two connections can carry the same client name (the connection's own comment says exactly
-that) and because the seam spawns a served actor as a root process, so its name is the client's word for
-it and not an identity.
+The session keeps what is its own: it mints the conversation's id, and it relays.  What moves out of it is
+the announcement, which is now the reactor's report — and the report is a *handle*, not a name: the seam
+spawns a served actor as a root process, so its name is the client's own word for it rather than an
+identity, and two connections can carry the same one.
 
-**The operator console** — the harness accepts, and the fifo pair's whole vocabulary (the open order, the
-release, one client at a time, `TerminalConnection`) goes:
+**A pair of named pipes, one client per lifetime.**  The medium's whole vocabulary (the open order, the
+release, one client at a time) is written by hand today; here it is the listener's, and the consumer's code
+is the same call as the two above:
 
 ```ts
-const listener = unixSocketListener({ path: socketPath, mode: 0o600 });
-
-reactor(listener, () => makeSession(consoleHandle), {
-  onSession: ({ proc }) => console.send({ type: "CONSOLE_ATTACHED", client: handleOf(proc) }),
-  onClosed: ({ proc }) => console.send({ type: "CONSOLE_DETACHED", client: handleOf(proc) }),
+reactor(fifoListener({ read, write }), () => makeSession(registryHandle), {
+  onSession: ({ proc }) => registry.send({ type: "SESSION_OPENED", session: handleOf(proc) }),
+  onClosed: ({ proc }) => registry.send({ type: "SESSION_CLOSED", session: handleOf(proc) }),
 });
 ```
 
-The console keeps what it already has: the `attached` list of terminals (now fed by the reactor's
-reports, which arrive as messages, so the list still changes in a handler), the `CONSOLE_*` vocabulary,
-presence, receipts, the command table and the layer split.  What it loses is its own connect loop, and
-the terminal program becomes the client it always should have been —
-`remoteClient("console", socketClientSpawner(path))` — which also makes several terminals possible at
-once, a thing the console already supports and the fifo pair does not.
+What such a consumer keeps is its own list of what is attached, now fed by the reactor's reports; because
+those arrive as messages, the list still changes in a handler.  What it loses is its connect loop, the
+release and the one-at-a-time rule.  A client that is a program run as a child, pointed at the same path,
+is not special: it arrives through the same listener as any other.
 
-A run whose stdin is a terminal is not special: the console spawns the same terminal program as a child,
-pointing it at the socket, and it arrives through the same listener as any other client.
-
-The same call, with a different listener, is what the console runs on **today**: `reactor(fifoListener({
-read, write }), …)` is exactly what the harness writes by hand in `pair.ts` and `wire.ts`, including the
-one-client-at-a-time property, which is the medium's and not the reactor's.  That is the consequence worth
-keeping in view: the media differ and the reactor does not, so moving the console from a pair to a socket
-is a new listener and almost nothing else.
-
+The same call, with a different listener, is also what a named-pipe consumer runs **today**, written by
+hand.  That is the consequence worth keeping in view: the media differ and the reactor does not, so moving
+from a pair to a socket is a new listener and almost nothing else.
 ## What this absorbs: the entry points that become sugar
 
 If the reactor is the primitive, two things posipaki already ships are shorter forms of it, and should be
@@ -315,7 +304,7 @@ accepting while sessions live, and the consumer's callbacks are notifications ra
 
 The second candidate is the reactor as a *process*: an actor whose setup owns the listener, forks a child
 per connection, and whose out-messages are "a session arrived" and "a session went".  It is the same API
-with an actor around it, and it is the shape a console wants (state changes in a handler, and the
+with an actor around it, and it is the shape a consumer with state wants (changes in a handler, and the
 sessions visible in the tree).  It is deliberately *not* the primitive here: one of the three servers is
 a plain program with no actor context, and `serveRemoteActor` spawns rootlessly, so a listener and a
 reactor work from anywhere.  The wrapper is a dozen lines and belongs beside the reactor once a second
@@ -332,7 +321,7 @@ actor-shaped consumer wants it.
   treatment later, with a different set of questions (a port to secure).
 - **No framing of its own.**  Newline-delimited JSON via `json1Channel`, as the fifo and stdio wires are.
 - **No serving of a running process.**  What is served per connection is an actor the seam spawns.  A
-  console is already running when a client arrives, so it serves a per-connection session that talks to
+  actor is already running when a client arrives, so a per-connection session is served that talks to
   it.  Serving a *running* actor would remove that session and needs a primitive posipaki does not have
   (`serveRemoteActor` spawns what it serves); it is worth its own proposal, and it is not needed for any
   of the three cases above.
@@ -347,7 +336,7 @@ actor-shaped consumer wants it.
   it), which means a consumer that wants a different protocol needs a knob.  The alternative is that a
   listener hands back a spawner instead of a transport.
 - **Whether the reactor reports only, or also answers.**  Today `onSession` is a notification.  A
-  consumer that wants to refuse a connection *after* admission (the console with nobody attached
+  consumer that wants to refuse a connection *after* admission (one that refuses a delivery rather than a
   refuses a delivery, not a connection) does it in the actor it serves, which keeps admission the
   listener's and policy the actor's.
 - **The actor-shaped wrapper** (`reactorActor`: out-messages instead of callbacks), and whether it ships
