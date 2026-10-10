@@ -112,6 +112,12 @@ job, done here so a consumer never writes it); call the factory with the connect
 by the serve itself (`src/remote/server.ts:174`), and that is reported through `onClosed`; accept
 again.  `stop()` closes the listener and stops every live session, so a client learns the server is
 gone when its connection closes.
+
+The protocol step is one function of the loop: wrap the transport in `json1Channel`, send or await the
+`$proto` frame, and hand the channel on.  A later version can take that as a parameter rather than writing it
+in, which is why it stays in one place.
+
+The reactor reports and does not answer: `onSession` and `onClosed` are notifications about a session that
 A bare `ActorDefinition` is the sugar for a factory that ignores the connection and adds no meta.
 
 ## Listeners
@@ -159,13 +165,22 @@ export function fifoListener<Meta = unknown>(options: {
 }): Listener<Meta>;
 ```
 
+A socket's `identify` receives the peer's credentials where the platform gives them (Linux `SO_PEERCRED`:
+uid, gid and pid), which is what a listener with no token can admit on.  A platform that does not expose
+passes `peer` as undefined rather than inventing one.
+
+The socket file's lifetime belongs to its listener: the path is made and its mode set before the first
+`accept()`; a path that exists and refuses a connection is a crash's leftover and is replaced; a path that is
+not a socket is refused rather than removed; and `close()` unlinks the path only if it is still the inode this
+listener bound, since a path replaced under it belongs to somebody else.
+
 A fifo pair is a one-connection listener: a pair is one connection, so the medium gives exactly one client
 per lifetime, and `accept()` resolves once and then the listener is done.  The open order that makes a pair
 meet (the read end is opened only once somebody is writing, which is why `FifoUtf8NlineTransport` has
 `beginConnect` and `connect` at all) is the listener's business rather than the consumer's, and `close()`
 releases a wait that is still pending.  A second client means a second pair, and that is the medium's
 property rather than the reactor's, so "one at a time" stops being something a consumer's own code has to
-enforce.
+enforce.  The pair keeps shipping: this adds a listener and a client spawner for it, and takes nothing away.
 
 What a listener does *not* do: frame anything (the transport's job), handshake `$proto` (the reactor's),
 or know what an actor is.
@@ -289,6 +304,23 @@ read that way — and reimplemented on it where that costs nothing.
   The payload side reads the same way from the other end: a payload that serves its root over the connection it
   was handed is a one-connection reactor whose listener is that connection.
 
+### The `$fd` frames, when the reimplementation happens
+
+The parent's side of a subprocess carries the child's own stdout and stderr as frames of the protocol, and
+today the caller is handed a filter that sinks them.  When `defineSubprocessActor` becomes a reactor over a
+`subprocessListener`, those frames have to land in the same place, and there are three ways to do it:
+
+- **a frame hook on the reactor** (`frames?: (frame) => "pass" | "handled"`): the reactor already runs the
+  framing, so the hook costs it four lines; the subprocess listener supplies the output sink as the default,
+  a caller can replace it, and the reactor never learns what `$fd` means.
+- **a plugin on the reactor**, in the shape actor plugins already have, if a second hook of the same kind
+  turns up.
+- **a tap inside the subprocess listener**, which decodes each line itself, sinks the output frames and hands
+  the rest on.  Nothing new on the reactor, at the price of decoding every line twice.
+
+I would take the first.  The reimplementation is the last slice either way, so nothing before it depends on
+this choice.
+
 What this asks of a `Listener`, beyond a socket: `accept()` may reject for reasons that are the medium's
 own (a child that died, a connection that closed), a listener may have exactly one connection and then be done,
 and `close()` may own something with a lifetime (a child to end, a file to unlink).
@@ -307,14 +339,15 @@ per connection, and whose out-messages are "a session arrived" and "a session we
 with an actor around it, and it is the shape a consumer with state wants (changes in a handler, and the
 sessions visible in the tree).  It is deliberately *not* the primitive here: one of the shapes above is
 a plain program with no actor context, and `serveRemoteActor` spawns rootlessly, so a listener and a
-reactor work from anywhere.  The wrapper is a dozen lines and belongs beside the reactor once a second
-actor-shaped consumer wants it.
+reactor work from anywhere.  The wrapper is drafted separately (`reactor-actor.md`); it is out of scope here.
 
 ## What it does not do
 
 - **No authentication of its own.**  Admission is the listener's `identify`, which for a socket means the
   file mode and the peer credentials, and for a websocket what an admission step already does with a token.  The
   reactor never sees a token, a URL or a file.
+- **No answering.**  The reactor reports a session and decides nothing about it.  A served actor that refuses
+  something it was sent is making an application-level decision, and it acts on it by stopping.
 - **No reconnection.**  A connection that closes is a session that ends; a client that wants to come back
   connects again, which is a new session.
 - **No TLS and no network sockets.**  A unix socket is local by definition; `net` could get the same
@@ -330,21 +363,12 @@ actor-shaped consumer wants it.
 
 ## Open
 
-- **The name.**  `reactor` for the piece, `Listener` for the media, `identify` for admission.  The
-  alternatives worth considering: `accept`/`Acceptor`, `admit`/`Admission`, `Session` vs `Served`.
-- **Where the `$proto` handshake lives.**  This proposal puts it in the reactor (a consumer never writes
-  it), which means a consumer that wants a different protocol needs a knob.  The alternative is that a
-  listener hands back a spawner instead of a transport.
-- **Whether the reactor reports only, or also answers.**  Today `onSession` is a notification.  A
-  consumer that wants to refuse *after* admission does it in the actor it serves, which is where a refusal
-  of a *delivery* rather than of a connection belongs: admission stays the listener's and policy the
-  actor's.
-- **The actor-shaped wrapper** (`reactorActor`: out-messages instead of callbacks), and whether it ships
-  with this or with its first consumer.
-- **Peer credentials on a socket.**  `SO_PEERCRED` gives uid, gid and pid on Linux; the listener should
-  pass them in `identify` where the runtime exposes them, and say so where it does not.
-- **Replacing a stale socket by default**, and whether `close()` unlinks only the inode it bound (it
-  should).
-- **Whether `serveRemoteActor` and `defineSubprocessActor` are reimplemented on this** or kept beside
-  it: their extras (the `$fd` output frames, artifact staging, the wait for a child's exit) stay theirs.
-- **Whether the fifo pair stays shipped** once a socket exists.  Every consumer that keeps both keeps
+- **Where the protocol handshake lives.**  It is one function inside the reactor, so that a later version can
+  take the protocol as a parameter: a consumer that wants another one adds a knob rather than a fork of the
+  loop.
+- **The `$fd` output frames.**  When `defineSubprocessActor` is reimplemented on this, the child's own output
+  frames have to land somewhere.  The candidates are in the section above; the frame hook is the one I would
+  take, and its name is open.
+- **The actor-shaped wrapper** is drafted separately (`reactor-actor.md`) and is out of scope here.
+- **Serving a running actor** directly, which the wrapper would want if its sessions were its own children, is
+  the primitive `serveRemoteActor` does not have.  Its own proposal.
