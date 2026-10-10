@@ -11,8 +11,8 @@ export { fifoArgvSpawner } from "./spawners/fifo-argv.js";
 export { defineSubprocessActor } from "./define-subprocess.js";
 export type { SubprocessActorOptions, SubprocessActorBundle } from "./define-subprocess.js";
 
-// the stdio wire: a newline-delimited channel over a stream pair, with the far
-// end's own output carried as frames of its own
+// the stdio wire: a newline-delimited channel over a stream pair, with the far end's own output carried
+// as frames of its own
 export {
   HANDSHAKE_TIMEOUT_MS,
   LineTransport,
@@ -80,3 +80,8 @@ export type { HostProgram, RemoteSpec, RemoteWayIn } from "./gateway-client.js";
 export { runHost, spawnChild } from "./host.js";
 export type { HostResult, HostRun, SpawnChild } from "./host.js";
 
+
+// the unix socket: a listener the reactor takes connections from, and a client for anyone who wants one
+export { connectUnixSocket, unixSocketListener } from "./socket.js";
+export type { UnixSocketClientOptions, UnixSocketListenerOptions, UnixSocketPeer } from "./socket.js";
+export { socketClientSpawner } from "./spawners/socket-client.js";
