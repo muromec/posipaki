@@ -189,9 +189,9 @@ export async function serveChannel<Meta = unknown>(
   const proc = served.proc;
 
   // What ends this session, run once: the factory's cleanup when it returned one, and stopping the process
-  // when it did not.  A factory that hands a process over without one is saying that process outlives the
-  // connection, and this is where that is honoured.  The call is kept, so whoever asks second waits for the
-  // ending rather than returning before it.
+  // when it did not.  A process meant to outlive the connection is handed over with a cleanup of its own,
+  // since stopping it here would end it for every other connection bound to it.  The call is kept, so
+  // whoever asks second waits for the ending rather than returning before it.
   let pvtEnding: Promise<void> | null = null;
   const end = (): Promise<void> => {
     if (pvtEnding === null) {

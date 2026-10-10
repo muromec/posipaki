@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { defineActor, defineMessages } from "../index.js";
-import { isMsg, isProto, isState, type Channel, type StringTransport } from "./channel.js";
+import { isExit, isMsg, isProto, isState, type Channel, type StringTransport } from "./channel.js";
 import { rootIdFor } from "./process-ref.js";
 import { oneConnection, reactor, type Connection, type Listener, type Session } from "./reactor.js";
 import { sleep } from "../util.js";
@@ -201,6 +201,75 @@ describe("reactor", () => {
     expect(ended).toBe(false);
     await proc.stop();
     expect(ended).toBe(true);
+    await r.stop();
+  });
+
+  it("serves one process to more than one connection", async () => {
+    const listener = new QueueListener<Record<string, never>>();
+    const sessions: Session<Record<string, never>>[] = [];
+    const closed: Session<Record<string, never>>[] = [];
+    // One process, handed over to each connection: a cleanup of the factory's own is what says it outlives
+    // them, since the default would stop it for the others.
+    const proc = await makeEcho().spawn(undefined, { name: "shared" });
+    let ended = false;
+    void proc.wait().then(
+      () => {
+        ended = true;
+      },
+      () => {
+        ended = true;
+      },
+    );
+    let cleaned = 0;
+    const r = reactor(
+      listener,
+      () => ({
+        proc,
+        cleanup: () => {
+          cleaned += 1;
+        },
+      }),
+      {
+        onSession: (session) => sessions.push(session),
+        onClosed: (session) => closed.push(session),
+      },
+    );
+
+    const first = new FakeTransport();
+    listener.offer({ meta: {}, transport: first });
+    await connected(first, "shared");
+    const second = new FakeTransport();
+    listener.offer({ meta: {}, transport: second });
+    await connected(second, "shared");
+    await waitUntil(() => sessions.length === 2, "both sessions");
+
+    // Each side asks to hear it, the way a proxy asks for the process it stands in for.
+    first.receive({ to: ROOT, $tune: { streams: ["message", "state", "exit"] } });
+    second.receive({ to: ROOT, $tune: { streams: ["message", "state", "exit"] } });
+    await waitUntil(
+      () => first.frames().some(isState) && second.frames().some(isState),
+      "the state on both connections",
+    );
+
+    const pong = (transport: FakeTransport, count: number): boolean =>
+      transport.frames().some((frame) => isMsg(frame) && (frame.$msg.body as { count?: number }).count === count);
+
+    // One message in, and the one process answering is heard on both.
+    first.receive({ to: ROOT, $msg: { fromName: "root", body: { type: "PING", count: 7 } } });
+    await waitUntil(() => pong(first, 7) && pong(second, 7), "the reply on both connections");
+
+    // One client goes: its session ends and its cleanup runs, and the other keeps talking to the same process.
+    await first.close();
+    await waitUntil(() => closed.length === 1, "the first session to close");
+    expect(cleaned).toBe(1);
+    expect(ended).toBe(false);
+    second.receive({ to: ROOT, $msg: { fromName: "root", body: { type: "PING", count: 8 } } });
+    await waitUntil(() => pong(second, 8), "the reply after the first connection went");
+
+    // The process's own end reaches the connection still bound to it, and that session ends with its wire.
+    await proc.stop();
+    await waitUntil(() => closed.length === 2, "the second session to close");
+    expect(second.frames().some(isExit)).toBe(true);
     await r.stop();
   });
 

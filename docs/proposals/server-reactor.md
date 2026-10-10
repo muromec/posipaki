@@ -161,6 +161,14 @@ connection is over.
 A bare `ActorDefinition` is the shortcut for a factory that spawns it: the same call, with the definition
 wrapped into a factory that spawns it with the `$init`'s args, name and parent, and reports no meta of its own.
 
+### A process that outlives the connection
+
+A factory may hand over a process it already holds, whose life is not the connection's, and the same process can
+be served on more than one connection at once.  Each connection keeps its own streams and numbers the root in its
+own table, so a process served twice is two subscribers to one handle and its out-messages reach both; a
+connection going runs only that session's cleanup; and a process that ends on its own is reported to the
+connections still bound.  Verified in `reactor.test.ts` ("serves one process to more than one connection").
+
 ## Listeners
 
 The transport-specific half.  Two things a medium has, and the transport-agnostic reactor must not know,
@@ -406,9 +414,4 @@ reactor work from anywhere.  The wrapper is drafted separately (`reactor-actor.m
 
 ## Open
 
-- **Serving one process on several connections.**  The shape is settled: the factory returns the process and
-  says what ends it.  What a long-lived actor served directly still needs is its out-messages reaching every
-  connection bound to it, and each connection numbers the root in its own table.  Worth verifying when it is
-  first used that way, since that is what would let a long-lived actor be served with no per-connection
-  session in front of it.
 - **The wrapper** has open questions of its own, in `reactor-actor.md`.
