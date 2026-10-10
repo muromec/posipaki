@@ -7,7 +7,7 @@
 Every server that serves actors to a remote caller writes the same loop by hand: take a connection from a
 transport, admit or refuse it in the transport's own terms, serve one actor for it, and keep or not keep a
 registry of what is being served.  The shapes it takes are the same whether the medium is a socket, a
-websocket or a pair of named pipes, and so are the mistakes.
+websocket or a pair of named pipes.
 
 The proposal is one transport-agnostic piece for that loop, and the media that feed it:
 
@@ -58,7 +58,7 @@ a file mode.
 export interface Connection<Meta = unknown> {
   /** The transport's own facts: what `identify` resolved, the URL, the peer, the request. */
   readonly meta: Meta;
-  /** The connection to the far side, ready to be served on. */
+  /** The transport over the connection, before the `$proto` handshake. */
   readonly transport: StringTransport;
 }
 
@@ -66,7 +66,7 @@ export interface Connection<Meta = unknown> {
 export interface Listener<Meta = unknown> {
   /** The next admitted connection.  Rejects once the listener is closed. */
   accept(signal?: AbortSignal): Promise<Connection<Meta>>;
-  /** Stop taking connections and let the medium go (close a server, unlink a socket). */
+  /** Stop accepting, and release what the listener owns: a server, a socket file, a child, a wait. */
   close(): Promise<void>;
 }
 
@@ -116,14 +116,14 @@ A bare `ActorDefinition` is the sugar for a factory that ignores the connection 
 
 ## Listeners
 
-The transport-specific half, and the place the two things a medium has and the reactor should not know
-about live: **admission**, and **arguments that arrive with the connection rather than with the actor**.
+The transport-specific half.  Two things a medium has, and the transport-agnostic reactor must not know,
+live here: **admission**, and the arguments that arrive with the connection rather than with the actor.
 
 ```ts
 export interface Upgrade<Raw = unknown> {
   /** The transport's own object: for a websocket, the request that asked to upgrade. */
   readonly raw: Raw;
-  /** The URL, when the transport has one: where arguments ride. */
+  /** The URL, when the transport has one: its query is how arguments arrive with the connection. */
   readonly url?: URL;
 }
 
@@ -134,7 +134,7 @@ export function webSocketListener<Meta = unknown>(options: {
   path?: string;
   /**
    * Admission and identity.  What it returns is the connection's meta; throwing refuses the
-   * connection *before any actor exists*, which is what an admission step is for.
+   * connection *before any actor exists*: a refused connection costs no actor.
    */
   identify?(upgrade: Upgrade<IncomingMessage>): Meta | Promise<Meta>;
 }): Listener<Meta>;
@@ -159,13 +159,13 @@ export function fifoListener<Meta = unknown>(options: {
 }): Listener<Meta>;
 ```
 
-A fifo pair is the one-connection listener that is not hypothetical: a pair is one connection, so the
-gives exactly one client per lifetime, and `accept()` resolves once and then the listener is done.  The
-open order that makes a pair meet (the read end is opened only once somebody is writing, which is why
-`FifoUtf8NlineTransport` has `beginConnect` and `connect` at all) is the listener's business rather than
-the consumer's, and `close()` releases a wait that is still pending.  A second client means a second pair,
-and that is the medium's property rather than the reactor's, so "one at a time" stops being something a
-consumer's own code has to enforce.
+A fifo pair is a one-connection listener: a pair is one connection, so the medium gives exactly one client
+per lifetime, and `accept()` resolves once and then the listener is done.  The open order that makes a pair
+meet (the read end is opened only once somebody is writing, which is why `FifoUtf8NlineTransport` has
+`beginConnect` and `connect` at all) is the listener's business rather than the consumer's, and `close()`
+releases a wait that is still pending.  A second client means a second pair, and that is the medium's
+property rather than the reactor's, so "one at a time" stops being something a consumer's own code has to
+enforce.
 
 What a listener does *not* do: frame anything (the transport's job), handshake `$proto` (the reactor's),
 or know what an actor is.
@@ -193,7 +193,7 @@ export function fifoClientSpawner<Args = unknown>(
 ```
 
 Every medium the remote module supports, in one shape: a transport, a listener on the serving side, and a
-the connecting side.  Only the medium's own facts differ, and only its listener knows them.
+spawner on the connecting side.  Only the medium's own facts differ, and only its listener knows them.
 
 | medium | transport | listener (the serving side) | spawner (the connecting side) |
 | --- | --- | --- | --- |
@@ -258,8 +258,8 @@ release and the one-at-a-time rule.  A client that is a program run as a child, 
 is not special: it arrives through the same listener as any other.
 
 The same call, with a different listener, is also what a named-pipe consumer runs **today**, written by
-hand.  That is the consequence worth keeping in view: the media differ and the reactor does not, so moving
-from a pair to a socket is a new listener and almost nothing else.
+hand, so moving from a pair to a socket is a new listener and almost nothing else.
+
 ## What this absorbs: the entry points that become sugar
 
 If the reactor is the primitive, two things posipaki already ships are shorter forms of it, and should be
@@ -305,7 +305,7 @@ accepting while sessions live, and the consumer's callbacks are notifications ra
 The second candidate is the reactor as a *process*: an actor whose setup owns the listener, forks a child
 per connection, and whose out-messages are "a session arrived" and "a session went".  It is the same API
 with an actor around it, and it is the shape a consumer with state wants (changes in a handler, and the
-sessions visible in the tree).  It is deliberately *not* the primitive here: one of the three servers is
+sessions visible in the tree).  It is deliberately *not* the primitive here: one of the shapes above is
 a plain program with no actor context, and `serveRemoteActor` spawns rootlessly, so a listener and a
 reactor work from anywhere.  The wrapper is a dozen lines and belongs beside the reactor once a second
 actor-shaped consumer wants it.
