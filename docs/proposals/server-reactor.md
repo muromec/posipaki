@@ -457,3 +457,7 @@ reactor work from anywhere.  The wrapper is drafted separately (`reactor-actor.m
 ## Open
 
 - **The wrapper** has open questions of its own, in `reactor-actor.md`.
+
+- **The way out of a served connection** (`ServedConnection.output`, reactor.ts:34-41) is one half of
+  what [The Connection Both Ends Hold](connection-both-ends.md) proposes to make symmetric: one frame
+  interface held by the process at each end, with `$fd` and the byte streams built above it.
