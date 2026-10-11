@@ -5,9 +5,8 @@
 import { describe, expect, it } from "vitest";
 import type { Writable } from "node:stream";
 
-import type { LineLog } from "./streams.js";
 import { frameReaders, type Channel } from "./channel.js";
-import { connectionFds, logStream } from "./streams.js";
+import { connectionFds, fdWriter, logStream, type LineLog } from "./streams.js";
 
 class FakeChannel implements Channel {
   readonly sent: Record<string, unknown>[] = [];
@@ -93,6 +92,30 @@ describe("connectionFds", () => {
     await ended;
 
     expect(heard.join("")).toBe("before\n");
+  });
+});
+
+describe("fdWriter", () => {
+  it("writes one frame per chunk", async () => {
+    const sent: Record<string, unknown>[] = [];
+    const stream = fdWriter((frame) => void sent.push(frame), 1);
+
+    await write(stream, "one");
+    await write(stream, "two");
+
+    expect(sent).toEqual([
+      { $fd: 1, data: "one" },
+      { $fd: 1, data: "two" },
+    ]);
+  });
+
+  it("reports a frame that could not be sent as the stream's error", async () => {
+    const stream = fdWriter(() => Promise.reject(new Error("the client hung up")), 2);
+    const failed = new Promise<Error>((resolve) => stream.on("error", resolve));
+
+    stream.write("gone");
+
+    expect((await failed).message).toBe("the client hung up");
   });
 });
 

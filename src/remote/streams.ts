@@ -43,6 +43,28 @@ export interface FdSet {
   close(): void;
 }
 
+/** Where a frame goes: a connection's own `send`, or a transport's, encoded. */
+export type OutputSender = (frame: Record<string, unknown>) => void | Promise<void>;
+
+/**
+ * A writable that writes what is written to it as output frames of one fd: one chunk is one frame.
+ *
+ * The shape of an output frame lives here rather than at each caller — the gateway relays a payload's
+ * own output and holds no channel — and a send that fails is the stream's error, not a lost line.
+ */
+export function fdWriter(send: OutputSender, fd: OutputFd): Writable {
+  return new Writable({
+    write(chunk: Buffer | string, _encoding, done): void {
+      // `send` may answer nothing (a transport that writes synchronously): either way the chunk is
+      // taken once it is out, and a failure is the stream's to report.
+      void Promise.resolve(send(outputFrame(fd, String(chunk)))).then(
+        () => done(),
+        (error: unknown) => done(error as Error),
+      );
+    },
+  });
+}
+
 /**
  * The byte streams of a connection: what each end's root prints, and what it reads.
  *
@@ -54,19 +76,7 @@ export function connectionFds(channel: Channel): FdSet {
 
   const side = (fd: OutputFd): FdStream => {
     const read = new PassThrough();
-    const stream: FdStream = {
-      read,
-      write: new Writable({
-        write(chunk: Buffer | string, _encoding, done): void {
-          // `send` may answer nothing (a transport that writes synchronously): either way the chunk is
-          // taken once it is out, and a failure is the stream's to report.
-          void Promise.resolve(channel.send(outputFrame(fd, String(chunk)))).then(
-            () => done(),
-            (error: unknown) => done(error as Error),
-          );
-        },
-      }),
-    };
+    const stream: FdStream = { read, write: fdWriter((frame) => channel.send(frame), fd) };
     sides.set(fd, { stream, read });
     return stream;
   };

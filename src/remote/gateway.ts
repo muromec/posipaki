@@ -30,8 +30,9 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import { outputFrame, type OutputFd } from "./channel.js";
+import type { OutputFd } from "./channel.js";
 import { encode } from "./protocols/json1.js";
+import { fdWriter } from "./streams.js";
 import { errorFrame } from "./stdio.js";
 import type { LineTransport } from "./stdio.js";
 import { LineTransport as Lines } from "./stdio.js";
@@ -112,14 +113,14 @@ async function fail(wire: LineTransport, reason: string): Promise<void> {
   }
 }
 
-/** Copy everything the payload prints onto the wire as output frames. */
+/** Copy everything the payload prints to the client, as output frames of the fd it came in on. */
 function forwardOutput(stream: NodeJS.ReadableStream, wire: LineTransport, fd: OutputFd): void {
   stream.setEncoding("utf-8");
-  stream.on("data", (chunk: string) => {
-    void wire.send(encode(outputFrame(fd, chunk))).catch(() => {
-      /* the client hung up: the payload's exit is what matters now */
-    });
-  });
+  const out = fdWriter((frame) => wire.send(encode(frame)), fd);
+  // The client hung up: the payload's exit is what matters now, and a frame that could not be
+  // delivered is not something anyone here can act on.
+  out.on("error", () => {});
+  stream.pipe(out, { end: false });
 }
 
 /**

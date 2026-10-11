@@ -27,8 +27,8 @@ export { stderrSink, withOutput } from "./output.js";
 export type { OutputSink } from "./output.js";
 
 // the connection as streams: what each end's root prints, and what it reads
-export { connectionFds, logStream } from "./streams.js";
-export type { FdSet, FdStream, LineLog } from "./streams.js";
+export { connectionFds, fdWriter, logStream } from "./streams.js";
+export type { FdSet, FdStream, LineLog, OutputSender } from "./streams.js";
 export type { ClientChannelOptions, LineStreams } from "./stdio.js";
 export type { OutputFd } from "./channel.js";
 export {

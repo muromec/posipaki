@@ -4,8 +4,9 @@
 exported type (`dbe75a8`), `$fd` is a frame of the connection over fd 0, 1 and 2 (`12c51fb`, `11b616e`),
 the fan-out behind `onMessage` (`5a582f9`), the connection is the process's own fact at both ends
 (`ctx.connection`, `771bf87`), both hooks are in (`Session.channel` with `onSession`'s cleanup, and
-`onChannel` with its own on the client), and the byte streams are built — `connectionFds` and `logStream`
-in `remote/node`, tested in `streams.test.ts`.  Not built: the callers that would move onto them.
+`onChannel` with its own on the client), and the byte streams are built — `connectionFds`, `fdWriter`
+and `logStream` in `remote/node`, with the gateway's own forwarding writing through `fdWriter`.  What
+the plan asked for is built; what is left is under Open.
 
 ## Motivation
 
@@ -89,7 +90,7 @@ carry both.
 
 Master's ruling: "lets use node streams.  think how it plugs into the logger."  So the streams are
 node's, they live in `remote/node` (`src/remote/streams.ts`), and they are the one home for a shape
-every caller writes by hand today (`forwardOutput`, `gateway.ts:114-122`):
+every caller writes by hand today (`forwardOutput`, `gateway.ts:116-124`):
 
 ```ts
 export interface FdSet {
@@ -166,9 +167,12 @@ One commit per slice, each with its own tests, gate green.
 2. `onMessage` returns its unsubscribe; the fan-out lives in `json1Channel`; the callers that used
    `removeHandler` give up their own entry (`server.ts:348`, `reactor.ts:280`, `output.ts:42`, the three
    client spawners, `stdio.ts`, `fifo.ts`).  **Built** (`5a582f9`).
-3. `$fd: 0` in the vocabulary, and `connectionFds` with `logStream` in `remote/node`.  **Built**:
-   `streams.ts`, exported from `remote/node`, and `streams.test.ts`.  Not built: the callers.
-4. Callers move over: the gateway's forwarding loop (`gateway.ts:114-122`) first.  Not built.
+3. `$fd: 0` in the vocabulary, and `connectionFds` with `fdWriter` and `logStream` in `remote/node`.
+   **Built**: `streams.ts`, exported from `remote/node`, and `streams.test.ts`.
+4. Callers move over: the gateway's forwarding loop (`gateway.ts:116-124`) first.  **Partly built**: the
+   shape of an output frame has one home (`fdWriter`), and the gateway writes through it.  The gateway
+   does not move onto `connectionFds`, which this plan first assumed: it relays lines and holds no
+   channel of its own — its transport takes one handler, and the relay keeps it.
 
 ## Compatibility
 
