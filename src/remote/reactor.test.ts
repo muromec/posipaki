@@ -8,7 +8,14 @@ import { describe, expect, it } from "vitest";
 import { defineActor, defineMessages } from "../index.js";
 import { isExit, isMsg, isProto, isState, type Channel, type StringTransport } from "./channel.js";
 import { rootIdFor } from "./process-ref.js";
-import { oneConnection, reactor, type Connection, type Listener, type Session } from "./reactor.js";
+import {
+  oneConnection,
+  reactor,
+  type Connection,
+  type Listener,
+  type ServedConnection,
+  type Session,
+} from "./reactor.js";
 import { sleep } from "../util.js";
 
 /** A transport the test drives: what the reactor writes is recorded, what the test writes is delivered. */
@@ -155,6 +162,32 @@ describe("reactor", () => {
 
     await waitUntil(() => sessions.length === 1, "the session report");
     expect(sessions[0]!.meta).toEqual({ who: "from the factory" });
+    await r.stop();
+  });
+
+  it("writes on the connection's own output, and the far side lifts the frame", async () => {
+    const listener = new QueueListener<{ who: string }>();
+    const sessions: Session<{ who: string }>[] = [];
+    // Held in an object: the factory runs inside the serve, so a `let` assigned there is narrowed to null
+    // by the time the test reads it.
+    const held: { connection: ServedConnection<{ who: string }> | null } = { connection: null };
+    const r = reactor(
+      listener,
+      async (connection, init) => {
+        held.connection = connection;
+        return { proc: await makeEcho().spawn(init.args, { name: init.rootName }) };
+      },
+      { onSession: (session) => sessions.push(session) },
+    );
+
+    const transport = new FakeTransport();
+    listener.offer({ meta: { who: "first" }, transport });
+    await connected(transport);
+    await waitUntil(() => sessions.length === 1, "the session report");
+
+    await held.connection!.output(2, "a line of its own");
+    expect(transport.frames()).toContainEqual({ $fd: 2, data: "a line of its own" });
+
     await r.stop();
   });
 
@@ -414,5 +447,24 @@ describe("oneConnection", () => {
 
     await listener.close();
     expect(await settled).toMatch(/closed before a connection arrived/);
+  });
+
+  it("writes the far end's own output on the channel it serves", async () => {
+    const channel = new FakeChannel();
+    const listener = oneConnection<Record<string, never>>(() => Promise.resolve(channel));
+    const held: { connection: ServedConnection<Record<string, never>> | null } = { connection: null };
+    const r = reactor(listener, async (connection, init) => {
+      held.connection = connection;
+      return { proc: await makeEcho().spawn(init.args, { name: init.rootName }) };
+    });
+
+    await waitUntil(() => channel.listening, "the serve to be listening");
+    channel.receive({ $init: { rootName: "echo", parentName: "root", parentIdName: "root" } });
+    await waitUntil(() => held.connection !== null, "the factory's connection");
+
+    await held.connection!.output(1, "printed");
+    expect(channel.sent).toContainEqual({ $fd: 1, data: "printed" });
+
+    await r.stop();
   });
 });

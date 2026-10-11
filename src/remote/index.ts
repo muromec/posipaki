@@ -19,6 +19,7 @@ export type {
   Listener,
   Reactor,
   ReactorOptions,
+  ServedConnection,
   Session,
   SessionFactory,
 } from "./reactor.js";

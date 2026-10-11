@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import { defineActor, defineMessages } from "../index.js";
 import { isMsg, isState } from "./channel.js";
 import { rootIdFor } from "./process-ref.js";
-import { reactor, type Session } from "./reactor.js";
+import { reactor, type ServedConnection, type Session } from "./reactor.js";
 import { connectUnixSocket, unixSocketListener } from "./socket.js";
 import { socketClientSpawner } from "./spawners/socket-client.js";
 import { sleep } from "../util.js";
@@ -128,5 +128,36 @@ describe("unixSocketListener", () => {
       (error: Error) => error.message,
     );
     expect(await attempt).toMatch(/nothing answered|ENOENT/);
+  });
+
+  it("hands the far end's own output to the client's sink", async () => {
+    const dir = await scratch();
+    const path = join(dir, "service.sock");
+    const listener = await unixSocketListener({ path });
+    const held: { output: ServedConnection<unknown>["output"] | null } = { output: null };
+    const r = reactor(listener, async (connection, init) => {
+      held.output = connection.output;
+      return { proc: await makeEcho().spawn(init.args, { name: init.rootName }) };
+    });
+
+    const printed: [number, string][] = [];
+    const channel = await socketClientSpawner<{ path: string }>((args) => args.path, {
+      onOutput: (fd, data) => printed.push([fd, data]),
+    })({ path });
+
+    // The client lifts the output frame before the protocol reads it, so it arrives at the sink and never
+    // at the seam's dispatch.
+    const heard: Record<string, unknown>[] = [];
+    channel.onMessage((frame) => heard.push(frame));
+
+    await channel.send({ $init: { rootName: "echo", parentName: "root", parentIdName: "root" } });
+    await waitUntil(() => held.output !== null, "the factory's connection");
+    await held.output!(2, "a line of its own");
+
+    await waitUntil(() => printed.length === 1, "the client's sink");
+    expect(printed).toEqual([[2, "a line of its own"]]);
+    expect(heard.some((frame) => "$fd" in frame)).toBe(false);
+
+    await r.stop();
   });
 });

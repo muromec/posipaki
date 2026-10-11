@@ -5,6 +5,9 @@
 > reactor, and the subprocess spawners below `defineSubprocessActor` are re-expressed on the pair's client
 > half.  Not built: a WebSocket implementation of its own (the websocket listener takes the handshake as its
 > one argument), the host-running path's `$fd` frames, and the reactor-as-actor wrapper.
+>
+> A connection is also a way out: `ServedConnection.output(fd, data)` writes on the far end's own output, as the
+> `$fd` frame its reader lifts out of the wire, and `socketClientSpawner(path, { onOutput })` takes it there.
 
 ## Summary
 
@@ -69,6 +72,14 @@ export type Connection<Meta = unknown> = Incoming & {
   readonly meta: Meta;
 };
 
+/** The connection a session is built on: the admitted connection, plus the way out to the far end's own output.
+ *  The reactor adds it — the wire above the protocol step is the reactor's — so a listener never carries one. */
+export type ServedConnection<Meta = unknown> = Connection<Meta> & {
+  /** Write on the far end's own output: `data` on the stream `fd`, as the `$fd` frame its reader lifts out of
+   *  the wire before the protocol decodes it. */
+  output(fd: 1 | 2, data: string): void | Promise<void>;
+};
+
 /** Where connections come from.  Transport-specific, and the only part that knows a medium. */
 export interface Listener<Meta = unknown> {
   /** The next admitted connection.  Rejects once the listener is closed. */
@@ -114,7 +125,7 @@ export interface Served<Meta = unknown> {
  * it carries are in hand — an actor definition is the shortcut for a factory that spawns one with them.
  */
 export type SessionFactory<Meta = unknown> = (
-  connection: Connection<Meta>,
+  connection: ServedConnection<Meta>,
   init: Init,
 ) => Served<Meta> | ServedProcess | Promise<Served<Meta> | ServedProcess>;
 

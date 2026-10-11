@@ -8,6 +8,7 @@ import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel, StringTransport } from "./channel.js";
 import { json1Channel, VERSION } from "./protocols/json1.js";
+import type { OutputFd } from "./stdio.js";
 import { serveChannel, type AnyProcess, type Init, type Served, type ServedProcess, type Spawner } from "./server.js";
 
 /** Any actor definition: the reactor serves it, and does not care which one it is. */
@@ -25,6 +26,18 @@ export type Incoming =
 export type Connection<Meta = unknown> = Incoming & {
   /** The transport's own facts: what the listener resolved, the URL, the peer. */
   readonly meta: Meta;
+};
+
+/** A connection as a session is built on it: the admitted connection, and the way out to the far end's own
+ *  output.  The reactor adds the way out — the wire above the protocol step is its own — so a listener never
+ *  has to carry one. */
+export type ServedConnection<Meta = unknown> = Connection<Meta> & {
+  /**
+   * Write on the far end's own output: `data` on the stream `fd`, as the frame its reader lifts out of the
+   * wire before the protocol decodes it (the `$fd` frame, stdio.ts).  A served process speaks there without
+   * a message of its own, and the frame never reaches the seam's dispatch.
+   */
+  output(fd: OutputFd, data: string): void | Promise<void>;
 };
 
 /** Where connections come from.  A listener owns its medium and its own admission. */
@@ -49,7 +62,7 @@ export interface Session<Meta = unknown> {
  *  args the far side asked for are in hand.  A bare actor definition is the shortcut for a factory that
  *  spawns one with them. */
 export type SessionFactory<Meta = unknown> = (
-  connection: Connection<Meta>,
+  connection: ServedConnection<Meta>,
   init: Init,
 ) => Served<Meta> | AnyProcess | Promise<Served<Meta> | AnyProcess>;
 
@@ -114,17 +127,24 @@ export function reactor<Meta = unknown>(
         ? withFrameHook(connection.channel, options.onIncomingFrame)
         : await protocolStep(connection.transport, options);
 
+      // The way out: a session writes on the connection it was served over, so the wire available to the
+      // factory is the one above the protocol step.
+      const served: ServedConnection<Meta> = {
+        ...connection,
+        output: (fd, data) => channel.send({ $fd: fd, data }),
+      };
+
       await serveChannel(
         channel,
         // The factory is asked where the args are: the serve reads the `$init` and hands it over.
         async (init) => {
-          const answer = await factory(connection, init);
+          const answer = await factory(served, init);
           return "proc" in answer ? answer : { proc: answer };
         },
-        (served, ended) => {
+        (spawned, ended) => {
           live.set(ended, done);
           held.end = ended;
-          const session: Session<Meta> = { proc: served.proc, meta: served.meta ?? connection.meta, done };
+          const session: Session<Meta> = { proc: spawned.proc, meta: spawned.meta ?? connection.meta, done };
           held.session = session;
           options.onSession?.(session);
         },
