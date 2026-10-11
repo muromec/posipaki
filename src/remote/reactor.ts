@@ -8,7 +8,6 @@ import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel, StringTransport } from "./channel.js";
 import { json1Channel, VERSION } from "./protocols/json1.js";
-import type { OutputFd } from "./channel.js";
 import { serveChannel, type AnyProcess, type Init, type Served, type ServedProcess, type Spawner } from "./server.js";
 
 /** Any actor definition: the reactor serves it, and does not care which one it is. */
@@ -40,12 +39,6 @@ export type ServedConnection<Meta = unknown> = {
   /** The frames of this connection: the channel above the protocol step.  This is what the
    *  session's process is given as `ctx.connection`, and what a serving half answers with. */
   readonly channel: Channel;
-  /**
-   * Write on the far end's own output: `data` on the stream `fd`, as the frame its reader lifts out of the
-   * wire before the protocol decodes it (the `$fd` frame, stdio.ts).  A served process speaks there without
-   * a message of its own, and the frame never reaches the seam's dispatch.
-   */
-  output(fd: OutputFd, data: string): void | Promise<void>;
 };
 
 /** Where connections come from.  A listener owns its medium and its own admission. */
@@ -137,13 +130,13 @@ export function reactor<Meta = unknown>(
         ? withFrameHook(connection.channel, options.onIncomingFrame)
         : await protocolStep(connection.transport, options);
 
-      // The way out: a session writes on the connection it was served over, so the wire available to the
-      // factory is the one above the protocol step.
+      // What the session is served over: the channel above the protocol step.  It goes to the factory,
+      // which hands it to the process it spawns (`ctx.connection`), and it is the whole way out — the
+      // far end's own output included, as a frame of its own (`outputFrame`, channel.ts).
       const served: ServedConnection<Meta> = {
         transport: connection.transport,
         meta: connection.meta,
         channel,
-        output: (fd, data) => channel.send({ $fd: fd, data }),
       };
 
       await serveChannel(

@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { defineActor, defineMessages } from "../index.js";
-import { isExit, isMsg, isProto, isState, type Channel, type StringTransport } from "./channel.js";
+import { isExit, isMsg, isProto, isState, outputFrame, type Channel, type StringTransport } from "./channel.js";
 import { rootIdFor } from "./process-ref.js";
 import {
   oneConnection,
@@ -165,27 +165,26 @@ describe("reactor", () => {
     await r.stop();
   });
 
-  it("writes on the connection's own output, and the far side lifts the frame", async () => {
+  it("carries the far end's own output from the process that is served", async () => {
+    // The connection the serve hands the root is the whole way out: a process that prints says so
+    // in a frame of its own, and there is no knob on the factory to offer it instead.
     const listener = new QueueListener<{ who: string }>();
-    const sessions: Session<{ who: string }>[] = [];
-    // Held in an object: the factory runs inside the serve, so a `let` assigned there is narrowed to null
-    // by the time the test reads it.
-    const held: { connection: ServedConnection<{ who: string }> | null } = { connection: null };
-    const r = reactor(
-      listener,
-      async (connection, init) => {
-        held.connection = connection;
-        return { proc: await makeEcho().spawn(init.args, { name: init.rootName }) };
+    const Writing = defineActor({
+      name: "writing",
+      handlers: {},
+      async setup() {
+        await this.ctx.connection?.send(outputFrame(2, "a line of its own"));
+        return {};
       },
-      { onSession: (session) => sessions.push(session) },
-    );
+    });
+    const sessions: Session<{ who: string }>[] = [];
+    const r = reactor(listener, Writing, { onSession: (session) => sessions.push(session) });
 
     const transport = new FakeTransport();
     listener.offer({ meta: { who: "first" }, transport });
     await connected(transport);
     await waitUntil(() => sessions.length === 1, "the session report");
 
-    await held.connection!.output(2, "a line of its own");
     expect(transport.frames()).toContainEqual({ $fd: 2, data: "a line of its own" });
 
     await r.stop();
@@ -452,17 +451,20 @@ describe("oneConnection", () => {
   it("writes the far end's own output on the channel it serves", async () => {
     const channel = new FakeChannel();
     const listener = oneConnection<Record<string, never>>(() => Promise.resolve(channel));
-    const held: { connection: ServedConnection<Record<string, never>> | null } = { connection: null };
-    const r = reactor(listener, async (connection, init) => {
-      held.connection = connection;
-      return { proc: await makeEcho().spawn(init.args, { name: init.rootName }) };
+    const Writing = defineActor({
+      name: "writing",
+      handlers: {},
+      async setup() {
+        await this.ctx.connection?.send(outputFrame(1, "printed"));
+        return {};
+      },
     });
+    const r = reactor(listener, Writing);
 
     await waitUntil(() => channel.listening, "the serve to be listening");
     channel.receive({ $init: { rootName: "echo", parentName: "root", parentIdName: "root" } });
-    await waitUntil(() => held.connection !== null, "the factory's connection");
 
-    await held.connection!.output(1, "printed");
+    await waitUntil(() => channel.sent.some((frame) => "$fd" in frame), "the frame");
     expect(channel.sent).toContainEqual({ $fd: 1, data: "printed" });
 
     await r.stop();
