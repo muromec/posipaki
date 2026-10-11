@@ -6,6 +6,7 @@ import type {
   SenderInfo,
   ExitMessage,
   StopMessage,
+  FrameChannel,
   ProcessCtx,
   AsyncProcessFn,
   ProcessFn,
@@ -91,6 +92,12 @@ export class AsyncProcess<
   $reflection: ReflectionMethods = {} as ReflectionMethods;
   pgenerator: AsyncProcessFn<Args, State, InMessage, OutMessage>;
   pname: string;
+  /**
+   * The connection this process holds, or null.  Its own fact, like `pname`: read through
+   * `ctx.connection` and set where the connection is made — at spawn (`{ connection }`),
+   * or by the process itself when it opens one.
+   */
+  connection: FrameChannel | null = null;
   /** Subscribers to this process's message channel (`ctx.toParent`). */
   private messageSubscribers: Array<MessageCallback<OutMessage>> = [];
   id: symbol;
@@ -170,12 +177,19 @@ export class AsyncProcess<
   start(arg0: Args, parentName?: string | null, parentId?: symbol | null) {
     const selfCtx: SenderInfo = { fromName: this.pname, fromId: this.id };
 
+    const proc = this;
     const ctx: ProcessCtx<Args, State, InMessage, OutMessage> = {
       pname: this.pname,
       id: this.id,
       self: this,
       parentName: parentName ?? null,
       parentId: parentId ?? null,
+      get connection() {
+        return proc.connection;
+      },
+      set connection(value: FrameChannel | null) {
+        proc.connection = value;
+      },
       fork: this.fork.bind(this),
       forkSync: this.forkSync.bind(this),
       children: this.children,
@@ -753,10 +767,12 @@ export function spawnAsync<
   toParent?: MessageCallback<OutMessage>,
   parentName?: string | null,
   parentId?: symbol | null,
+  connection?: FrameChannel | null,
 ): (args: Args) => AsyncProcess<Args, State, InMessage, OutMessage, {}> {
   return (args: Args) => {
     const proc = new AsyncProcess<Args, State, InMessage, OutMessage, {}>(fn, pname, toParent);
     proc.start(args, parentName, parentId);
+    proc.connection = connection ?? null;
     return proc;
   };
 }

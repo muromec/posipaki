@@ -87,6 +87,22 @@ describe("remoteClient (unit)", () => {
     await proc.wait();
   });
 
+  it("takes the connection it opens as its own", async () => {
+    const channel = new FakeChannel();
+    const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
+      "counter",
+      () => Promise.resolve(channel),
+    );
+
+    const proc = await actor.spawn({ start: 0 }, { awaitReady: false });
+    while (proc.connection === null) await sleep(1);
+
+    expect(proc.connection).toBe(channel);
+
+    channel.closeHandler!();
+    await proc.wait();
+  });
+
   it("rejects the spawn when the spawner fails", async () => {
     const failure = new Error("no environment for you");
     const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(

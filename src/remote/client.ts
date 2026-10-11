@@ -98,6 +98,9 @@ export function remoteClient<
       const root = this.ctx;
       table.bindRoot(root);
       const channel = await spawner(args);
+      // The connection this proxy holds is the process's own fact, so whatever the process
+      // does with the frames asks the same place the remote layer does.
+      this.ctx.connection = channel;
       // What this side calls the process it serves: the full name, not the short one the
       // definition was written with.  A process is called here what it is called on the side
       // that forked it, and the far side spells its own subtree off whatever it is told, so a

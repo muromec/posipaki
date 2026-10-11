@@ -18,6 +18,7 @@ import type {
   ExitMessage,
   ForkSite,
   ProcessCtx,
+  FrameChannel,
 } from "./types.js";
 import type {
   ActorDefinition,
@@ -390,6 +391,9 @@ export function defineActor<
         addPlugins?: ActorPlugin[];
         parentName?: string | null;
         parentId?: symbol | null;
+        /** The connection this process holds: what `ctx.connection` reads.  Stated where the
+         *  connection is made, so the process has it from `setup` on. */
+        connection?: FrameChannel | null;
         /**
          * Resolve only once the initial state is available.  Default `true`:
          * a spawned process is safe to send to when `spawn()` returns.  Pass
@@ -416,6 +420,7 @@ export function defineActor<
         opts?.toParent,
         opts?.parentName,
         opts?.parentId,
+        opts?.connection,
       )(args);
       attachReflection(proc, assembly.$reflectionMethods as ReflectionMethods);
       if (opts?.awaitReady !== false) await proc.ready();

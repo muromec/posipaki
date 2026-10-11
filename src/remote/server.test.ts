@@ -135,6 +135,32 @@ describe("serveRemoteActor (unit)", () => {
     expect(stopped).toBe(true);
   });
 
+  it("gives the served process the connection it is served over", async () => {
+    // The channel above the protocol step is the process's own connection: what it would write
+    // a stream of its own on, rather than something only the session factory can see.
+    let held: unknown = "never read";
+    const Holder = defineActor({
+      name: "holder",
+      handlers: {},
+      setup() {
+        held = this.ctx.connection;
+        return {};
+      },
+    });
+
+    const channel = new FakeChannel();
+    const serve = serveRemoteActor(Holder, () => Promise.resolve(channel));
+
+    await waitUntil(() => channel.handler !== null, "$init handler");
+    channel.handler!({ $init: { parentName: "root", parentIdName: "root" } });
+    await waitUntil(() => held !== "never read", "the process to start");
+
+    expect(held).toBe(channel);
+
+    channel.closeHandler!();
+    await serve;
+  });
+
   it("does not emit initial $state before $init", async () => {
     const channel = new FakeChannel();
     const serve = serveRemoteActor(makeEcho(), () => Promise.resolve(channel));

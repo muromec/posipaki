@@ -28,10 +28,18 @@ export type Connection<Meta = unknown> = Incoming & {
   readonly meta: Meta;
 };
 
-/** A connection as a session is built on it: the admitted connection, and the way out to the far end's own
- *  output.  The reactor adds the way out — the wire above the protocol step is its own — so a listener never
- *  has to carry one. */
-export type ServedConnection<Meta = unknown> = Connection<Meta> & {
+/** A connection as a session is built on it: what it was admitted by, what the listener resolved,
+ *  and the channel above the protocol step.  Past admission the way in *is* that channel: the
+ *  reactor owns the protocol step, so a listener never has to carry one for it. */
+export type ServedConnection<Meta = unknown> = {
+  /** The transport it was admitted on, when the listener handed one over rather than a channel.
+   *  What the connection came in on, kept as that; the session speaks over `channel`. */
+  readonly transport?: StringTransport;
+  /** What the listener resolved about the connection. */
+  readonly meta: Meta;
+  /** The frames of this connection: the channel above the protocol step.  This is what the
+   *  session's process is given as `ctx.connection`, and what a serving half answers with. */
+  readonly channel: Channel;
   /**
    * Write on the far end's own output: `data` on the stream `fd`, as the frame its reader lifts out of the
    * wire before the protocol decodes it (the `$fd` frame, stdio.ts).  A served process speaks there without
@@ -66,13 +74,15 @@ export type SessionFactory<Meta = unknown> = (
   init: Init,
 ) => Served<Meta> | AnyProcess | Promise<Served<Meta> | AnyProcess>;
 
-/** The shortcut, as a factory: spawn the definition with what the far side asked for. */
+/** The shortcut, as a factory: spawn the definition with what the far side asked for, and hand
+ *  it the connection as `ctx.connection` so the process speaks for itself from `setup` on. */
 export function spawnFactory<Meta = unknown>(definition: AnyActorDefinition): SessionFactory<Meta> {
-  return async (_connection, init) => ({
+  return async (connection, init) => ({
     proc: await definition.spawn(init.args, {
       name: init.rootName,
       parentName: init.parentName,
       parentId: init.parentId,
+      connection: connection.channel,
     }),
   });
 }
@@ -130,7 +140,9 @@ export function reactor<Meta = unknown>(
       // The way out: a session writes on the connection it was served over, so the wire available to the
       // factory is the one above the protocol step.
       const served: ServedConnection<Meta> = {
-        ...connection,
+        transport: connection.transport,
+        meta: connection.meta,
+        channel,
         output: (fd, data) => channel.send({ $fd: fd, data }),
       };
 

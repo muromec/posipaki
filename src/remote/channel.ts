@@ -6,7 +6,7 @@
 // in Channels and these guards — they never see a specific protocol or
 // transport.
 
-import type { Message } from "../types.js";
+import type { FrameChannel, Message } from "../types.js";
 import {
   decodeProcessRefs,
   encodeProcessRefs,
@@ -23,13 +23,12 @@ export interface StringTransport {
   close(): Promise<void>;
 }
 
-export interface Channel {
-  send(frame: Record<string, unknown>): void | Promise<void>;
-  onMessage(handler: (frame: Record<string, unknown>) => void): void;
+/**
+ * A `FrameChannel` the remote layer can also unhook: `removeHandler` takes back the handler a
+ * serve installed when it starts dispatching for itself.
+ */
+export interface Channel extends FrameChannel {
   removeHandler(): void;
-  /** Fires when the peer disconnects (transport closes from the other side). */
-  onClose(handler: () => void): void;
-  close(): Promise<void>;
 }
 
 // ── the address on a frame ─────────────────────────────────────────────────

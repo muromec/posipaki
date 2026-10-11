@@ -4,7 +4,15 @@
 // to reference the config/context/definition shapes without importing the
 // implementation module directly.
 
-import type { SenderInfo, AsyncProcessFn, Message, ProcessCtx, ExitMessage, ForkSite } from "./types.js";
+import type {
+  SenderInfo,
+  AsyncProcessFn,
+  Message,
+  ProcessCtx,
+  ExitMessage,
+  ForkSite,
+  FrameChannel,
+} from "./types.js";
 import type { ActorDecorated, ActorReflection } from "./hooks.js";
 import type { AnyProcess, AsyncProcess } from "./process.async.js";
 
@@ -69,6 +77,9 @@ export interface ActorDefinition<
       addPlugins?: ActorPlugin[];
       parentName?: string | null;
       parentId?: symbol | null;
+      /** The connection this process holds: what `ctx.connection` reads.  Stated where the
+       *  connection is made, so the process has it from `setup` on. */
+      connection?: FrameChannel | null;
       /** Wait for the initial state before resolving.  Default `true`. */
       awaitReady?: boolean;
     },

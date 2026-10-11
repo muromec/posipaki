@@ -75,6 +75,27 @@ export type AsyncProcessFn<
  *  (used by the system harness to inject messages from outside). */
 export type SenderOrigin = ProcessCtx<unknown, unknown, Message, Message> | "root";
 
+// ---- FrameChannel ----------------------------------------------------------
+
+/**
+ * The frames of a connection, as the process that holds it sees them.
+ *
+ * A process may hold one (`ctx.connection`): the connection it was spawned on, or one it
+ * opened for itself.  `send` puts a frame on it, `onMessage` takes them off, `onClose` is
+ * told the far end is gone, and `close` ends it.  Nothing here knows a protocol: a frame is
+ * a decoded object, and what its keys mean belongs to whoever wrote them.
+ *
+ * The remote layer's `Channel` is this plus the one member the remote layer needs of its
+ * own (`removeHandler`), so a connection a process holds is the same thing the seam speaks.
+ */
+export interface FrameChannel {
+  send(frame: Record<string, unknown>): void | Promise<void>;
+  onMessage(handler: (frame: Record<string, unknown>) => void): void;
+  /** Fires when the peer disconnects (the connection closes from the other side). */
+  onClose(handler: () => void): void;
+  close(): Promise<void>;
+}
+
 // ---- ProcessCtx -------------------------------------------------------------
 
 type ProcessMessageCb<M> = (msg: M) => void;
@@ -111,6 +132,13 @@ export type ProcessCtx<Args, State, IM extends Message, OM extends Message> = {
   self: AsyncProcess<Args, State, IM, OM, {}>;
   parentName: string | null;
   parentId: symbol | null;
+  /**
+   * The connection this process holds, or null.  Set where the connection is made: the
+   * spawner states it (`spawn(args, { connection })`, so it is there from `setup` on), and
+   * a process that opens one for itself writes it here — the proxy at the client end of a
+   * remote actor is the one that does.  A process with no connection reads null.
+   */
+  connection: FrameChannel | null;
   sendSelf: (msg: IM | StopMessage) => void;
   toParent: ProcessMessageCb<OM | ExitMessage>;
   /** Fire this process's state subscribers now (no message round-trip).
