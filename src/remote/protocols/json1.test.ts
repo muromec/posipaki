@@ -56,6 +56,55 @@ describe("json1 protocol", () => {
   });
 });
 
+describe("json1 channel readers", () => {
+  it("hands every frame to every reader, and one reader leaving is not the others' business", () => {
+    const { transport, deliver } = lineTransport();
+    const channel = json1Channel(transport);
+    const first: Record<string, unknown>[] = [];
+    const second: Record<string, unknown>[] = [];
+    const off = channel.onMessage((frame) => first.push(frame));
+    channel.onMessage((frame) => second.push(frame));
+
+    deliver(encode({ $proto: VERSION }));
+    expect(first).toEqual([{ $proto: VERSION }]);
+    expect(second).toEqual([{ $proto: VERSION }]);
+
+    off();
+    deliver(encode({ $state: { pings: 1 } }));
+    expect(first).toHaveLength(1);
+    expect(second).toHaveLength(2);
+  });
+
+  it("installs one handler on the transport, however many readers come and go", () => {
+    // A transport holds one handler and reports a second one as a mistake, so a channel that let its
+    // readers install their own would break the moment the first of them left.
+    let installs = 0;
+    let handler: ((line: string) => void) | null = null;
+    const transport: StringTransport = {
+      send() {},
+      onMessage(h) {
+        installs += 1;
+        if (installs > 1) throw new Error("a transport holds one handler");
+        handler = h;
+      },
+      removeHandler() {
+        handler = null;
+      },
+      onClose() {},
+      async close() {},
+    };
+    const channel = json1Channel(transport);
+    const seen: Record<string, unknown>[] = [];
+    const off = channel.onMessage((frame) => seen.push(frame));
+    off();
+    channel.onMessage((frame) => seen.push(frame));
+
+    expect(installs).toBe(1);
+    handler!(encode({ $proto: VERSION }));
+    expect(seen).toEqual([{ $proto: VERSION }]);
+  });
+});
+
 describe("json1 reading a line", () => {
   it("hands a frame through as it is", () => {
     const [frame, ...rest] = readLines([encode({ $state: { pings: 1 } })]);

@@ -85,12 +85,13 @@ export type SenderOrigin = ProcessCtx<unknown, unknown, Message, Message> | "roo
  * told the far end is gone, and `close` ends it.  Nothing here knows a protocol: a frame is
  * a decoded object, and what its keys mean belongs to whoever wrote them.
  *
- * The remote layer's `Channel` is this plus the one member the remote layer needs of its
- * own (`removeHandler`), so a connection a process holds is the same thing the seam speaks.
+ * One connection can carry several readers: `onMessage` subscribes and returns the function that
+ * unsubscribes, so what a process holds as `ctx.connection` is the same thing the seam speaks, and a
+ * caller reads frames without taking them away from whoever else is reading.
  */
 export interface FrameChannel {
   send(frame: Record<string, unknown>): void | Promise<void>;
-  onMessage(handler: (frame: Record<string, unknown>) => void): void;
+  onMessage(handler: (frame: Record<string, unknown>) => void): () => void;
   /** Fires when the peer disconnects (the connection closes from the other side). */
   onClose(handler: () => void): void;
   close(): Promise<void>;

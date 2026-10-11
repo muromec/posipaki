@@ -30,16 +30,16 @@ export function socketClientSpawner<Args = unknown>(
     // A frame that is the far end's own print is not the protocol's, so it goes to the sink and the
     // wait carries on.
     const first = await new Promise<Record<string, unknown>>((resolve) => {
-      channel.onMessage((frame) => {
+      const off = channel.onMessage((frame) => {
         const output = outputOf(frame);
         if (output) {
           sink(output.fd, output.data);
           return;
         }
+        off();
         resolve(frame);
       });
     });
-    channel.removeHandler();
     if (!isProto(first) || first.$proto !== VERSION) {
       throw new Error(`unsupported protocol: ${JSON.stringify(first)}`);
     }

@@ -389,11 +389,11 @@ class FakeChannel implements Channel {
   send(frame: Record<string, unknown>): void {
     this.sent.push(frame);
   }
-  onMessage(handler: (frame: Record<string, unknown>) => void): void {
+  onMessage(handler: (frame: Record<string, unknown>) => void): () => void {
     this.handler = handler;
-  }
-  removeHandler(): void {
-    this.handler = null;
+    return () => {
+      if (this.handler === handler) this.handler = null;
+    };
   }
   onClose(handler: () => void): void {
     this.closeHandler = handler;

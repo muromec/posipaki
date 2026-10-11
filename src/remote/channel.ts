@@ -23,12 +23,35 @@ export interface StringTransport {
   close(): Promise<void>;
 }
 
+/** The frames of one connection, as the remote layer speaks them: the process's own `FrameChannel`,
+ *  where a reader has the unsubscribe `onMessage` returned rather than a handler to take back. */
+export type Channel = FrameChannel;
+
 /**
- * A `FrameChannel` the remote layer can also unhook: `removeHandler` takes back the handler a
- * serve installed when it starts dispatching for itself.
+ * One handler on the wire, however many readers on it.  A transport holds one handler — and reports a
+ * second one as a mistake — so the layer above keeps the readers and installs a single handler; the
+ * subscribe this returns is what a reader calls to leave.  The handler goes on with the first reader and
+ * stays for the life of the connection: taking it off between readers would drop whatever arrives in
+ * between, and a connection is not paused by nobody reading it.
  */
-export interface Channel extends FrameChannel {
-  removeHandler(): void;
+export function frameReaders(
+  install: (deliver: (frame: Record<string, unknown>) => void) => void,
+): (handler: (frame: Record<string, unknown>) => void) => () => void {
+  const readers = new Set<(frame: Record<string, unknown>) => void>();
+  let installed = false;
+  return (handler) => {
+    if (!installed) {
+      installed = true;
+      install((frame) => {
+        // Over a copy: a reader that leaves as it is handed a frame must not cut the rest short.
+        for (const reader of [...readers]) reader(frame);
+      });
+    }
+    readers.add(handler);
+    return () => {
+      readers.delete(handler);
+    };
+  };
 }
 
 // ── the address on a frame ─────────────────────────────────────────────────

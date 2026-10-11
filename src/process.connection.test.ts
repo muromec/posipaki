@@ -15,7 +15,9 @@ function fakeChannel(): FrameChannel & { sent: Record<string, unknown>[] } {
     send(frame: Record<string, unknown>) {
       sent.push(frame);
     },
-    onMessage() {},
+    onMessage() {
+      return () => {};
+    },
     onClose() {},
     async close() {},
   };

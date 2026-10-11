@@ -150,8 +150,9 @@ export async function serveChannel<Meta = unknown>(
   // that dials and hangs up.  The collecting handler stays until the actor can be dispatched to, so
   // frames that arrive while it starts wait here and are replayed rather than dropped for want of a slot.
   const waiting: Record<string, unknown>[] = [];
+  let stopCollecting: () => void = () => {};
   await new Promise<void>((resolve, reject) => {
-    channel.onMessage((frame) => {
+    stopCollecting = channel.onMessage((frame) => {
       waiting.push(frame);
       resolve();
     });
@@ -345,7 +346,9 @@ export async function serveChannel<Meta = unknown>(
     if (call) void answerCall(call, mine, write, table);
   }
 
-  channel.removeHandler();
+  // The collecting reader stops here, and the dispatch is what hears the frames from now on: the two are
+  // not the same reader, and leaving the first one on would buffer every frame for nobody.
+  stopCollecting();
   channel.onMessage(dispatch);
   for (const frame of waiting.splice(0)) dispatch(frame);
 

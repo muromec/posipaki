@@ -6,7 +6,7 @@
 // Channel directly (not StringTransport).  Structured clone is the worker's
 // native encoding, named by WORKER_VERSION.
 
-import type { Channel } from "../channel.js";
+import { frameReaders, type Channel } from "../channel.js";
 
 /** The worker encoding: native structured clone (no JSON). */
 export const WORKER_VERSION = "clone.v1";
@@ -26,6 +26,7 @@ export interface WorkerLike {
 export class WorkerTransport implements Channel {
   private worker: WorkerLike;
   private pvtOnMessage: ((frame: Record<string, unknown>) => void) | null = null;
+  private pvtSubscribe: ((handler: (frame: Record<string, unknown>) => void) => () => void) | null = null;
   private pvtOnClose: (() => void) | null = null;
   private closed = false;
 
@@ -49,18 +50,14 @@ export class WorkerTransport implements Channel {
     return !this.closed;
   }
 
-  onMessage(handler: (frame: Record<string, unknown>) => void): void {
+  onMessage(handler: (frame: Record<string, unknown>) => void): () => void {
     if (this.closed) throw new Error("WorkerTransport: closed");
-    if (this.pvtOnMessage !== null) {
-      throw new Error("WorkerTransport: handler already set — call removeHandler() first");
-    }
-    this.pvtOnMessage = handler;
-  }
-
-  removeHandler(): ((frame: Record<string, unknown>) => void) | null {
-    const prev = this.pvtOnMessage;
-    this.pvtOnMessage = null;
-    return prev;
+    // This transport moves frame objects itself, so it is a channel and not a transport: readers are kept
+    // the way any channel keeps them, over the one handler the worker's own event needs.
+    this.pvtSubscribe ??= frameReaders((deliver) => {
+      this.pvtOnMessage = deliver;
+    });
+    return this.pvtSubscribe(handler);
   }
 
   onClose(handler: () => void): void {

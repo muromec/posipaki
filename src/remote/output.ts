@@ -39,7 +39,6 @@ export function withOutput(channel: Channel, sink: OutputSink): Channel {
         if (output) sink(output.fd, output.data);
         else handler(frame);
       }),
-    removeHandler: () => channel.removeHandler(),
     onClose: (handler) => channel.onClose(handler),
     close: () => channel.close(),
   };

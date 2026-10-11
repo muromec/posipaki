@@ -140,12 +140,14 @@ describe("gateway", () => {
     const running = await session();
     try {
       for (const word of ["one", "two", "three"]) {
-        const sent = new Promise<Record<string, unknown>>((resolve) =>
-          running.channel.onMessage(resolve),
-        );
+        const sent = new Promise<Record<string, unknown>>((resolve) => {
+          const off = running.channel.onMessage((frame) => {
+            off();
+            resolve(frame);
+          });
+        });
         await running.channel.send({ $msg: { body: { echo: word } } });
         expect(await sent).toEqual({ $msg: { fromName: "payload", body: { echo: word } } });
-        running.channel.removeHandler();
       }
     } finally {
       await stop(running);

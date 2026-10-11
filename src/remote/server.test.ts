@@ -18,11 +18,10 @@ class FakeChannel implements Channel {
     this.sent.push(frame);
   }
   onMessage(handler: (frame: Record<string, unknown>) => void) {
-    if (this.handler) throw new Error("handler already set");
     this.handler = handler;
-  }
-  removeHandler() {
-    this.handler = null;
+    return () => {
+      if (this.handler === handler) this.handler = null;
+    };
   }
   onClose(handler: () => void) {
     this.closeHandler = handler;

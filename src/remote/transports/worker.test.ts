@@ -53,20 +53,27 @@ describe("WorkerTransport", () => {
     await tb.close();
   });
 
-  it("enforces a single message handler", () => {
-    const [a] = makePair();
-    const t = new WorkerTransport(a);
-    t.onMessage(() => {});
-    expect(() => t.onMessage(() => {})).toThrow(/handler already set/);
-  });
+  it("keeps several readers, and the unsubscribe is how one leaves", async () => {
+    const [a, b] = makePair();
+    const ta = new WorkerTransport(a);
+    const tb = new WorkerTransport(b);
+    const heard = makeWaiter<Record<string, unknown>>();
+    const also = makeWaiter<Record<string, unknown>>();
+    const off = tb.onMessage(heard.resolve);
+    tb.onMessage(also.resolve);
 
-  it("removeHandler clears the handler", () => {
-    const [a] = makePair();
-    const t = new WorkerTransport(a);
-    t.onMessage(() => {});
-    expect(t.hasHandler).toBe(true);
-    t.removeHandler();
-    expect(t.hasHandler).toBe(false);
+    // A second reader does not displace the first: that was the transport's one-handler rule, and the
+    // channel above it is where several readers live.
+    await ta.send({ $msg: { fromName: "root", body: { type: "PING" } } });
+    expect(await heard.promise).toEqual({ $msg: { fromName: "root", body: { type: "PING" } } });
+    expect(await also.promise).toEqual({ $msg: { fromName: "root", body: { type: "PING" } } });
+
+    // The unsubscribe is the reader's own, and calling it is how it leaves.
+    expect(typeof off).toBe("function");
+    off();
+
+    await ta.close();
+    await tb.close();
   });
 
   it("close terminates the worker and is idempotent", async () => {

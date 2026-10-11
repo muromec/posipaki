@@ -206,15 +206,16 @@ async function nextFrame(
       timeoutMs,
     );
     timer.unref?.();
-    channel.onMessage((frame) => {
-      const output = outputOf(frame);
-      if (output) {
-        sink(output.fd, output.data);
-        return;
-      }
-      clearTimeout(timer);
-      resolve(frame);
-    });
+      const off = channel.onMessage((frame) => {
+        const output = outputOf(frame);
+        if (output) {
+          sink(output.fd, output.data);
+          return;
+        }
+        off();
+        clearTimeout(timer);
+        resolve(frame);
+      });
   });
 }
 
@@ -237,7 +238,6 @@ export async function clientChannel(
   const channel = json1Channel(new LineTransport(streams));
   const sink = opts.onOutput ?? stderrSink();
   const frame = await nextFrame(channel, opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS, sink);
-  channel.removeHandler();
 
   const reason = errorReason(frame);
   if (reason) throw new StdioWireError(reason);

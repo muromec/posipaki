@@ -83,11 +83,13 @@ export function wsClientSpawner<Args = unknown>(
     // Set the $proto waiter before awaiting open so a fast server's handshake
     // frame is not dropped.
     const protoPromise = new Promise<Record<string, unknown>>((resolve) => {
-      channel.onMessage((frame) => resolve(frame));
+      const off = channel.onMessage((frame) => {
+        off();
+        resolve(frame);
+      });
     });
     await openWebSocket(ws);
     const protoFrame = await protoPromise;
-    channel.removeHandler();
 
     if (!isProto(protoFrame) || protoFrame.$proto !== VERSION) {
       throw new Error(`unsupported protocol: ${JSON.stringify(protoFrame).slice(0, 50)}`);

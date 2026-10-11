@@ -138,9 +138,11 @@ export function fifoClientSpawner<Args = unknown>(
     const { transport } = FifoUtf8NlineTransport.beginConnect(served.write, served.read);
     const channel = json1Channel(await transport);
     const first = await new Promise<Record<string, unknown>>((resolve) => {
-      channel.onMessage((frame) => resolve(frame));
+      const off = channel.onMessage((frame) => {
+        off();
+        resolve(frame);
+      });
     });
-    channel.removeHandler();
     if (!isProto(first) || first.$proto !== VERSION) {
       throw new Error(`unsupported protocol: ${JSON.stringify(first).slice(0, 50)}`);
     }

@@ -16,7 +16,7 @@
 // array or `null` is not a frame either, and reading one as a frame (`"$init" in 7`)
 // throws just as surely as a line that never parsed.
 
-import { badFrame, type Channel, type StringTransport } from "../channel.js";
+import { badFrame, frameReaders, type Channel, type StringTransport } from "../channel.js";
 
 export const VERSION = "json.v1";
 
@@ -56,16 +56,13 @@ function kindOf(value: unknown): string {
 }
 
 export function json1Channel(transport: StringTransport): Channel {
+  // One handler on the transport, however many readers on the channel: the fan-out is `frameReaders`.
+  const subscribe = frameReaders((deliver) => transport.onMessage((str) => deliver(readFrame(str))));
   return {
     send(frame) {
       return transport.send(encode(frame));
     },
-    onMessage(handler) {
-      transport.onMessage((str) => handler(readFrame(str)));
-    },
-    removeHandler() {
-      transport.removeHandler();
-    },
+    onMessage: subscribe,
     onClose(handler) {
       transport.onClose(handler);
     },

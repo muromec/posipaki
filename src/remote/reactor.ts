@@ -263,7 +263,6 @@ function withFrameHook(
         if (hook(frame) === true) return;
         handler(frame);
       }),
-    removeHandler: () => channel.removeHandler(),
     onClose: (handler) => channel.onClose(handler),
     close: () => channel.close(),
   };

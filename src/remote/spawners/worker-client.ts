@@ -21,9 +21,11 @@ export function workerClientSpawner<Args = unknown>(
     const channel = new WorkerTransport(new WorkerImpl(target));
 
     const protoFrame = await new Promise<Record<string, unknown>>((resolve) => {
-      channel.onMessage((frame) => resolve(frame));
+      const off = channel.onMessage((frame) => {
+        off();
+        resolve(frame);
+      });
     });
-    channel.removeHandler();
 
     if (!isProto(protoFrame) || protoFrame.$proto !== WORKER_VERSION) {
       throw new Error(`unsupported protocol: ${JSON.stringify(protoFrame).slice(0, 50)}`);
