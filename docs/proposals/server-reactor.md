@@ -426,6 +426,14 @@ reactor work from anywhere.  The wrapper is drafted separately (`reactor-actor.m
   something it was sent is making an application-level decision, and it acts on it by stopping.
 - **No reconnection.**  A connection that closes is a session that ends; a client that wants to come back
   connects again, which is a new session.
+- **No liveness of its own.**  Nothing here pings a peer, times a connection out, or invents the frame that
+  says so.  A connection that ends is one the medium says ended; a peer that vanishes without one — a
+  partition, a dropped NAT flow, a suspended machine — looks live indefinitely, and the session bound to it
+  goes on holding whatever it holds.  Where a medium can tell (TCP keepalive, a WebSocket ping and pong), the
+  deadline belongs in that listener's own adapter, and a deadline that fires has to **destroy** the socket
+  rather than close it politely: a graceful close waits on a peer that is not there, and only destroying the
+  socket produces the `close` the reactor ends the session on.  `identify` decides about a connection when it
+  arrives, and it is not a fact that stays true.
 - **No TLS and no network sockets.**  A unix socket is local by definition; `net` could get the same
   treatment later, with a different set of questions (a port to secure).
 - **No framing of its own.**  Newline-delimited JSON via `json1Channel`, as the fifo and stdio transports are.
