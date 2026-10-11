@@ -72,24 +72,41 @@ export function decodeFrame(
 }
 
 // ── frame guards ──────────────────────────────────────────────────────────
+//
+// Each guard narrows a decoded frame to the frame it is, and each of those types is
+// named, so the whole set can be written down once (see `Frame`, at the foot of this
+// file).  A guard asks only whether the key is there: the body under it belongs to
+// whoever wrote it.
 
-export function isProto(msg: Record<string, unknown>): msg is { $proto: string } {
+export type ProtoFrame = {
+  $proto: string;
+};
+export type InitFrame = {
+  $init: Record<string, unknown>;
+};
+export type StateFrame = {
+  $state: Record<string, unknown>;
+};
+export type MsgFrame = {
+  $msg: { fromName: string; body: Message };
+};
+export type ExitFrame = {
+  $exit: { code: number; state: unknown };
+};
+
+export function isProto(msg: Record<string, unknown>): msg is ProtoFrame {
   return "$proto" in msg;
 }
-export function isInit(msg: Record<string, unknown>): msg is { $init: Record<string, unknown> } {
+export function isInit(msg: Record<string, unknown>): msg is InitFrame {
   return "$init" in msg;
 }
-export function isState(msg: Record<string, unknown>): msg is { $state: Record<string, unknown> } {
+export function isState(msg: Record<string, unknown>): msg is StateFrame {
   return "$state" in msg;
 }
-export function isMsg(
-  msg: Record<string, unknown>,
-): msg is { $msg: { fromName: string; body: Message } } {
+export function isMsg(msg: Record<string, unknown>): msg is MsgFrame {
   return "$msg" in msg;
 }
-export function isExit(
-  msg: Record<string, unknown>,
-): msg is { $exit: { code: number; state: unknown } } {
+export function isExit(msg: Record<string, unknown>): msg is ExitFrame {
   return "$exit" in msg;
 }
 
@@ -125,7 +142,11 @@ const BAD_KEY = "$bad";
  *  quotes what it was looking at.  That is the parser's business, not a promise this file makes.) */
 export const BAD_PREFIX_LIMIT = 32;
 
-export function isBad(msg: Record<string, unknown>): msg is { $bad: { reason: string } } {
+export type BadFrame = {
+  $bad: { reason: string };
+};
+
+export function isBad(msg: Record<string, unknown>): msg is BadFrame {
   return BAD_KEY in msg;
 }
 
@@ -145,7 +166,11 @@ export function badReason(msg: Record<string, unknown>): string | null {
 
 const ERROR_KEY = "$error";
 
-export function isError(msg: Record<string, unknown>): msg is { $error: string } {
+export type ErrorFrame = {
+  $error: string;
+};
+
+export function isError(msg: Record<string, unknown>): msg is ErrorFrame {
   return ERROR_KEY in msg;
 }
 
@@ -169,6 +194,12 @@ export function errorReason(msg: Record<string, unknown>): string | null {
 //   {"$fd": 1, "data": "…"}
 
 export type OutputFd = 1 | 2;
+
+/** An output frame as a type: what `outputFrame` writes and `outputOf` reads. */
+export type OutputFrame = {
+  $fd: OutputFd;
+  data: string;
+};
 
 /** A frame of the far end's own output: `data` on the stream `fd`. */
 export function outputFrame(fd: OutputFd, data: string): Record<string, unknown> {
@@ -223,20 +254,35 @@ export function isStreamKind(value: unknown): value is StreamKind {
 // is not one of these: that stays the STOP message it always was, since the root
 // is not a handle but the process this side is talking through.
 
-export function isStop(msg: Record<string, unknown>): msg is { $stop: Record<string, unknown> } {
+export type StopFrame = {
+  $stop: Record<string, unknown>;
+};
+export type PauseFrame = {
+  $pause: Record<string, unknown>;
+};
+export type ResumeFrame = {
+  $resume: Record<string, unknown>;
+};
+export type ReleaseFrame = {
+  $release: Record<string, unknown>;
+};
+export type TuneFrame = {
+  $tune: Record<string, unknown>;
+};
+
+export function isStop(msg: Record<string, unknown>): msg is StopFrame {
   return "$stop" in msg;
 }
-export function isPause(msg: Record<string, unknown>): msg is { $pause: Record<string, unknown> } {
+export function isPause(msg: Record<string, unknown>): msg is PauseFrame {
   return "$pause" in msg;
 }
-export function isResume(msg: Record<string, unknown>): msg is { $resume: Record<string, unknown> } {
+export function isResume(msg: Record<string, unknown>): msg is ResumeFrame {
   return "$resume" in msg;
 }
-export function isRelease(msg: Record<string, unknown>): msg is { $release: Record<string, unknown> } {
+export function isRelease(msg: Record<string, unknown>): msg is ReleaseFrame {
   return "$release" in msg;
 }
-
-export function isTune(msg: Record<string, unknown>): msg is { $tune: Record<string, unknown> } {
+export function isTune(msg: Record<string, unknown>): msg is TuneFrame {
   return "$tune" in msg;
 }
 
@@ -288,9 +334,21 @@ export interface ReflectionResult {
   error?: string;
 }
 
-export function isReflectionMethods(
-  msg: Record<string, unknown>,
-): msg is { "$r.methods": string[] } {
+export type ReflectionMethodsFrame = {
+  "$r.methods": string[];
+};
+
+/** A call frame: the method in the key, the call in the body (`$r.call.<name>`). */
+export type ReflectionCallFrame = {
+  [key: `$r.call.${string}`]: { seq: number; args?: unknown[] };
+};
+
+/** An answer frame: `value` or `error`, naming the seq it settles. */
+export type ReflectionResultFrame = {
+  [key: `$r.result.${string}`]: { seq: number; value?: unknown; error?: string };
+};
+
+export function isReflectionMethods(msg: Record<string, unknown>): msg is ReflectionMethodsFrame {
   const names = msg[REFLECT_METHODS];
   return Array.isArray(names) && names.every((name) => typeof name === "string");
 }
@@ -348,3 +406,28 @@ export function jsonProblem(value: unknown): string | null {
   }
   return null;
 }
+
+// ── the frames, as one type ────────────────────────────────────────────────
+//
+// The guards above say what a frame is one at a time; this is the same set as one type.
+// Neither direction nor protocol is in it — who may send which is the two ends' business,
+// and the handshake names the protocol that writes them.  The address a frame carries
+// (`to`, `frameTo`) is the envelope the connection writes around it, not the frame.
+
+export type Frame =
+  | ProtoFrame
+  | InitFrame
+  | StateFrame
+  | MsgFrame
+  | ExitFrame
+  | BadFrame
+  | ErrorFrame
+  | OutputFrame
+  | StopFrame
+  | PauseFrame
+  | ResumeFrame
+  | ReleaseFrame
+  | TuneFrame
+  | ReflectionMethodsFrame
+  | ReflectionCallFrame
+  | ReflectionResultFrame;

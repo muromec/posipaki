@@ -20,6 +20,10 @@ import { badFrame, type Channel, type StringTransport } from "../channel.js";
 
 export const VERSION = "json.v1";
 
+/** The frames this protocol carries.  The shapes and the union are in channel.ts; a protocol
+ *  owns that the connection speaks them, and how they are written down. */
+export type { Frame } from "../channel.js";
+
 export function encode(frame: Record<string, unknown>): string {
   return JSON.stringify(frame);
 }

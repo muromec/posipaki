@@ -32,6 +32,7 @@ export type { ProcessRef } from "./process-ref.js";
 
 // frame vocabulary (shared, pure)
 export type { Channel, StringTransport } from "./channel.js";
+export type { Frame } from "./channel.js";
 export {
   isProto,
   isInit,
