@@ -46,8 +46,10 @@ import {
   parseBootstrapReport,
 } from "./kit.js";
 import type { Kit, KitApp } from "./kit.js";
-import { clientChannel, stderrSink } from "./stdio.js";
-import type { LineStreams, OutputFd, OutputSink } from "./stdio.js";
+import { clientChannel } from "./stdio.js";
+import { stderrSink, type OutputSink } from "./output.js";
+import type { LineStreams } from "./stdio.js";
+import type { OutputFd } from "./channel.js";
 
 /** posipaki's own gateway program.  A consumer with one of its own stages that instead. */
 export const GATEWAY_ENTRY = "posipaki/remote/gateway-cli.js";

@@ -12,18 +12,17 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   LineTransport,
-  OutputFilter,
   StdioWireError,
   clientChannel,
   errorFrame,
   errorReason,
   fdStreams,
-  outputFrame,
-  parseOutputFrame,
   serverChannel,
-  stderrSink,
   type LineStreams,
 } from "./stdio.js";
+import { outputFrame, outputOf } from "./channel.js";
+import { stderrSink, withOutput } from "./output.js";
+import { json1Channel, VERSION } from "./protocols/json1.js";
 
 /** Two ends of one wire: what one end writes, the other reads. */
 function wirePair(): [LineStreams, LineStreams] {
@@ -82,19 +81,18 @@ describe("LineTransport", () => {
 
 describe("output frames", () => {
   it("reads back what it writes", () => {
-    expect(parseOutputFrame(outputFrame(1, "hi"))).toEqual({ fd: 1, data: "hi" });
-    expect(parseOutputFrame(outputFrame(2, ""))).toEqual({ fd: 2, data: "" });
+    expect(outputOf(outputFrame(1, "hi"))).toEqual({ fd: 1, data: "hi" });
+    expect(outputOf(outputFrame(2, ""))).toEqual({ fd: 2, data: "" });
   });
 
-  it("leaves protocol traffic and rubbish alone", () => {
-    expect(parseOutputFrame('{"$proto":"json.v1"}')).toBeNull();
-    expect(parseOutputFrame("not json at all")).toBeNull();
-    expect(parseOutputFrame('{"$fd":3,"data":"out of range"}')).toBeNull();
-    expect(parseOutputFrame('{"$fd":1')).toBeNull();
+  it("leaves protocol frames and rubbish alone", () => {
+    expect(outputOf({ $proto: "json.v1" })).toBeNull();
+    expect(outputOf({ $fd: 3, data: "out of range" })).toBeNull();
+    expect(outputOf({ $fd: "1", data: "a stream is a number" })).toBeNull();
   });
 
   it("stringifies a payload that is not a string rather than losing it", () => {
-    expect(parseOutputFrame('{"$fd":1,"data":{"a":1}}')).toEqual({ fd: 1, data: '{"a":1}' });
+    expect(outputOf({ $fd: 1, data: { a: 1 } })).toEqual({ fd: 1, data: '{"a":1}' });
   });
 
   it("carries a reason", () => {
@@ -103,20 +101,20 @@ describe("output frames", () => {
   });
 });
 
-describe("OutputFilter", () => {
-  it("lifts output frames out and passes the rest through", async () => {
+describe("withOutput", () => {
+  it("takes the far end's own output off, and passes every other frame through", async () => {
     const [left, right] = wirePair();
     const output: Array<[number, string]> = [];
-    const filtered = new OutputFilter(new LineTransport(right), (fd, data) =>
+    const connection = withOutput(json1Channel(new LineTransport(right)), (fd, data) =>
       output.push([fd, data]),
     );
 
-    const arrived = new Promise<string>((resolve) => filtered.onMessage(resolve));
-    const peer = new LineTransport(left);
-    await peer.send(outputFrame(1, "chatter"));
-    await peer.send('{"$proto":"json.v1"}');
+    const arrived = new Promise<Record<string, unknown>>((resolve) => connection.onMessage(resolve));
+    const far = json1Channel(new LineTransport(left));
+    await far.send(outputFrame(1, "chatter"));
+    await far.send({ $proto: "json.v1" });
 
-    expect(await arrived).toBe('{"$proto":"json.v1"}');
+    expect(await arrived).toEqual({ $proto: "json.v1" });
     expect(output).toEqual([[1, "chatter"]]);
   });
 });
@@ -173,6 +171,19 @@ describe("handshakes", () => {
     const started = clientChannel(a, { onOutput: () => {} });
     await new LineTransport(b).send(JSON.stringify({ $state: {} }));
     await expect(started).rejects.toThrow(/unexpected first frame/);
+  });
+
+  it("reads past the far end's own output while it waits for the protocol", async () => {
+    const [a, b] = wirePair();
+    const output: Array<[number, string]> = [];
+    const started = clientChannel(a, { onOutput: (fd, data) => output.push([fd, data]) });
+    const far = new LineTransport(b);
+    await far.send(JSON.stringify(outputFrame(1, "before the handshake")));
+    await far.send(JSON.stringify({ $proto: VERSION }));
+
+    const client = await started;
+    expect(output).toEqual([[1, "before the handshake"]]);
+    await client.close();
   });
 
   it("gives up waiting for a peer that never speaks", async () => {

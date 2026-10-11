@@ -160,6 +160,29 @@ export function errorReason(msg: Record<string, unknown>): string | null {
   return typeof reason === "string" ? reason : null;
 }
 
+// ── the far end's own output ───────────────────────────────────────────────
+//
+// A process's own print is a frame of the connection like any other, read and written above the
+// protocol step on both ends, so the transport carries it like every other frame.  The number is
+// the stream a program knows, and what it wrote is a string.
+//
+//   {"$fd": 1, "data": "…"}
+
+export type OutputFd = 1 | 2;
+
+/** A frame of the far end's own output: `data` on the stream `fd`. */
+export function outputFrame(fd: OutputFd, data: string): Record<string, unknown> {
+  return { $fd: fd, data };
+}
+
+/** The output a frame carries, or null when it carries something else. */
+export function outputOf(frame: Record<string, unknown>): { fd: OutputFd; data: string } | null {
+  const fd = frame.$fd;
+  if (fd !== 1 && fd !== 2) return null;
+  const data = frame.data;
+  return { fd, data: typeof data === "string" ? data : JSON.stringify(data) };
+}
+
 // ── what is said about a crossed process ────────────────────────────────────
 //
 // A process that crossed can be asked for less than everything, or for nothing at

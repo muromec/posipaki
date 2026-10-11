@@ -25,14 +25,15 @@
 // It imports nothing but node builtins and this package, so the payload behind it
 // can be anything the runtime there can start.
 
-import { execFile, spawn } from "node:child_process";
-import type { ChildProcess } from "node:child_process";
+import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import { errorFrame, outputFrame } from "./stdio.js";
-import type { LineTransport, OutputFd } from "./stdio.js";
+import { outputFrame, type OutputFd } from "./channel.js";
+import { encode } from "./protocols/json1.js";
+import { errorFrame } from "./stdio.js";
+import type { LineTransport } from "./stdio.js";
 import { LineTransport as Lines } from "./stdio.js";
 import { FifoUtf8NlineTransport } from "./transports/fifo.js";
 
@@ -115,7 +116,7 @@ async function fail(wire: LineTransport, reason: string): Promise<void> {
 function forwardOutput(stream: NodeJS.ReadableStream, wire: LineTransport, fd: OutputFd): void {
   stream.setEncoding("utf-8");
   stream.on("data", (chunk: string) => {
-    void wire.send(outputFrame(fd, chunk)).catch(() => {
+    void wire.send(encode(outputFrame(fd, chunk))).catch(() => {
       /* the client hung up: the payload's exit is what matters now */
     });
   });

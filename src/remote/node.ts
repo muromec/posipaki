@@ -16,26 +16,17 @@ export type { SubprocessActorOptions, SubprocessActorBundle } from "./define-sub
 export {
   HANDSHAKE_TIMEOUT_MS,
   LineTransport,
-  OutputFilter,
   StdioWireError,
   clientChannel,
   errorFrame,
   errorReason,
   fdStreams,
-  outputFrame,
-  parseOutputFrame,
   serverChannel,
-  stderrSink,
 } from "./stdio.js";
-export type {
-  ClientChannelOptions,
-  LineStreams,
-  OutputFd,
-  OutputFrame,
-  OutputSink,
-} from "./stdio.js";
-
-// the kit: how a payload is delivered to a host we know nothing about
+export { stderrSink, withOutput } from "./output.js";
+export type { OutputSink } from "./output.js";
+export type { ClientChannelOptions, LineStreams } from "./stdio.js";
+export type { OutputFd } from "./channel.js";
 export {
   DEFAULT_KIT_PARENT,
   DEFAULT_RUNTIMES,

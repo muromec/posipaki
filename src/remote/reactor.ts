@@ -8,7 +8,7 @@ import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel, StringTransport } from "./channel.js";
 import { json1Channel, VERSION } from "./protocols/json1.js";
-import type { OutputFd } from "./stdio.js";
+import type { OutputFd } from "./channel.js";
 import { serveChannel, type AnyProcess, type Init, type Served, type ServedProcess, type Spawner } from "./server.js";
 
 /** Any actor definition: the reactor serves it, and does not care which one it is. */

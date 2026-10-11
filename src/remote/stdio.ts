@@ -9,14 +9,14 @@
 //   * a first-stage command on its own stdin/stdout, over ssh, under `sudo`, in
 //     a container — where stdio is the only channel there is.
 //
-// Frames are one JSON object per line.  Whatever the far end prints is carried
-// as an *output frame* (`$fd`), so it can never be mistaken for a frame of the
-// protocol itself; a failed start is carried as an `$error` frame.
+// Frames are one JSON object per line.  Whatever the far end prints is carried as an *output
+// frame* (`$fd`), so it can never be mistaken for a frame of the protocol itself; a failed start
+// is carried as an `$error` frame.
 //
-// Why the client filters output frames before handing the transport to the
-// seam: `json1Channel` decodes every line it sees, and the first frame of a
-// session is the peer's `$proto`.  Stripping output frames in the transport
-// keeps the protocol view clean without the seam knowing anything about them.
+// Output frames are routed above the protocol step, by whoever holds the connection (output.ts):
+// every line decodes to a frame, and the ones that are the far end's own print go to that
+// holder's sink instead of to the seam.  The handshake below reads the first frame that is the
+// protocol's, since the far end's own print may come first.
 
 import { createReadStream, createWriteStream } from "node:fs";
 import * as readline from "node:readline";
@@ -25,10 +25,13 @@ import {
   errorFrame as wireErrorFrame,
   errorReason as wireErrorReason,
   isProto,
+  outputOf,
   type Channel,
+  type OutputFd,
   type StringTransport,
 } from "./channel.js";
 import { VERSION, json1Channel } from "./protocols/json1.js";
+import { stderrSink, withOutput, type OutputSink } from "./output.js";
 
 /** The stream pair a line transport talks over. */
 export interface LineStreams {
@@ -36,16 +39,8 @@ export interface LineStreams {
   write: Writable;
 }
 
-/** A stream of the far end's process: its stdout or its stderr. */
-export type OutputFd = 1 | 2;
-
-/** Where the far end's own output goes. */
-export type OutputSink = (fd: OutputFd, data: string) => void;
-
 /** How long to wait for the far end's first protocol frame. */
 export const HANDSHAKE_TIMEOUT_MS = 15_000;
-
-const OUTPUT_KEY = "$fd";
 
 /** Raised when the wire itself fails: no frame, the wrong protocol, a peer that went away. */
 export class StdioWireError extends Error {
@@ -53,36 +48,6 @@ export class StdioWireError extends Error {
     super(message);
     this.name = "StdioWireError";
   }
-}
-
-// ── output frames ──────────────────────────────────────────────────────────
-
-/** One frame of the far end's own output. */
-export interface OutputFrame {
-  fd: OutputFd;
-  data: string;
-}
-
-export function outputFrame(fd: OutputFd, data: string): string {
-  return JSON.stringify({ [OUTPUT_KEY]: fd, data });
-}
-
-/** The output frame a line carries, or null when it carries something else. */
-export function parseOutputFrame(line: string): OutputFrame | null {
-  // Cheap reject first: almost every line of a session is protocol traffic.
-  if (!line.startsWith('{"$fd"')) return null;
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(line);
-  } catch {
-    return null;
-  }
-  if (typeof parsed !== "object" || parsed === null) return null;
-  const frame = parsed as Record<string, unknown>;
-  const fd = frame[OUTPUT_KEY];
-  const data = frame.data;
-  if (fd !== 1 && fd !== 2) return null;
-  return { fd, data: typeof data === "string" ? data : JSON.stringify(data) };
 }
 
 /** An `$error` frame as a line.  The word and its shape are the shared vocabulary's
@@ -226,61 +191,15 @@ export function fdStreams(readFd: number, writeFd: number): LineStreams {
   return { read, write };
 }
 
-/**
- * A transport that lifts output frames out of the stream: everything else is
- * passed through untouched, so the protocol sees frames and only frames.
- */
-export class OutputFilter implements StringTransport {
-  private readonly inner: StringTransport;
-  private readonly sink: OutputSink;
-
-  constructor(inner: StringTransport, sink: OutputSink) {
-    this.inner = inner;
-    this.sink = sink;
-  }
-
-  send(frame: string): void | Promise<void> {
-    return this.inner.send(frame);
-  }
-
-  onMessage(handler: (frame: string) => void): void {
-    this.inner.onMessage((line) => {
-      const output = parseOutputFrame(line);
-      if (output) this.sink(output.fd, output.data);
-      else handler(line);
-    });
-  }
-
-  removeHandler(): void {
-    this.inner.removeHandler();
-  }
-
-  onClose(handler: () => void): void {
-    this.inner.onClose(handler);
-  }
-
-  close(): Promise<void> {
-    return this.inner.close();
-  }
-}
-
-// ── sinks ──────────────────────────────────────────────────────────────────
-
-/** Write the far end's output to our stderr, tagged with its name. */
-export function stderrSink(name = ""): OutputSink {
-  const tag = name ? `[${name}] ` : "";
-  return (fd, data) => {
-    const lead = fd === 1 ? tag : `${tag}err: `;
-    for (const line of data.split("\n")) {
-      if (line.length > 0) process.stderr.write(`${lead}${line}\n`);
-    }
-  };
-}
-
 // ── handshakes ─────────────────────────────────────────────────────────────
 
-/** The next frame that arrives, or a timeout. */
-async function nextFrame(channel: Channel, timeoutMs: number): Promise<Record<string, unknown>> {
+/** The next frame that is the protocol's, or a timeout.  The far end's own output is not the
+ *  protocol's: it goes to `sink` while this waits, and the wait carries on. */
+async function nextFrame(
+  channel: Channel,
+  timeoutMs: number,
+  sink: OutputSink,
+): Promise<Record<string, unknown>> {
   return await new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new StdioWireError(`no protocol frame within ${timeoutMs}ms`)),
@@ -288,6 +207,11 @@ async function nextFrame(channel: Channel, timeoutMs: number): Promise<Record<st
     );
     timer.unref?.();
     channel.onMessage((frame) => {
+      const output = outputOf(frame);
+      if (output) {
+        sink(output.fd, output.data);
+        return;
+      }
       clearTimeout(timer);
       resolve(frame);
     });
@@ -302,17 +226,17 @@ export interface ClientChannelOptions {
 }
 
 /**
- * The client end of the wire: hand the streams to the seam (minus output
- * frames) and wait for the peer's `$proto`.  A first stage reports a failed
- * start as an `$error` frame instead.
+ * The client end of the connection: hand the streams to the seam and wait for the peer's `$proto`,
+ * with the far end's own output going to `onOutput` (our stderr by default) as it arrives.  A
+ * first stage reports a failed start as an `$error` frame instead.
  */
 export async function clientChannel(
   streams: LineStreams,
   opts: ClientChannelOptions = {},
 ): Promise<Channel> {
-  const transport = new LineTransport(streams);
-  const channel = json1Channel(new OutputFilter(transport, opts.onOutput ?? stderrSink()));
-  const frame = await nextFrame(channel, opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS);
+  const channel = json1Channel(new LineTransport(streams));
+  const sink = opts.onOutput ?? stderrSink();
+  const frame = await nextFrame(channel, opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS, sink);
   channel.removeHandler();
 
   const reason = errorReason(frame);
@@ -323,7 +247,9 @@ export async function clientChannel(
   if (frame.$proto !== VERSION) {
     throw new StdioWireError(`unsupported protocol ${String(frame.$proto)}, expected ${VERSION}`);
   }
-  return channel;
+  // From here on the far end's own output is this connection's business and not the transport's:
+  // every frame reaches the seam, and the ones that are its print are taken off on the way in.
+  return withOutput(channel, sink);
 }
 
 /** The server end of the wire — a payload speaking stdio itself. */
