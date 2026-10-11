@@ -94,6 +94,8 @@ export interface Session<Meta = unknown> {
   readonly proc: ServedProcess;
   /** What `identify` said, plus whatever the factory added. */
   readonly meta: Meta;
+  /** The frames of this connection: send on it, read from it, and several readers at once. */
+  readonly channel: Channel;
   /** Settles when the connection closes and the session is over. */
   readonly done: Promise<void>;
 }
@@ -130,8 +132,11 @@ export type SessionFactory<Meta = unknown> = (
 ) => Served<Meta> | ServedProcess | Promise<Served<Meta> | ServedProcess>;
 
 export interface ReactorOptions<Meta = unknown> {
-  /** A connection was admitted and the process it is served on is up. */
-  onSession?(session: Session<Meta>): void;
+  /**
+   * A connection was admitted and the process it is served on is up.  What it returns, when it returns
+   * anything, is run once the session is over — the same moment as `onClosed`, and awaited by `stop()`.
+   */
+  onSession?(session: Session<Meta>): void | (() => void | Promise<void>);
   /** Its connection closed, and the session is over. */
   onClosed?(session: Session<Meta>): void;
   /**
@@ -158,8 +163,8 @@ export function reactor<Meta>(
 The loop it runs, in words: `accept()`; build the channel and do the `$proto` handshake (the spawner's job,
 done here so a consumer never writes it); read the `$init` the far side opened with; call the factory with the
 connection and that statement; serve the process it answers with; report it through `onSession`; when its
-connection closes, run the session's cleanup (which stops the process unless the factory returned its own)
-and report that through `onClosed`; accept again.
+connection closes, run the session's cleanup — which stops the process unless the factory returned its own —
+and what `onSession` returned; report that through `onClosed`; accept again.
 `stop()` closes the listener and ends every live session the same way, so a client learns the server is gone
 when its connection closes.
 
@@ -167,8 +172,10 @@ The protocol step is one function of the loop: wrap the transport in `json1Chann
 `$proto` frame, and hand the channel on.  A later version can take that as a parameter rather than writing it
 in, which is why it stays in one place.
 
-`onSession` and `onClosed` are the whole report: a connection was admitted and is being served, and a
-connection is over.
+`onSession` and `onClosed` are the whole report: a connection was admitted and is being served, and a connection
+is over.  The session carries its channel because the code that started the connection is not the process being
+served: a terminal's endpoint, a registry, a log sink wants to send and read frames over the connection it just
+admitted, and `onSession` is where it gets to.  What `onSession` returns is released with the session.
 
 A bare `ActorDefinition` is the shortcut for a factory that spawns it: the same call, with the definition
 wrapped into a factory that spawns it with the `$init`'s args, name and parent, and reports no meta of its own.

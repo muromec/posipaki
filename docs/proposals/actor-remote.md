@@ -1,6 +1,11 @@
 # Remote Actors
 
-**Status:** Implemented
+**Status:** Implemented, brought up to date on 2026-10-11 against the tree: the frame vocabulary is the
+sixteen frames below with one exported `Frame` type (`dbe75a8`), `Channel.onMessage` returns its own
+unsubscribe, the spawner table is what exists, and the seam is served by a one-connection
+[reactor](server-reactor.md).  The channel handle each starter gets, the fan-out behind that
+unsubscribe, and the byte streams over a connection are [the connection both ends
+hold](connection-both-ends.md).
 
 The primitive is **context mobility**: run a posipaki actor in any execution
 context that can speak a small protocol, and let consumers treat local and
@@ -89,7 +94,9 @@ ready" signal.
 
 ### Frame vocabulary
 
-Five frames:
+Sixteen frames, in five groups.  A frame is one JSON object carrying one `$` key; the key says what
+it is, and the body under it belongs to whoever wrote it.  The whole set is one exported type,
+`Frame` (`channel.ts`), which a protocol re-exports as the frames it carries.
 
 | Frame | Direction | Purpose |
 | --- | --- | --- |
@@ -98,18 +105,28 @@ Five frames:
 | `$state` | server → client | state snapshot (the first after `$init` signals ready) |
 | `$msg` | bidirectional | a posipaki message crossing the boundary |
 | `$exit` | server → client | graceful exit + final state |
+| `$bad` | either | this side could not read a frame: why, its length, and a short head of it |
+| `$error` | either | the wire cannot be spoken over, and why; the connection ends with it |
+| `$fd` | either | the connection root's own stream: which one (0, 1, 2) and the text |
+| `$stop`, `$pause`, `$resume`, `$release`, `$tune` | whoever holds the process | stop it, pause it, resume it, let it go, say less about it |
+| `$r.methods`, `$r.call.<name>`, `$r.result.<name>` | either | reflection: what a process answers, the ask, the answer |
 
 ```json
 { "$proto": "json.v1" }
-{ "$init": { "start": 0, "rootName": "host:tools", "parentName": "host", "parentIdName": "host" } }
+{ "$init": { "args": { "start": 0 }, "rootName": "host:tools", "parentName": "host", "parentId": "host" } }
 { "$state": { "count": 1 } }
 { "$msg": { "fromName": "root", "body": { "type": "INCREMENT", "by": 1 } } }
 { "$exit": { "code": 0, "state": { "count": 42 } } }
+{ "$fd": 1, "data": "ready\n" }
+{ "$r.call.getState": { "seq": 1, "args": [] } }
 ```
 
-The guards (`isProto`, `isInit`, `isState`, `isMsg`, `isExit`) narrow a decoded
-frame to one of these shapes. `server.ts` and `client.ts` speak only in `Channel`
-plus these guards.
+A frame about a process carries that process's id as `to`, at the top level of the frame rather than
+inside its body: the frame is the envelope, and the address says who it is for whatever kind it turns
+out to be (`frameTo`).  The guards — `isProto`, `isInit`, `isState`, `isMsg`, `isExit`, `isBad`,
+`isError`, `isStop`, `isPause`, `isResume`, `isRelease`, `isTune`, `isReflectionMethods` — narrow a
+decoded frame to the frame it is.  `server.ts` and `client.ts` speak only in `Channel` plus these
+guards.
 
 ### Sender identity
 
@@ -150,22 +167,26 @@ interface StringTransport {
 }
 
 interface Channel {
-  send(frame: Record<string, unknown>): void | Promise<void>;
-  onMessage(handler: (frame: Record<string, unknown>) => void): void;
-  removeHandler(): void;
+  send(frame: Frame): void | Promise<void>;
+  onMessage(handler: (frame: Frame) => void): () => void; // the returned function unsubscribes this reader
   onClose(handler: () => void): void;
   close(): Promise<void>;
 }
 ```
 
-`StringTransport` moves encoded frames (strings); `Channel` moves decoded frame
-objects. `json1Channel(transport)` wraps the former into the latter.
+`StringTransport` moves encoded frames (strings); `Channel` moves decoded frame objects, and
+`json1Channel(transport)` wraps the former into the latter.  That wrapper is where several readers on
+one connection are kept: it installs one handler on the transport and offers each frame to every
+subscriber, so a second reader — a log stream, a terminal's own output — is a second entry and not a
+second handler.  The transports keep their one-handler contract and throw on a second one, which is
+why the fan-out belongs above them.
 
 | Transport | Implements | Encoding | Client reaches the server by |
 | --- | --- | --- | --- |
 | **FIFO** (`fifo.ts`) | `StringTransport` | `json.v1` | spawning the child and opening the fifo |
 | **WebSocket** (`websocket.ts`) | `StringTransport` | `json.v1` | connecting to `ws://` / upgrading a request |
 | **Worker** (`worker.ts`) | `Channel` | `clone.v1` | `new Worker(url)` |
+| **Line** (`stdio.ts`) | `StringTransport` | `json.v1` | a stream pair: our own fds, a unix socket (`connectUnixSocket`), or a command's stdin/stdout |
 
 FIFO and WebSocket carry JSON-encoded strings; `json1Channel` decodes them. The
 worker case is different: `postMessage` structured-clones the frame object
@@ -191,11 +212,13 @@ string.
 | Spawner | Side | Bootstraps by |
 | --- | --- | --- |
 | `fifoArgvSpawner()` | server | reading `--fifo-in`/`--fifo-out` from argv |
+| `fifoClientSpawner(pair)` | client | opening the pair the other way, then awaiting `$proto` |
 | `commandSpawner(command)` | client | `mkfifo` + spawning the command |
 | `wsServerSpawner(ws)` | server | wrapping an already-upgraded socket |
-| `wsClientSpawner(url)` | client | `new WebSocket(url)` |
-| `workerSelfSpawner()` | server | wrapping the worker-global `self` |
+| `wsClientSpawner(url, { WebSocket, options })` | client | opening one, with headers or a CA for the opener |
+| `workerSelfSpawner(selfScope)` | server | wrapping the worker-global `self` |
 | `workerClientSpawner(url)` | client | `new Worker(url)` |
+| `socketClientSpawner(path, { onOutput })` | client | connecting to a unix socket |
 
 ## The seam
 
@@ -218,7 +241,12 @@ It takes the `ActorDefinition` (not a bare `fn`), so plugins and reflection
 survive the spawn — only `actor.spawn` runs `resolvePlugins` and
 `attachReflection`.
 
-### Client — `remoteClient(name, spawner)`
+`serveRemoteActor(actor, spawner)` is the one-connection case of the
+[reactor](server-reactor.md): `reactor(oneConnection(spawner), actor)`.  The session it reports carries
+the connection's `channel`, and `onSession` may return a cleanup — which is how the code that started
+the connection, and not only the factory, gets to send and read frames on it.
+
+### Client — `remoteClient(name, spawner, options)`
 
 Returns a full `ActorDefinition` whose `setup` connects through the spawner and
 whose handlers drive a proxy:
@@ -227,6 +255,10 @@ whose handlers drive a proxy:
 2. `onMessage` forwards each message over the wire and `stopPropagation`s
 3. `onStopRequested` sends `STOP` and awaits `$exit`
 4. `afterEnd` closes the channel
+
+`options.onChannel(channel, ctx)` is called once the channel is up, with the connection the proxy
+holds: the client side's way to send and read frames.  Its return value is a cleanup, run when the
+wire goes or the proxy stops.
 
 The proxy is an ordinary actor — `spawn`/`send`/`state`/`wait` work exactly as
 for a local actor. The `afterEnd` close is what lets the client terminate the
@@ -280,11 +312,11 @@ conflated with `$init`.
 
 ## Open questions
 
-- **Route naming on the server.** `serveRemoteActor` takes an already-established
-  channel; mapping a WebSocket route to an actor name stays in the consumer's
-  court (or a small `name → actor` registry helper).
-- **`parentName`/`parentIdName` for a multi-client server.** For one server, many
-  clients, what identifies each connection?
-- **`$fd` (stdout/stderr forwarding).** The earlier draft proposed a sixth frame
-  for process output. Not implemented, and process-specific — likely belongs as
-  a FIFO-transport extension, not a core frame.
+- **A second client on one server.**  What identifies a connection is the listener's `meta`, which each
+  medium fills in its own way (a socket's path and peer, a websocket's upgrade request).  The session
+  carries it, so nothing here has to invent an identity.
+- **A running process served on a connection.**  The factory returns the process, nothing stops a
+  process it did not spawn, and its out-messages have to reach every connection bound to it.  See
+  [the server reactor](server-reactor.md).
+- **The connection's streams.**  `$fd` is a frame now; fd 0, the streams over a connection and who owns
+  them are [the connection both ends hold](connection-both-ends.md).
