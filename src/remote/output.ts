@@ -17,7 +17,7 @@ export type OutputSink = (fd: OutputFd, data: string) => void;
 export function stderrSink(name = ""): OutputSink {
   const tag = name ? `[${name}] ` : "";
   return (fd, data) => {
-    const lead = fd === 1 ? tag : `${tag}err: `;
+    const lead = fd === 2 ? `${tag}err: ` : tag;
     for (const line of data.split("\n")) {
       if (line.length > 0) process.stderr.write(`${lead}${line}\n`);
     }

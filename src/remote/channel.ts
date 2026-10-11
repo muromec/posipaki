@@ -210,13 +210,13 @@ export function errorReason(msg: Record<string, unknown>): string | null {
 
 // ── the far end's own output ───────────────────────────────────────────────
 //
-// A process's own print is a frame of the connection like any other, read and written above the
-// protocol step on both ends, so the transport carries it like every other frame.  The number is
-// the stream a program knows, and what it wrote is a string.
+// What one end's root says on one of its own streams is a frame like any other, read and written
+// above the protocol step: the number is the stream a program knows, and what is said there is a
+// string.  A print is fd 1, an error fd 2, and what the other end may read is fd 0.
 //
-//   {"$fd": 1, "data": "…"}
+//   {"$fd": 0 | 1 | 2, "data": "…"}
 
-export type OutputFd = 1 | 2;
+export type OutputFd = 0 | 1 | 2;
 
 /** An output frame as a type: what `outputFrame` writes and `outputOf` reads. */
 export type OutputFrame = {
@@ -232,7 +232,7 @@ export function outputFrame(fd: OutputFd, data: string): Record<string, unknown>
 /** The output a frame carries, or null when it carries something else. */
 export function outputOf(frame: Record<string, unknown>): { fd: OutputFd; data: string } | null {
   const fd = frame.$fd;
-  if (fd !== 1 && fd !== 2) return null;
+  if (fd !== 0 && fd !== 1 && fd !== 2) return null;
   const data = frame.data;
   return { fd, data: typeof data === "string" ? data : JSON.stringify(data) };
 }

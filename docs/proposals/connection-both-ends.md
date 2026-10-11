@@ -1,11 +1,11 @@
 # The Connection Both Ends Hold
 
 **Status:** draft, reworked 2026-10-11 after master's rulings.  Built: the frames have names and one
-exported type (`dbe75a8`), `$fd` is a frame of the connection with fd 1 and 2 (`12c51fb`, `11b616e`),
+exported type (`dbe75a8`), `$fd` is a frame of the connection over fd 0, 1 and 2 (`12c51fb`, `11b616e`),
 the fan-out behind `onMessage` (`5a582f9`), the connection is the process's own fact at both ends
-(`ctx.connection`, `771bf87`), and both hooks are in: `Session.channel` with `onSession`'s cleanup, and
-`onChannel` with its own on the client.  Not built: fd 0, the byte streams, and the callers that would
-move onto them.
+(`ctx.connection`, `771bf87`), both hooks are in (`Session.channel` with `onSession`'s cleanup, and
+`onChannel` with its own on the client), and the byte streams are built — `connectionFds` and `logStream`
+in `remote/node`, tested in `streams.test.ts`.  Not built: the callers that would move onto them.
 
 ## Motivation
 
@@ -106,26 +106,32 @@ export interface FdStream {
   readonly write: Writable;
 }
 
-export function fdStreams(channel: Channel): FdSet;
+export function connectionFds(channel: Channel): FdSet;
 ```
 
 Both directions on one fd, because both ends have a root and each reads what the other prints: the
 server that serves a terminal writes its own fd 1 to show a line, and the terminal reads that line as
 the other root's fd 1.  One object, no per-end special case.
 
+The sketch said `fdStreams`; the name that landed is `connectionFds`, because `stdio.ts` already
+exports `fdStreams` — the fds of *our own* process, for the stdio wire.  Two different things, two names.
+
 The logger plugs in where a stream ends, as a `Writable` — the debug logger's own shape is
 `LoggerFactory = (name) => Logger`, so the name it was built with is the name the lines arrive under:
 
 ```ts
 /** A writable that turns chunks into log lines: fd 1 to info, fd 2 to warn, and the tail held until a newline. */
-export function logStream(log: Logger, opts?: { fd: 0 | 1 | 2 }): Writable;
+export function logStream(log: LineLog, opts?: { fd: 0 | 1 | 2 }): Writable;
 
 onChannel(channel) {
-  const fds = fdStreams(channel);
+  const fds = connectionFds(channel);
   fds.stdout.read.pipe(logStream(log));   // what the far end prints, into this process's log
   return () => fds.close();
 }
 ```
+
+`LineLog` is the seam's own shape rather than the plugin's: a `Logger` has both methods, and the remote layer
+importing the plugin would drag it — and its module augmentation — into every remote build.
 
 The same path runs the other way: `fds.stdout.write("line\n")` is an output frame, so what a program
 prints here arrives there as the stream its logger reads.
@@ -160,7 +166,8 @@ One commit per slice, each with its own tests, gate green.
 2. `onMessage` returns its unsubscribe; the fan-out lives in `json1Channel`; the callers that used
    `removeHandler` give up their own entry (`server.ts:348`, `reactor.ts:280`, `output.ts:42`, the three
    client spawners, `stdio.ts`, `fifo.ts`).  **Built** (`5a582f9`).
-3. `$fd: 0` in the vocabulary, and `fdStreams` with `logStream` in `remote/node`.  Not built.
+3. `$fd: 0` in the vocabulary, and `connectionFds` with `logStream` in `remote/node`.  **Built**:
+   `streams.ts`, exported from `remote/node`, and `streams.test.ts`.  Not built: the callers.
 4. Callers move over: the gateway's forwarding loop (`gateway.ts:114-122`) first.  Not built.
 
 ## Compatibility
