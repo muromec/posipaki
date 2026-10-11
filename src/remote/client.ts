@@ -44,6 +44,21 @@ import { CallSide, answerCall } from "./call-side.js";
 
 export type ClientSpawner<Args> = (args: Args) => Promise<Channel>;
 
+/** What the proxy knows about itself when its connection is handed over: enough to name itself. */
+export interface ClientContext {
+  /** The full name of the proxy process, which is the name the far side serves it under. */
+  readonly pname: string;
+}
+
+/**
+ * What a caller may install on the connection a proxy opens.  `onChannel` is called once the channel
+ * is up and before the first frame is sent or read, so a reader put there misses nothing; what it
+ * returns is called when the proxy is over, before the channel is closed.
+ */
+export interface RemoteClientOptions {
+  onChannel?(channel: Channel, ctx: ClientContext): void | (() => void | Promise<void>);
+}
+
 
 /**
  * Why a proxy ends when the wire under it goes.
@@ -67,6 +82,7 @@ export function remoteClient<
 >(
   name: string,
   spawner: ClientSpawner<Args>,
+  options: RemoteClientOptions = {},
 ): ActorDefinition<Args, State, InMsg, OutMsg, R> {
   const proxyDef = defineActor<
     Args,
@@ -76,6 +92,7 @@ export function remoteClient<
         channel: Channel;
         farRoot: RemoteProcess<InMsg, OutMsg>;
         exitPromise: Promise<{ code: number | null; state: State }>;
+        release: (() => void | Promise<void>) | null;
       };
     },
     InMsg,
@@ -101,6 +118,10 @@ export function remoteClient<
       // The connection this proxy holds is the process's own fact, so whatever the process
       // does with the frames asks the same place the remote layer does.
       this.ctx.connection = channel;
+      // Whoever wants the connection gets it here, before the first frame is sent or read: a reader
+      // installed later would have missed whatever the far side said first.  What it answers with is
+      // this side's to clean up when the proxy is over, not the library's to guess at.
+      const release = options.onChannel?.(channel, { pname: this.ctx.pname }) ?? null;
       // What this side calls the process it serves: the full name, not the short one the
       // definition was written with.  A process is called here what it is called on the side
       // that forked it, and the far side spells its own subtree off whatever it is told, so a
@@ -362,7 +383,7 @@ export function remoteClient<
 
       return {
         public: currentState as State,
-        private: { channel, farRoot, exitPromise },
+        private: { channel, farRoot, exitPromise, release },
       };
 
     },
@@ -388,8 +409,18 @@ export function remoteClient<
       this.agreeToStop();
     },
     async afterEnd() {
-      if (this.state.private.channel) {
-        await this.state.private.channel.close();
+      const { channel, release } = this.state.private;
+      if (release) {
+        // The wire closes whatever a cleanup does: one that throws is reported, not a reason to
+        // leave a connection open behind a proxy that is over.
+        try {
+          await release();
+        } catch (error) {
+          console.error("Error releasing the connection", error);
+        }
+      }
+      if (channel) {
+        await channel.close();
       }
     },
   });

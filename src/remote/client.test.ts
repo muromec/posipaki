@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { defineActor } from "../define-actor.js";
 import { CHANNEL_LOST, remoteClient } from "./client.js";
-import { frameTo, isInit, isMsg, isStop } from "./channel.js";
+import { frameReaders, frameTo, isInit, isMsg, isStop } from "./channel.js";
 import type { Channel } from "./channel.js";
 import { rootIdFor } from "./process-ref.js";
 import type { RemoteProcess } from "./remote-process.js";
@@ -15,18 +15,22 @@ const SERVER_ROOT = rootIdFor("even");
 
 class FakeChannel implements Channel {
   sent: Record<string, unknown>[] = [];
+  /** The way a frame from the far side gets in: the fan-out's installer, set when the first reader
+   *  arrives.  A test injects with `handler!(frame)`, and every reader hears it — the contract the
+   *  protocol layer gives a real connection, so a reader a caller installs cannot take the frames
+   *  from the proxy's own. */
   handler: ((frame: Record<string, unknown>) => void) | null = null;
   closeHandler: (() => void) | null = null;
   closed = false;
+  private readonly readers = frameReaders((deliver) => {
+    this.handler = deliver;
+  });
 
   async send(frame: Record<string, unknown>) {
     this.sent.push(frame);
   }
   onMessage(handler: (frame: Record<string, unknown>) => void) {
-    this.handler = handler;
-    return () => {
-      if (this.handler === handler) this.handler = null;
-    };
+    return this.readers(handler);
   }
   onClose(handler: () => void) {
     this.closeHandler = handler;
@@ -100,6 +104,58 @@ describe("remoteClient (unit)", () => {
 
     channel.closeHandler!();
     await proc.wait();
+  });
+
+  it("hands the connection to whoever asked, and cleans up before it is closed", async () => {
+    const channel = new FakeChannel();
+    const order: string[] = [];
+    const closer = channel.close.bind(channel);
+    channel.close = async () => {
+      order.push("closed");
+      await closer();
+    };
+    const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
+      "counter",
+      () => Promise.resolve(channel),
+      {
+        onChannel: (opened, ctx) => {
+          expect(opened).toBe(channel);
+          expect(ctx.pname).toBe("counter");
+          return async () => {
+            // A microtask, so a cleanup that gets called is told from one that gets awaited.
+            await Promise.resolve();
+            order.push("released");
+          };
+        },
+      },
+    );
+
+    const proc = await actor.spawn({ start: 0 }, { awaitReady: false });
+    while (!channel.handler) await sleep(1);
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 0 } });
+    while (proc.state?.count !== 0) await sleep(1);
+
+    channel.closeHandler!();
+    await proc.wait();
+    expect(order).toEqual(["released", "closed"]);
+  });
+
+  it("lets whoever asked read the frames the far side sends, and the proxy hears them too", async () => {
+    const channel = new FakeChannel();
+    const frames: Record<string, unknown>[] = [];
+    const actor = remoteClient<{ start: number }, { count: number }, CounterIn, CounterOut>(
+      "counter",
+      () => Promise.resolve(channel),
+      { onChannel: (opened) => void opened.onMessage((frame) => frames.push(frame)) },
+    );
+
+    const proc = await actor.spawn({ start: 0 }, { awaitReady: false });
+    while (!channel.handler) await sleep(1);
+    channel.handler!({ to: SERVER_ROOT, $state: { count: 7 } });
+    while (proc.state?.count !== 7) await sleep(1);
+
+    // One channel, two readers: the frame the far side sent reached the caller's reader and the proxy.
+    expect(frames).toContainEqual({ to: SERVER_ROOT, $state: { count: 7 } });
   });
 
   it("rejects the spawn when the spawner fails", async () => {

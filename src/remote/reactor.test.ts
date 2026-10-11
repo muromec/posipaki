@@ -11,12 +11,14 @@ import { rootIdFor } from "./process-ref.js";
 import {
   oneConnection,
   reactor,
+  spawnFactory,
   type Connection,
   type Listener,
   type ServedConnection,
   type Session,
 } from "./reactor.js";
 import { sleep } from "../util.js";
+import { nextState } from "../testing/index.js";
 
 /** A transport the test drives: what the reactor writes is recorded, what the test writes is delivered. */
 class FakeTransport implements StringTransport {
@@ -87,6 +89,15 @@ async function waitUntil(predicate: () => boolean, what: string): Promise<void> 
   }
 }
 
+/** The reactor's own report of a session, as something to await: the event, not a poll for it. */
+function nextSession<Meta>(): { reported: Promise<Session<Meta>>; report: (session: Session<Meta>) => void } {
+  let report: (session: Session<Meta>) => void = () => {};
+  const reported = new Promise<Session<Meta>>((resolve) => {
+    report = resolve;
+  });
+  return { reported, report };
+}
+
 /** The id this side gives its own root: what a frame about it is addressed with. */
 const ROOT = rootIdFor("even");
 
@@ -117,7 +128,7 @@ describe("reactor", () => {
     const sessions: Session<{ who: string }>[] = [];
     const closed: Session<{ who: string }>[] = [];
     const r = reactor(listener, makeEcho(), {
-      onSession: (session) => sessions.push(session),
+      onSession: (session) => void sessions.push(session),
       onClosed: (session) => closed.push(session),
     });
 
@@ -153,7 +164,7 @@ describe("reactor", () => {
         proc: await makeEcho().spawn(init.args, { name: init.rootName }),
         meta: { who: "from the factory" },
       }),
-      { onSession: (session) => sessions.push(session) },
+      { onSession: (session) => void sessions.push(session) },
     );
 
     const transport = new FakeTransport();
@@ -178,7 +189,7 @@ describe("reactor", () => {
       },
     });
     const sessions: Session<{ who: string }>[] = [];
-    const r = reactor(listener, Writing, { onSession: (session) => sessions.push(session) });
+    const r = reactor(listener, Writing, { onSession: (session) => void sessions.push(session) });
 
     const transport = new FakeTransport();
     listener.offer({ meta: { who: "first" }, transport });
@@ -214,7 +225,7 @@ describe("reactor", () => {
         },
       }),
       {
-        onSession: (session) => sessions.push(session),
+        onSession: (session) => void sessions.push(session),
         onClosed: (session) => closed.push(session),
       },
     );
@@ -262,7 +273,7 @@ describe("reactor", () => {
         },
       }),
       {
-        onSession: (session) => sessions.push(session),
+        onSession: (session) => void sessions.push(session),
         onClosed: (session) => closed.push(session),
       },
     );
@@ -338,7 +349,7 @@ describe("reactor", () => {
     const listener = new QueueListener<Record<string, never>>();
     const sessions: Session<Record<string, never>>[] = [];
     const r = reactor(listener, makeEcho(), {
-      onSession: (session) => sessions.push(session),
+      onSession: (session) => void sessions.push(session),
     });
 
     const transport = new FakeTransport();
@@ -361,7 +372,7 @@ describe("reactor", () => {
     const sessions: Session<Record<string, never>>[] = [];
     const r = reactor(listener, makeEcho(), {
       onError: (error) => errors.push(error),
-      onSession: (session) => sessions.push(session),
+      onSession: (session) => void sessions.push(session),
     });
 
     // A far side that never says $init: the serve fails, and the reactor is still accepting.
@@ -375,6 +386,96 @@ describe("reactor", () => {
     listener.offer({ meta: {}, transport });
     await connected(transport);
     await waitUntil(() => sessions.length === 1, "the second session");
+
+    await r.stop();
+  });
+
+  it("hands the session its connection, and runs what onSession returned when it is over", async () => {
+    const listener = new QueueListener<{ who: string }>();
+    const order: string[] = [];
+    const { reported, report } = nextSession<{ who: string }>();
+    let heard: (frame: Record<string, unknown>) => void = () => {};
+    const sessionHeard = new Promise<Record<string, unknown>>((resolve) => {
+      heard = resolve;
+    });
+    let factoryChannel: Channel | null = null;
+    const r = reactor(
+      listener,
+      (connection, init) => {
+        factoryChannel = connection.channel;
+        return spawnFactory<{ who: string }>(makeEcho())(connection, init);
+      },
+      {
+        onSession: (session) => {
+          report(session);
+          // What a starter reads here is the incoming side of the connection, and the serve reads it
+          // as well: one channel, two readers.
+          session.channel.onMessage((frame) => {
+            if (isMsg(frame)) heard(frame);
+          });
+          return async () => {
+            // A microtask, so a cleanup that gets called is told from one that gets awaited.
+            await Promise.resolve();
+            order.push("released");
+          };
+        },
+        onClosed: () => order.push("closed"),
+      },
+    );
+
+    const transport = new FakeTransport();
+    listener.offer({ meta: { who: "first" }, transport });
+    await connected(transport);
+    const session = await reported;
+
+    expect(session.channel).toBe(factoryChannel);
+
+    // Both frames in one turn, so a single tick covers them: the far side asks for the root's
+    // streams, and then sends it a message.
+    const tick = nextState(session.proc);
+    transport.receive({ to: ROOT, $tune: { streams: ["message", "state"] } });
+    transport.receive({ to: ROOT, $msg: { fromName: "root", body: { type: "PING", count: 4 } } });
+    await expect(sessionHeard).resolves.toMatchObject({
+      to: ROOT,
+      $msg: { fromName: "root", body: { type: "PING", count: 4 } },
+    });
+    await tick;
+    // And the answer is on the wire: the serve handled the frame the session's reader also heard.
+    expect(transport.frames().find(isMsg)!.$msg).toMatchObject({ body: { type: "PONG", count: 4 } });
+
+    await transport.close();
+    await session.done;
+    expect(order).toEqual(["released", "closed"]);
+
+    await r.stop();
+  });
+
+  it("reports a cleanup that throws, and closes the session anyway", async () => {
+    const listener = new QueueListener<{ who: string }>();
+    const errors: unknown[] = [];
+    const closed: Session<{ who: string }>[] = [];
+    const { reported, report } = nextSession<{ who: string }>();
+    const r = reactor(listener, makeEcho(), {
+      onSession: (session) => {
+        report(session);
+        return () => {
+          throw new Error("the reader would not go");
+        };
+      },
+      onClosed: (session) => void closed.push(session),
+      onError: (error) => errors.push(error),
+    });
+
+    const transport = new FakeTransport();
+    listener.offer({ meta: { who: "first" }, transport });
+    await connected(transport);
+    const session = await reported;
+
+    await transport.close();
+    // The report settles either way: a cleanup that throws is news, not a session left hanging.
+    await session.done;
+    expect((errors[0] as Error).message).toBe("the reader would not go");
+    expect(closed).toHaveLength(1);
 
     await r.stop();
   });
@@ -415,7 +516,7 @@ describe("oneConnection", () => {
     const channel = new FakeChannel();
     const listener = oneConnection<Record<string, never>>(() => Promise.resolve(channel));
     const sessions: Session<Record<string, never>>[] = [];
-    const r = reactor(listener, makeEcho(), { onSession: (session) => sessions.push(session) });
+    const r = reactor(listener, makeEcho(), { onSession: (session) => void sessions.push(session) });
 
     await waitUntil(() => channel.listening, "the serve to be listening");
     channel.receive({ $init: { rootName: "echo", parentName: "root", parentIdName: "root" } });

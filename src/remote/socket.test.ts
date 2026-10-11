@@ -59,7 +59,7 @@ describe("unixSocketListener", () => {
     expect((await stat(path)).mode & 0o777).toBe(0o600);
 
     const sessions: Session<{ who: string }>[] = [];
-    const r = reactor(listener, makeEcho(), { onSession: (session) => sessions.push(session) });
+    const r = reactor(listener, makeEcho(), { onSession: (session) => void sessions.push(session) });
 
     const channel = await socketClientSpawner<{ path: string }>((args) => args.path)({ path });
     await channel.send({ $init: { rootName: "echo", parentName: "root", parentIdName: "root" } });

@@ -55,6 +55,9 @@ export interface Session<Meta = unknown> {
   readonly proc: ServedProcess<AnyActorDefinition>;
   /** What the listener resolved, plus whatever the factory added. */
   readonly meta: Meta;
+  /** The frames of this connection: the one the factory was given, so a starter reads and prints on
+   *  exactly the channel the process is served over. */
+  readonly channel: Channel;
   /** Settles when the connection closes and the serve is over. */
   readonly done: Promise<void>;
 }
@@ -81,8 +84,9 @@ export function spawnFactory<Meta = unknown>(definition: AnyActorDefinition): Se
 }
 
 export interface ReactorOptions<Meta = unknown> {
-  /** A connection was admitted and its process is up. */
-  onSession?(session: Session<Meta>): void;
+  /** A connection was admitted and its process is up.  What it returns is called when the session is
+   *  over: the place a starter uninstalls what it put on this connection. */
+  onSession?(session: Session<Meta>): void | (() => void | Promise<void>);
   /** Its connection closed, and the serve is over. */
   onClosed?(session: Session<Meta>): void;
   /** A connection could not be served: a handshake that never came, a wire that went early. */
@@ -114,10 +118,11 @@ export function reactor<Meta = unknown>(
   const serveOne = async (connection: Connection<Meta>): Promise<void> => {
     // Held in an object: the session is built inside the seam's callback, and a local `let` assigned
     // only there is narrowed to null by the compiler by the time the teardown reads it.
-    const held: { session: Session<Meta> | null; end: (() => Promise<void>) | null } = {
-      session: null,
-      end: null,
-    };
+    const held: {
+      session: Session<Meta> | null;
+      end: (() => Promise<void>) | null;
+      release: (() => void | Promise<void>) | null;
+    } = { session: null, end: null, release: null };
     let settle: () => void = () => {};
     const done = new Promise<void>((resolve) => {
       settle = resolve;
@@ -149,9 +154,14 @@ export function reactor<Meta = unknown>(
         (spawned, ended) => {
           live.set(ended, done);
           held.end = ended;
-          const session: Session<Meta> = { proc: spawned.proc, meta: spawned.meta ?? connection.meta, done };
+          const session: Session<Meta> = {
+            proc: spawned.proc,
+            meta: spawned.meta ?? connection.meta,
+            channel,
+            done,
+          };
           held.session = session;
-          options.onSession?.(session);
+          held.release = options.onSession?.(session) ?? null;
         },
       );
     } catch (error) {
@@ -159,6 +169,15 @@ export function reactor<Meta = unknown>(
     } finally {
       const session = held.session;
       if (held.end) live.delete(held.end);
+      // What the starter installed goes away before the session is reported over, and a cleanup that
+      // throws is a report: `done` settles either way, so a `stop()` waiting on it cannot hang.
+      if (held.release) {
+        try {
+          await held.release();
+        } catch (error) {
+          options.onError?.(error, connection);
+        }
+      }
       if (session) options.onClosed?.(session);
       settle();
     }

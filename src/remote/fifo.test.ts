@@ -62,7 +62,7 @@ describe("fifoListener", () => {
     const pair = pairIn(dir);
     const listener = await fifoListener(pair, { identify: () => ({ who: "the client" }) });
     const sessions: Session<{ who: string }>[] = [];
-    const r = reactor(listener, makeEcho(), { onSession: (session) => sessions.push(session) });
+    const r = reactor(listener, makeEcho(), { onSession: (session) => void sessions.push(session) });
 
     const channel = await fifoClientSpawner<{ pair: FifoPair }>((args) => args.pair)({ pair });
     await channel.send({ $init: { rootName: "echo", parentName: "root", parentIdName: "root" } });

@@ -129,7 +129,7 @@ describe("webSocketListener", () => {
     });
 
     const sessions: Session<{ who: string }>[] = [];
-    const r = reactor(listener, makeEcho(), { onSession: (session) => sessions.push(session) });
+    const r = reactor(listener, makeEcho(), { onSession: (session) => void sessions.push(session) });
 
     server.arrive("/ws?token=abc");
     await waitUntil(() => answered.length === 1, "the handshake");

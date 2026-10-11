@@ -2,24 +2,25 @@
 
 **Status:** draft, reworked 2026-10-11 after master's rulings.  Built: the frames have names and one
 exported type (`dbe75a8`), `$fd` is a frame of the connection with fd 1 and 2 (`12c51fb`, `11b616e`),
-and the connection is the process's own fact at both ends (`ctx.connection`, `771bf87`).  Not built:
-the channel on the session report and on the client's connection (the two hooks below), the fan-out
-behind `onMessage`, fd 0, and the byte streams.
+the fan-out behind `onMessage` (`5a582f9`), the connection is the process's own fact at both ends
+(`ctx.connection`, `771bf87`), and both hooks are in: `Session.channel` with `onSession`'s cleanup, and
+`onChannel` with its own on the client.  Not built: fd 0, the byte streams, and the callers that would
+move onto them.
 
 ## Motivation
 
 One object already speaks the frames: `Channel` (`channel.ts`), with `send`, a subscription for the
-frames that arrive, `onClose` and `close`; both halves of the remote layer hold one (`client.ts:76`,
+frames that arrive, `onClose` and `close`; both halves of the remote layer hold one (`client.ts:92`,
 `server.ts:84`).  What is not symmetric is who gets to use it.
 
 **The code that starts a connection cannot reach it.**  The reactor builds the channel per connection
-(`reactor.ts:129-131`) and hands it to the session factory as `ServedConnection.channel`
-(`reactor.ts:136-146`); `spawnFactory` passes the same channel to the process it spawns, as
-`ctx.connection` (`reactor.ts:78`).  The reactor's own report, the only thing its starter sees, is
-`Session = { proc, meta, done }` (`reactor.ts:152`); `onIncomingFrame` is the one frame that starter
-ever hears, and it cannot send at all.  On the client side the channel is the spawner's return value
-(`ClientSpawner`, `client.ts:45`), taken inside the proxy's setup (`client.ts:100`) and kept privately
-and as `ctx.connection` (`client.ts:103`): whoever called `remoteClient` sees neither.
+(`reactor.ts:134-136`) and hands it to the session factory as `ServedConnection.channel`
+(`reactor.ts:141-145`); `spawnFactory` passes the same channel to the process it spawns, as
+`ctx.connection` (`reactor.ts:81`).  The reactor's own report, the only thing its starter sees, is
+`Session = { proc, meta, channel, done }` (`reactor.ts:157`); `onIncomingFrame` is the one frame
+that starter ever hears, and it cannot send at all.  On the client side the channel is the spawner's
+return value (`ClientSpawner`, `client.ts:45`), taken inside the proxy's setup (`client.ts:117`) and
+kept privately and as `ctx.connection` (`client.ts:120`): whoever called `remoteClient` sees neither.
 
 So a terminal's endpoint, a registry, a log sink — anything whose job is to serve the connection it
 just admitted — can read frames and cannot send them, and on the client end can do neither.
@@ -53,7 +54,7 @@ Both hooks may return a cleanup, awaited at the session's end and by `stop()` on
 the wire goes or the proxy stops on the client.  The pair composes, because `onMessage` returns the
 same shape: a hook that wants one reader is `return channel.onMessage(handler)`.
 
-`Session` carries the channel (`reactor.ts:152`); `onClosed` stays as it is, reporting the same moment
+`Session` carries the channel (`reactor.ts:157`); `onClosed` stays as it is, reporting the same moment
 to a starter that did not subscribe there.
 
 ### `onMessage` is a subscription
@@ -154,13 +155,13 @@ several processes on one connection, no pty semantics.
 
 One commit per slice, each with its own tests, gate green.
 
-1. `Session.channel`, `onSession`'s cleanup, `remoteClient`'s `onChannel` and its cleanup.  (`reactor.ts`,
-   `client.ts`, the index.)
+1. `Session.channel`, `onSession`'s cleanup, `remoteClient`'s `onChannel` and its cleanup.  **Built**:
+   `reactor.ts`, `client.ts`, the index, and the tests in `reactor.test.ts` and `client.test.ts`.
 2. `onMessage` returns its unsubscribe; the fan-out lives in `json1Channel`; the callers that used
-   `removeHandler` give up their own entry (`server.ts:348`, `reactor.ts:266`, `output.ts:42`, the three
-   client spawners, `stdio.ts`, `fifo.ts`).
-3. `$fd: 0` in the vocabulary, and `fdStreams` with `logStream` in `remote/node`.
-4. Callers move over: the gateway's forwarding loop (`gateway.ts:114-122`) first.
+   `removeHandler` give up their own entry (`server.ts:348`, `reactor.ts:280`, `output.ts:42`, the three
+   client spawners, `stdio.ts`, `fifo.ts`).  **Built** (`5a582f9`).
+3. `$fd: 0` in the vocabulary, and `fdStreams` with `logStream` in `remote/node`.  Not built.
+4. Callers move over: the gateway's forwarding loop (`gateway.ts:114-122`) first.  Not built.
 
 ## Compatibility
 

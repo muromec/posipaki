@@ -9,7 +9,7 @@ export { serveRemoteActor } from "./reactor.js";
 export { makeSender } from "./sender.js";
 export type { Init, Served, Spawner, ServedProcess } from "./server.js";
 export { CHANNEL_LOST, remoteClient } from "./client.js";
-export type { ClientSpawner } from "./client.js";
+export type { ClientContext, ClientSpawner, RemoteClientOptions } from "./client.js";
 
 // the server reactor: one loop for every medium, with the medium in a Listener
 export { oneConnection, reactor } from "./reactor.js";
