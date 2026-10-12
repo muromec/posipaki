@@ -8,7 +8,8 @@ archive.
 ## Motivation
 
 A message between a process and its parent can already carry a process.  The frame writer walks it, every
-process becomes `{$p: {id, pname}}`, and the far side gets a handle on that process rather than a copy of it
+process becomes `{$p: {id: 3, pname: 'target'}}`, and the far side gets a handle on that process rather than a
+copy of it
 (`src/remote/process-ref.ts`, applied to every frame by `encodeFrame`/`decodeFrame` in `src/remote/channel.ts`).
 
 A file has no such value.  To move one today an application has to encode it itself: base64 in a message body,
@@ -21,8 +22,10 @@ belongs to the transport; an application that writes it down has to know which t
 
 The same shape as a process reference, for bytes.
 
-- A **blob** is a value a process can put in a message: `{$b: {id, size, mime?, name?, sha256?}}`.  The small
-  facts travel with the reference so a reader can decide before pulling anything.
+- A **blob** is a value a process can put in a message, carried as a reference:
+  `{$b: {id: 7, size: 412345, mime: 'image/png', name: 'shot.png'}}`.  Everything in it is a value; the
+  optional facts (`mime`, `name`, `sha256`) are simply absent when there is nothing to say.  They travel with
+  the reference so a reader can decide before pulling anything.
 - The side holding the bytes **offers** them to its connection:
   `connection.offerBlob({ size, mime, name, open })`.  `open` is what the connection calls when somebody reads,
   so a file nobody reads is never opened, encoded or copied.
