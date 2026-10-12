@@ -40,6 +40,31 @@ can change without a consumer noticing — which is the point of doing it at the
 Ownership: the holder keeps the blob alive and drops it when it says so, and the connection drops it when the
 connection ends.  Reading a blob that is gone is a named error, the way a call on a dead process is.
 
+## Copying, moving, sharing
+
+A browser hands bytes to a worker three ways, and the same three belong here, because what a read costs should
+follow the connection rather than the application:
+
+- **moved** — both ends are in one address space (the harness's `inline` environment, a forked actor in the same
+  process): the read hands the buffer over and detaches the sender's view, the way a transfer list does with an
+  `ArrayBuffer`.  No copy, and the sender cannot use it afterwards — which is the right rule here anyway, since
+  the harness's copy is scratch.
+- **shared** — two processes on one host (the `isolated` environment, a sandbox with the mapping bound in): one
+  region mapped by both, so a read costs a pointer and the owner keeps it alive for as long as the blob is
+  offered.  A file in `/dev/shm`, or an anonymous mapping whose descriptor travels with the frame.
+- **copied** — the wire is all there is between the two ends (`ssh`, a container, a websocket): the frames carry
+  the bytes, chunked, and base64 is a detail inside them.
+
+The application sees the same thing in all three: a handle whose `read()` gives bytes.  What differs is what the
+read costs, and that is a fact about the connection — the handshake that already tells both ends which protocol
+they speak is where they can say they share memory, so an offer can be served the cheap way without the caller
+asking for it.
+
+Two consequences worth writing down now: a transfer that detaches the sender's buffer has no lifetime question on
+that side (the blob is spent), while a shared read has one (who unmaps, and when).  And a mode that is only an
+optimisation must never be the reason a read fails: a mapping that cannot be made falls back to the copy, and the
+caller hears nothing about it.
+
 ## What it does not do
 
 - No filesystem semantics: no paths, no seeking, no partial reads.  A reader gets the bytes or an error.
