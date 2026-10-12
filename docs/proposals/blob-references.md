@@ -52,9 +52,12 @@ follow the connection rather than the application:
   process): the read hands the buffer over and detaches the sender's view, the way a transfer list does with an
   `ArrayBuffer`.  No copy, and the sender cannot use it afterwards — which is the right rule here anyway, since
   the harness's copy is scratch.
-- **shared** — two processes on one host (the `isolated` environment, a sandbox with the mapping bound in): one
-  region mapped by both, so a read costs a pointer and the owner keeps it alive for as long as the blob is
-  offered.  A file in `/dev/shm`, or an anonymous mapping whose descriptor travels with the frame.
+- **shared** — two processes on one host: one mapping, read by both, so the reader is spared the copy.  Not free:
+  the far side still has to be *given* the mapping, and there are two ways — a name both ends may open (a file
+  under `/dev/shm`, which means agreeing on a name and on who removes it), or a descriptor passed over the wire.
+  The environment's wire is a fifo pair (`fifoArgvSpawner`, and the harness's `src/environments/payload.ts`), and a
+  fifo cannot pass a descriptor — so the clean version of this mode is a change to the wire (a unix socket) rather
+  than something a connection can do today.
 - **copied** — the wire is all there is between the two ends (`ssh`, a container, a websocket): the frames carry
   the bytes, chunked, and base64 is a detail inside them.
 
@@ -74,7 +77,9 @@ The ways to move bytes are the platform's, and base64 is only the tax a text tra
 
 - **one address space** — nothing to do: the value travels in the frame as an object, which is what happens
   today between a parent and its forked child.
-- **shared memory** — two ends on one host: one mapping, and a read costs a pointer.  No transfer at all.
+- **shared memory** — two ends on one host: one mapping, and the reader skips the copy.  Not free, and not
+  something the wire can do today: the far side has to be given the mapping, by a name both can open or by a
+  descriptor over the wire, and a fifo cannot carry one.
 - **a binary transport** — a websocket's binary frames, a unix socket: the bytes go as they are.
 - **a line transport** — a fifo pair or stdio, where a frame is a line: the frame declares the bytes it carries
   and the bytes follow it, so the framing is length-prefixed rather than base64.  A line that has to stay
@@ -105,11 +110,13 @@ stringified, or the length-prefixed form above is what it uses.
   need it: it answers a question.
 - Whether the reference carries `sha256` at all, or only size and mime.
 - Whether a blob reference may be forwarded: a process handing on what it was given.
+- Whether the shared mode is worth having at all for the files this is being written for: a screenshot or a PDF
+  crosses a pipe in one frame, and the copy is cheaper than the machinery above.
 
 ## The first consumer, for scale
 
 The harness's attachments.  A transport hands the harness bytes, the archive keeps them, and a tool server in an
 environment asks its parent for one by attachment id.  The answer is a message carrying a blob reference —
-`{$b: {id, size: 412345, mime: 'image/png', name: 'shot.png'}}` — that the tool server reads into its own scratch
+`{$b: {id: 7, size: 412345, mime: 'image/png', name: 'shot.png'}}` — that the tool server reads into its own scratch
 directory, or that the connector reads into an image part for the model.  The attachment id stays the harness's
 own fact; the connection's blob id is nobody else's business.
