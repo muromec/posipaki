@@ -65,6 +65,27 @@ that side (the blob is spent), while a shared read has one (who unmaps, and when
 optimisation must never be the reason a read fails: a mapping that cannot be made falls back to the copy, and the
 caller hears nothing about it.
 
+## The data frame
+
+The ways to move bytes are the platform's, and base64 is only the tax a text transport charges:
+
+- **one address space** — nothing to do: the value travels in the frame as an object, which is what happens
+  today between a parent and its forked child.
+- **shared memory** — two ends on one host: one mapping, and a read costs a pointer.  No transfer at all.
+- **a binary transport** — a websocket's binary frames, a unix socket: the bytes go as they are.
+- **a line transport** — a fifo pair or stdio, where a frame is a line: the frame declares the bytes it carries
+  and the bytes follow it, so the framing is length-prefixed rather than base64.  A line that has to stay
+  text-only makes base64 the transport's own choice, invisible above it.
+
+So a blob's bytes are a stream on the connection rather than a field in a JSON body: the reference `{$b}` names
+the blob, the read opens the stream, and the frames that follow belong to it — keyed by the stream the way `$fd`
+frames are keyed by a descriptor.
+
+One constraint, found while writing this: the existing byte frames are **text**.  `fdWriter` sends
+`String(chunk)` (`src/remote/streams.ts`), which is right for a process's own stdout and loses bytes for anything
+else.  A stream that carries a file has to be binary-safe — either the frame grows a bytes field that is not
+stringified, or the length-prefixed form above is what it uses.
+
 ## What it does not do
 
 - No filesystem semantics: no paths, no seeking, no partial reads.  A reader gets the bytes or an error.
