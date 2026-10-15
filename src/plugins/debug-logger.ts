@@ -57,27 +57,95 @@ export interface DebugLoggerOpts {
 /** Fields larger than this are shrunk by {@link defaultMsgFilter}. */
 const MAX_STRING = 256;
 const MAX_ARRAY = 16;
+/** How far the filter looks, and how many values it will visit. */
+const MAX_DEPTH = 4;
+const MAX_VALUES = 200;
+
+/** An object whose values are its fields, and not an instance of something. */
+function isPlainObject(value: object): boolean {
+  const proto = Object.getPrototypeOf(value);
+  return proto === Object.prototype || proto === null;
+}
+
+/** Bytes: a typed array, a data view, an ArrayBuffer, or a Buffer — which is a Uint8Array. */
+function isBinary(value: object): value is ArrayBuffer | ArrayBufferView {
+  return value instanceof ArrayBuffer || ArrayBuffer.isView(value);
+}
+
+/** A size a person reads: `6.8 MB`, `291.0 kB`, `512 B`. */
+function humanBytes(bytes: number): string {
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} kB`;
+  return `${bytes} B`;
+}
+
+/** What a binary field says in a log: what it is and how big, never what it holds. */
+function binarySummary(value: ArrayBuffer | ArrayBufferView): string {
+  const name = value instanceof ArrayBuffer ? "ArrayBuffer" : (value.constructor?.name ?? "Uint8Array");
+  return `<${name} ${humanBytes(value.byteLength)}>`;
+}
 
 /**
- * Default message filter: shrink oversized string/array fields in place so a
- * single message (a full conversation history, a big tool result) can't flood
- * the log.  Returns the message unchanged when nothing needs shrinking.
+ * Shrink one value, answering with the value itself when nothing inside it changed —
+ * the filter's contract is to hand back the very message it was given unless a field
+ * had to go.
+ *
+ * Bytes are why this walks at all: `JSON.stringify` renders a megabyte of typed array
+ * as six megabytes of numbers, so an attachment riding on a message turned a log line
+ * into half a minute of CPU.  The copy is shallow where nothing changed and deep where
+ * something did.
+ */
+function shrinkValue(
+  value: unknown,
+  seen: WeakSet<object>,
+  budget: { left: number },
+  depth: number,
+): unknown {
+  if (typeof value === "string") {
+    return value.length > MAX_STRING ? `${value.slice(0, MAX_STRING)}… (${value.length} chars)` : value;
+  }
+  if (value === null || typeof value !== "object") return value;
+  if (isBinary(value)) return binarySummary(value);
+  if (depth > MAX_DEPTH || budget.left <= 0) return value;
+  if (seen.has(value)) return value;
+  seen.add(value);
+  try {
+    if (Array.isArray(value)) {
+      if (value.length > MAX_ARRAY) return `[${value.length} items]`;
+      let changed = false;
+      const items = value.map((item) => {
+        budget.left -= 1;
+        const next = shrinkValue(item, seen, budget, depth + 1);
+        if (next !== item) changed = true;
+        return next;
+      });
+      return changed ? items : value;
+    }
+    if (!isPlainObject(value)) return value;
+    let changed = false;
+    const out: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) {
+      budget.left -= 1;
+      const next = shrinkValue(item, seen, budget, depth + 1);
+      if (next !== item) changed = true;
+      out[key] = next;
+    }
+    return changed ? out : value;
+  } finally {
+    seen.delete(value);
+  }
+}
+
+/**
+ * Default message filter: shrink oversized fields so one message (a full conversation
+ * history, a big tool result, an attachment) cannot flood the log.  Long strings are
+ * cut, long arrays are counted, and bytes become a summary — what they are and how
+ * big, never what they hold.  Returns the message unchanged when nothing needed
+ * shrinking.
  */
 export function defaultMsgFilter(msg: Message): Message {
-  const src = msg as unknown as Record<string, unknown>;
-  const shrunk: Record<string, unknown> = { ...src };
-  let changed = false;
-  for (const key of Object.keys(src)) {
-    const v = src[key];
-    if (typeof v === "string" && v.length > MAX_STRING) {
-      shrunk[key] = `${v.slice(0, MAX_STRING)}… (${v.length} chars)`;
-      changed = true;
-    } else if (Array.isArray(v) && v.length > MAX_ARRAY) {
-      shrunk[key] = `[${v.length} items]`;
-      changed = true;
-    }
-  }
-  return changed ? (shrunk as unknown as Message) : msg;
+  const shrunk = shrinkValue(msg, new WeakSet(), { left: MAX_VALUES }, 0);
+  return shrunk === msg ? msg : (shrunk as Message);
 }
 
 function defaultFactory(name: string): Logger {

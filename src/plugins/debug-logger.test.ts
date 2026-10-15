@@ -190,6 +190,17 @@ describe("debugLogger", () => {
       expect(shrunk.note).toContain("… (1000 chars)");
     });
 
+    it("summarises bytes, however deep they sit on the message", () => {
+      const bytes = new Uint8Array(1024 * 1024);
+      const shrunk = defaultMsgFilter({
+        type: "OUT_MESSAGE",
+        content: { files: [{ name: "shot.jpg", bytes }] },
+      } as unknown as Message) as unknown as { content: { files: { bytes: unknown }[] } };
+      // A megabyte of bytes is six megabytes of numbers to JSON, which is how one
+      // attachment mail cost the harness half a minute of CPU.
+      expect(shrunk.content.files[0].bytes).toBe("<Uint8Array 1.0 MB>");
+    });
+
     it("leaves small messages untouched", () => {
       const msg: Message = { type: "SMALL", value: 1 } as unknown as Message;
       expect(defaultMsgFilter(msg)).toBe(msg);
