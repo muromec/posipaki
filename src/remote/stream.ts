@@ -34,7 +34,7 @@
 import { isPlainObject, isStreamLike, type Channel, type ValueCodec } from "./channel.js";
 
 export { isStreamLike };
-import { rootIdFor, type IdParity } from "./process-ref.js";
+import { IdSpace, type IdParity } from "./process-ref.js";
 
 /** The chunk size, which bounds one segment. */
 export const DEFAULT_CHUNK_BYTES = 64 * 1024;
@@ -472,6 +472,9 @@ export interface StreamStoreOptions {
   chunkBytes?: number;
   windowBytes?: number;
   maxBytes?: number;
+  /** Where stream ids come from.  One space per side, shared with the process table so a number
+   *  names one thing on the connection whatever it names. */
+  ids?: IdSpace;
 }
 
 /**
@@ -488,7 +491,7 @@ export class StreamStore implements ValueCodec {
   readonly maxBytes: number;
   private readonly pvtOffers = new Map<number, Offered>();
   private readonly pvtIncoming = new Map<number, Incoming>();
-  private pvtNext: number;
+  private readonly ids: IdSpace;
   /** Why streams that are over failed, for a reference that arrives after the fact. */
   private readonly pvtRefused = new Map<number, { reason: string; form: ValueForm }>();
   private readonly pvtOff: () => void;
@@ -500,7 +503,7 @@ export class StreamStore implements ValueCodec {
     this.chunkBytes = options.chunkBytes ?? DEFAULT_CHUNK_BYTES;
     this.windowBytes = options.windowBytes ?? DEFAULT_WINDOW_BYTES;
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
-    this.pvtNext = rootIdFor(parity);
+    this.ids = options.ids ?? new IdSpace(parity);
     this.pvtOff = channel.onMessage((frame) => {
       this.onFrame(frame);
     });
@@ -540,8 +543,7 @@ export class StreamStore implements ValueCodec {
   }
 
   private pvtAnnounce(source: AsyncIterator<Uint8Array>): number {
-    const id = this.pvtNext;
-    this.pvtNext += 2;
+    const id = this.ids.next();
     this.pvtOffers.set(id, { id, source, pending: null, credit: 0, seq: 0, pumping: false, dropped: false });
     void this.channel.send({ $stream: { id } });
     return id;

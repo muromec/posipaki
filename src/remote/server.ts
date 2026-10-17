@@ -8,6 +8,7 @@ import type { ActorDefinition, SpawnedFrom } from "../actor-types.js";
 import { isProcess } from "../process.async.js";
 import type { Channel } from "./channel.js";
 import {
+  IdSpace,
   ProcessTable,
   SERVED_ROOT_NAME,
   isRemoteProcess,
@@ -96,10 +97,12 @@ export async function serveChannel<Meta = unknown>(
   // number can never name a process on both ends at once.  A process that is
   // numbered here is one that is about to cross, and its stream follows the frame
   // that carried it.
-  const table = new ProcessTable<ProcessHandle>("even", (proc, id) => streams.crossed(proc, id));
+  // One id space for everything this side numbers — the process table and the stream store alike.
+  const ids = new IdSpace("even");
+  const table = new ProcessTable<ProcessHandle>("even", (proc, id) => streams.crossed(proc, id), ids);
   // The connection's byte streams, on the same parity split the process table uses: the octets ride
   // as segments beside the frames, and a blob crosses the same way a stream does.
-  const byteStreams = new StreamStore(channel, "even", streamOptions);
+  const byteStreams = new StreamStore(channel, "even", { ...streamOptions, ids });
 
   /** Put an encoded frame on the wire, and then say what it numbered.  A frame that
    *  carried a reference has to be out before anything about that process is. */

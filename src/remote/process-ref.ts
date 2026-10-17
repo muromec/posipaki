@@ -61,6 +61,32 @@ export interface ProcessHandle {
 /** Which ids a side hands out: the client takes the odd ones, the server the
  *  even ones, so one number can never name a process on both sides at once. */
 export type IdParity = "odd" | "even";
+/**
+ * The ids one side of a connection hands out: its own parity, from two steps past its own root.
+ *
+ * Everything numbered on the connection draws from one space — a process reference and a stream alike —
+ * so a number names one thing, and the parity says which side made it.  Each side builds its own and
+ * hands the same one to whatever allocates.
+ */
+export class IdSpace {
+  private pvtNext: number;
+
+  constructor(readonly parity: IdParity) {
+    this.pvtNext = rootIdFor(parity) + 2;
+  }
+
+  /** This side's own end of the connection: the first id of its parity, never handed out. */
+  root(): number {
+    return rootIdFor(this.parity);
+  }
+
+  /** The next id of this side's parity, and never the same one twice. */
+  next(): number {
+    const id = this.pvtNext;
+    this.pvtNext += 2;
+    return id;
+  }
+}
 
 /**
  * The processes one connection knows, by the ids that name them.  One table per
@@ -83,17 +109,16 @@ export class ProcessTable<P extends ProcessHandle = ProcessHandle> {
   /** The id the far side gave its root: the first of its parity, and the number this
    *  side's own numbering skips. */
   private pvtFarRootId: number;
-  /** The next id this side may hand out: its own parity, from two steps past its own
-   *  root, the one in between belonging to the far side's root. */
-  private pvtNext: number;
   /** Told the first time a process is numbered — the moment it is about to
    *  cross the connection. */
   private pvtOnCrossed: ((proc: P, id: number) => void) | undefined;
+  /** Where the ids come from: one space per side, shared with whatever else numbers something. */
+  private readonly ids: IdSpace;
 
-  constructor(parity: IdParity, onCrossed?: (proc: P, id: number) => void) {
-    this.pvtRootId = rootIdFor(parity);
+  constructor(parity: IdParity, onCrossed?: (proc: P, id: number) => void, ids: IdSpace = new IdSpace(parity)) {
+    this.ids = ids;
+    this.pvtRootId = ids.root();
     this.pvtFarRootId = rootIdFor(parity === "odd" ? "even" : "odd");
-    this.pvtNext = this.pvtRootId + 2;
     this.pvtOnCrossed = onCrossed;
   }
 
@@ -122,8 +147,7 @@ export class ProcessTable<P extends ProcessHandle = ProcessHandle> {
   handleFor(proc: P): number {
     const known = this.pvtMineIds.get(proc);
     if (known !== undefined) return known;
-    const id = this.pvtNext;
-    this.pvtNext += 2;
+    const id = this.ids.next();
     this.pvtMine.set(id, proc);
     this.pvtMineIds.set(proc, id);
     this.pvtOnCrossed?.(proc, id);

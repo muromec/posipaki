@@ -13,6 +13,7 @@ import type { ActorDefinition, HandlerOptions, MethodOptions, ReflectionOptions 
 import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
 import {
+  IdSpace,
   ProcessTable,
   isRemoteProcess,
   type ProcessHandle,
@@ -112,13 +113,16 @@ export function remoteClient<
       // A process this side hands over is numbered by the table, and from then on
       // the far side is told what it says: the stream follows the frame that
       // carried the reference.
-      const table = new ProcessTable("odd", (proc, id) => streams.crossed(proc, id));
+      // One id space for everything this side numbers — the process table and the stream store
+      // alike — so a number on the connection names one thing and the parity says which side made it.
+      const ids = new IdSpace("odd");
+      const table = new ProcessTable("odd", (proc, id) => streams.crossed(proc, id), ids);
       const root = this.ctx;
       table.bindRoot(root);
       const channel = await spawner(args);
       // Its byte streams, on the same parity split: a stream crosses as itself, and a blob as a stream
       // over the same octets with its size and name said first.
-      const byteStreams = new StreamStore(channel, "odd");
+      const byteStreams = new StreamStore(channel, "odd", { ids });
       // The connection this proxy holds is the process's own fact, so whatever the process
       // does with the frames asks the same place the remote layer does.
       this.ctx.connection = channel;

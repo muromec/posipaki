@@ -12,6 +12,7 @@ import type { AsyncProcess } from "../process.async.js";
 import type { Message } from "../types.js";
 import {
   PROCESS_REF,
+  IdSpace,
   ProcessTable,
   asProcessRef,
   decodeProcessRefs,
@@ -268,5 +269,31 @@ describe("decodeProcessRefs", () => {
     expect(asked).toEqual([]);
     expect(asProcessRef({ $p: { id: 1, pname: "a" } })).toEqual({ id: 1, pname: "a" });
     expect(asProcessRef({ $p: { id: "1", pname: "a" } })).toBeNull();
+  });
+});
+
+describe("the connection's id space", () => {
+  it("hands one numbering to everything that allocates, so no two things share a number", async () => {
+    const ids = new IdSpace("odd");
+    // The root takes the first of its parity and nothing is handed it again; a process and a stream
+    // then alternate from the same counter.
+    expect(ids.root()).toBe(1);
+    const table = new ProcessTable("odd", undefined, ids);
+    const first = await makeProcess("first");
+    const second = await makeProcess("second");
+
+    expect(table.handleFor(first)).toBe(3);
+    expect(ids.next()).toBe(5);
+    expect(table.handleFor(second)).toBe(7);
+    expect(table.rootId()).toBe(1);
+  });
+
+  it("keeps the two sides on their own parity even when they share a space", () => {
+    const ours = new IdSpace("even");
+    const theirs = new IdSpace("odd");
+    expect(ours.root()).toBe(0);
+    expect(theirs.root()).toBe(1);
+    const taken = [ours.next(), ours.next(), ours.next(), theirs.next(), theirs.next(), theirs.next()];
+    expect(taken).toEqual([2, 4, 6, 3, 5, 7]);
   });
 });

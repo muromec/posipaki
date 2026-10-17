@@ -75,8 +75,9 @@ as bytes rather than base64 inside JSON.
 - **A chunk names its stream**, so a chunk for an id nobody announced is rejected: the reader skips exactly the
   length the head announced and carries on, and the connection is untouched.  That is the reason the length is
   in the head at all — without it, rejection would mean guessing where the next frame starts.
-- **Ids are the connection's own**, on the same parity split the process table uses, so an id says which side
-  offered it.  A stream's id is alive from its announcement until `$streamDone`/`$streamFail`, or until the
+- **Ids are the connection's own**, and one space serves everything numbered on it: the process table and the
+  stream store draw from the same counter on the same parity split, so a number names one thing and its parity says
+  which side made it.  A stream's id is alive from its announcement until `$streamDone`/`$streamFail`, or until the
   connection ends; an error anywhere drops it on both sides, and a reference to a dropped id is a named error.
 
 ## What a stream is in the API
