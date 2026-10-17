@@ -135,15 +135,21 @@ with `offer()` and reading with `handle(value)?.read()`.
 
 Where the build differs from the draft, and why:
 
-- **Nothing walks the frames yet.**  A consumer resolves a reference it was handed (`store.handle(body.file)`)
-  rather than the codec turning `$b` into a handle the way `$p` becomes a process.  That walker is the next
-  slice and it changes no application: the value form is what the tests pin.
+- **The walk is where the process walk is, and the application never sees `$b`.**  `encodeFrame` and
+  `decodeFrame` take the connection's blobs (as a `BlobCodec`: two walks, no dependency from the frame
+  vocabulary to the machinery), so a `Uint8Array` anywhere in a body is offered on the way out and arrives as a
+  handle on the way in — beside the process references, in the same pass, for `$msg`, `$state` and a reflection
+  answer alike.  The handle is awaitable, which is what makes one line work on both sides of an address space:
+  `const bytes = await body.file`.
+- **A copy per frame.**  Both walks copy containers rather than rewriting them (the value belongs to whoever
+  made it), so a frame carrying a store is copied twice on the way out.  Fine at frame sizes, worth measuring
+  before a state with a big object in it is pushed often.
 - **Base64 inside JSON.**  This wire is a line of JSON, so `data` is a string and the encoder belongs to the
   protocol.  A transport that can carry bytes whole is another encoding of the same frames, not another
   protocol.
 - **64 KiB chunks, and a read refused at 64 MB** unless the side raises its own bound (`chunkBytes`,
-  `maxBytes`).  Ten megabytes is 160 chunks and the whole test is ~2.8 s on this box, of which ~0.7 s is
-  generating the bytes; a 512 KB screenshot is one chunk.
+  `maxBytes`).  Ten megabytes is 160 chunks each way, and the test that moves them there and back takes ~4 s
+  on this box; a 512 KB screenshot is one chunk.
 - **The reader checks the length twice** — against the end frame and against the reference — because the two
   can disagree, and bytes that arrive short of what was promised are worth a sentence rather than a surprise.
 - **Chunking has no per-chunk acknowledgement.**  The ask is answered by a stream of frames on the same

@@ -23,6 +23,18 @@ export interface StringTransport {
   close(): Promise<void>;
 }
 
+/**
+ * What the frame layer needs of a connection's blobs: two walks, and no knowledge of how the
+ * bytes travel.  The frame vocabulary lives in this file and the machinery in `blob.ts`, so a
+ * store comes in as this shape rather than as an import from here.
+ */
+export interface BlobCodec {
+  /** Replace every byte array in a value with a reference this connection serves. */
+  encode(value: unknown): unknown;
+  /** Replace every reference in a value with something the reader can hold. */
+  decode(value: unknown): unknown;
+}
+
 /** The frames of one connection, as the remote layer speaks them: the process's own `FrameChannel`,
  *  where a reader has the unsubscribe `onMessage` returned rather than a handler to take back. */
 export type Channel = FrameChannel;
@@ -77,8 +89,10 @@ export function encodeFrame(
   frame: Record<string, unknown>,
   table: ProcessTable,
   to: number,
+  blobs?: BlobCodec,
 ): Record<string, unknown> {
-  const encoded = encodeProcessRefs(frame, table) as Record<string, unknown>;
+  const withProcesses = encodeProcessRefs(frame, table) as Record<string, unknown>;
+  const encoded = blobs === undefined ? withProcesses : (blobs.encode(withProcesses) as Record<string, unknown>);
   return { ...encoded, to };
 }
 
@@ -90,8 +104,10 @@ export function encodeFrame(
 export function decodeFrame(
   frame: Record<string, unknown>,
   resolve: RefResolver,
+  blobs?: BlobCodec,
 ): Record<string, unknown> {
-  return decodeProcessRefs(frame, resolve) as Record<string, unknown>;
+  const resolved = decodeProcessRefs(frame, resolve) as Record<string, unknown>;
+  return blobs === undefined ? resolved : (blobs.decode(resolved) as Record<string, unknown>);
 }
 
 // ── frame guards ──────────────────────────────────────────────────────────

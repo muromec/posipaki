@@ -14,6 +14,7 @@ import {
   encodeFrame,
   jsonProblem,
   type ReflectionCall,
+  type BlobCodec,
 } from "./channel.js";
 import {
   encodeProcessRefs,
@@ -39,10 +40,12 @@ export class CallSide {
   >();
   private pvtWrite: WireSink;
   private pvtTable: ProcessTable<ProcessHandle>;
+  private pvtBlobs: BlobCodec | undefined;
 
-  constructor(write: WireSink, table: ProcessTable<ProcessHandle>) {
+  constructor(write: WireSink, table: ProcessTable<ProcessHandle>, blobs?: BlobCodec) {
     this.pvtWrite = write;
     this.pvtTable = table;
+    this.pvtBlobs = blobs;
   }
 
   /**
@@ -58,6 +61,7 @@ export class CallSide {
         { [`${REFLECT_CALL}${method}`]: { seq, args: callArgs } },
         this.pvtTable,
         to,
+        this.pvtBlobs,
       );
       const problem = jsonProblem(frame);
       if (problem !== null) {
@@ -127,11 +131,12 @@ export async function answerCall(
   target: ProcessHandle | undefined,
   write: WireSink,
   table: ProcessTable<ProcessHandle>,
+  blobs?: BlobCodec,
 ): Promise<void> {
   // An answer goes back to the far side's own end of the connection: a result is about
   // the call and not about a process, and the one waiting for it is out there.
   const reply = (body: Record<string, unknown>) =>
-    write(encodeFrame({ [`${REFLECT_RESULT}${call.name}`]: body }, table, table.farRootId()));
+    write(encodeFrame({ [`${REFLECT_RESULT}${call.name}`]: body }, table, table.farRootId(), blobs));
   // Only a process this side holds can be asked: the id a call names is the holder's
   // own, and this side is the holder of what it holds.
   if (!isProcess(target)) {

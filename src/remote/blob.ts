@@ -25,7 +25,7 @@
 // halfway through.  What a read costs belongs to the connection, not to the application:
 // this module moves bytes, and a cheaper way to move them is a change here.
 
-import type { Channel } from "./channel.js";
+import type { BlobCodec, Channel } from "./channel.js";
 import { rootIdFor, type IdParity } from "./process-ref.js";
 
 /** The key that marks a blob reference inside an otherwise JSON value. */
@@ -177,6 +177,18 @@ export class BlobHandle {
   read(): Promise<Uint8Array> {
     return this.store.read(this);
   }
+
+  /**
+   * Awaiting a handle is reading it, so the line an application writes is the same on both
+   * sides of an address space: `const bytes = await body.file` — locally the value is
+   * already a `Uint8Array`, which an await hands back unchanged, and here it is the read.
+   */
+  then<TResult1 = Uint8Array, TResult2 = never>(
+    onfulfilled?: ((value: Uint8Array) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): Promise<TResult1 | TResult2> {
+    return this.read().then(onfulfilled, onrejected);
+  }
 }
 
 export interface BlobStoreOptions {
@@ -192,7 +204,7 @@ export interface BlobStoreOptions {
  * Ids are this side's own numbering — the parity rule of the process table, one step at a
  * time — so an id names one blob on one connection and nothing anywhere else.
  */
-export class BlobStore {
+export class BlobStore implements BlobCodec {
   private readonly channel: Channel;
   private readonly chunkBytes: number;
   readonly maxBytes: number;
@@ -233,6 +245,16 @@ export class BlobStore {
   handle(value: unknown): BlobHandle | null {
     const ref = asBlobRef(value);
     return ref === null ? null : new BlobHandle(this, ref);
+  }
+
+  /** A value on its way out: every byte array in it becomes a reference this side serves. */
+  encode(value: unknown): unknown {
+    return encodeBlobRefs(value, this);
+  }
+
+  /** A value just read: every reference in it becomes a handle this side can read. */
+  decode(value: unknown): unknown {
+    return decodeBlobRefs(value, this);
   }
 
   /** Drop a blob this side holds.  A read that arrives afterwards is refused by name. */
@@ -360,4 +382,69 @@ export class BlobStore {
 
 function errorText(err: unknown): string {
   return err instanceof Error ? err.message : String(err);
+}
+
+// ── bytes in a frame, without the application knowing ──────────────────────
+//
+// The same walk the process references get, for bytes: an application puts a `Uint8Array`
+// in a message and the connection carries a reference; a reference arrives and the reader
+// is handed something it can await for the bytes.  Nothing above this line sees `$b`, which
+// is what makes a value behave the same whether the peer is a fork in this process or a
+// process on the other end of a fifo.
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  const proto = Object.getPrototypeOf(value) as object | null;
+  return proto === Object.prototype || proto === null;
+}
+
+/** The bytes a value is, or null when it is not bytes: a `Buffer` is a `Uint8Array`. */
+export function asBytes(value: unknown): Uint8Array | null {
+  if (value instanceof Uint8Array) return value;
+  if (value instanceof ArrayBuffer) return new Uint8Array(value);
+  return null;
+}
+
+/**
+ * Replace every byte array in `value` with a reference to a blob this side offers.
+ *
+ * What is offered is the array itself, opened when somebody reads, so a value that crosses
+ * and is never read costs a reference and nothing else.  Containers are copied rather than
+ * rewritten — the object belongs to whoever made it — and a node already seen is left
+ * where it is, as the process walk leaves a cycle.
+ */
+export function encodeBlobRefs(value: unknown, store: BlobStore, seen: Set<unknown> = new Set()): unknown {
+  const bytes = asBytes(value);
+  if (bytes !== null) return blobValue(store.offer({ size: bytes.byteLength, open: () => bytes }));
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return value;
+    seen.add(value);
+    return value.map((item) => encodeBlobRefs(item, store, seen));
+  }
+  if (isPlainObject(value)) {
+    if (seen.has(value)) return value;
+    seen.add(value);
+    const copy: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) copy[key] = encodeBlobRefs(item, store, seen);
+    return copy;
+  }
+  return value;
+}
+
+/** Replace every blob reference in `value` with a handle on the far side's blob. */
+export function decodeBlobRefs(value: unknown, store: BlobStore, seen: Set<unknown> = new Set()): unknown {
+  if (asBlobRef(value) !== null) return store.handle(value);
+  if (Array.isArray(value)) {
+    if (seen.has(value)) return value;
+    seen.add(value);
+    return value.map((item) => decodeBlobRefs(item, store, seen));
+  }
+  if (isPlainObject(value)) {
+    if (seen.has(value)) return value;
+    seen.add(value);
+    const copy: Record<string, unknown> = {};
+    for (const [key, item] of Object.entries(value)) copy[key] = decodeBlobRefs(item, store, seen);
+    return copy;
+  }
+  return value;
 }

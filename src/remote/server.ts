@@ -39,6 +39,7 @@ import {
   tuneFrame,
 } from "./channel.js";
 import { CallSide, answerCall } from "./call-side.js";
+import { BlobStore } from "./blob.js";
 
 export type Spawner = () => Promise<Channel>;
 
@@ -95,6 +96,9 @@ export async function serveChannel<Meta = unknown>(
   // numbered here is one that is about to cross, and its stream follows the frame
   // that carried it.
   const table = new ProcessTable<ProcessHandle>("even", (proc, id) => streams.crossed(proc, id));
+  // The connection's blobs, numbered on this side's parity: the bytes get an engine of
+  // their own beside the process table, and neither has to know about the other.
+  const blobs = new BlobStore(channel, "even");
 
   /** Put an encoded frame on the wire, and then say what it numbered.  A frame that
    *  carried a reference has to be out before anything about that process is. */
@@ -104,7 +108,7 @@ export async function serveChannel<Meta = unknown>(
   };
 
   const sendToFrame = (frame: Record<string, unknown>, to: number): Promise<void> =>
-    write(encodeFrame(frame, table, to));
+    write(encodeFrame(frame, table, to, blobs));
 
   /** Set once the connection is winding down: from here a frame that cannot be delivered has
    *  nowhere to go by construction, and saying so with a stack is noise (see the sink below). */
@@ -129,7 +133,7 @@ export async function serveChannel<Meta = unknown>(
 
   // Both ends of a connection make calls and answer them: a process the far side
   // holds is asked the same way this side is asked.
-  const calls = new CallSide(write, table);
+  const calls = new CallSide(write, table, blobs);
 
   /** The handle for a reference that arrived: the same one every time, and the process
    *  itself when the reference names a process of this side's own.  The roots are
@@ -167,7 +171,7 @@ export async function serveChannel<Meta = unknown>(
     await write(errorFrame(`expected $init: ${initProblem}`)).catch(() => undefined);
     throw new Error(`serveRemoteActor: expected $init (${initProblem})`);
   }
-  const initFrame = decodeFrame(firstFrame, handleFor);
+  const initFrame = decodeFrame(firstFrame, handleFor, blobs);
   if (!isInit(initFrame)) {
     throw new Error("serveRemoteActor: expected $init");
   }
@@ -264,7 +268,7 @@ export async function serveChannel<Meta = unknown>(
       void endUnreadable(wireProblem);
       return;
     }
-    const frame = decodeFrame(raw, handleFor);
+    const frame = decodeFrame(raw, handleFor, blobs);
     // An answer is about the call waiting for it and not about a process: it names
     // the seq, and is settled before anything is looked up.
     if (calls.settle(frame)) return;
@@ -343,7 +347,7 @@ export async function serveChannel<Meta = unknown>(
       return;
     }
     const call = asReflectionCall(frame);
-    if (call) void answerCall(call, mine, write, table);
+    if (call) void answerCall(call, mine, write, table, blobs);
   }
 
   // The collecting reader stops here, and the dispatch is what hears the frames from now on: the two are
@@ -376,5 +380,7 @@ export async function serveChannel<Meta = unknown>(
   // A call this side made and the far side has not answered is not going to be
   // answered now; it fails here rather than hanging.
   calls.rejectAll();
+  // A blob read still in flight has no answer coming either.
+  blobs.close();
   await channel.close();
 }

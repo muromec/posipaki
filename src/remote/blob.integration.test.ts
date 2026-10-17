@@ -1,9 +1,10 @@
-// ── ten megabytes over a fifo, between two processes ───────────────────────
+// ── ten megabytes over a fifo, between two processes, twice ────────────────
 //
 // The unit tests drive one side of the seam at a time.  This one puts a real wire between
 // two real processes and moves a file big enough that the chunking, the framing and the
-// fifo itself all have to hold: 10 MB, offered by this side, read by the peer, hashed on
-// the far side and hashed here.
+// fifo itself all have to hold — and it does it the way an application would: a body with
+// bytes in it goes out, and the answer's own value is awaited for the bytes that come back.
+// Nothing in the test names a reference; the peer, being hand-written, does.
 //
 // The peer (`fixtures/blob-peer.js`) speaks the frames by hand rather than importing the
 // library, so what is tested is the wire format and not one implementation's reading of it.
@@ -17,8 +18,9 @@ import { unlink } from "node:fs/promises";
 
 import { FifoUtf8NlineTransport } from "./transports/fifo.js";
 import { json1Channel } from "./protocols/json1.js";
-import { BlobStore, blobValue } from "./blob.js";
-import type { Channel } from "./channel.js";
+import { BlobHandle, BlobStore, blobValue } from "./blob.js";
+import { decodeFrame, encodeFrame, type Channel } from "./channel.js";
+import { ProcessTable } from "./process-ref.js";
 
 const MB = 1024 * 1024;
 const SIZE = 10 * MB;
@@ -116,44 +118,53 @@ async function withPeer(): Promise<{ channel: Channel; frames: Frames }> {
 }
 
 const answered = (frame: Record<string, unknown>): boolean =>
-  ["BLOB_OK", "BLOB_ERROR"].includes(bodyOf(frame).type as string);
+  ["BLOB_ECHO", "BLOB_ERROR"].includes(bodyOf(frame).type as string);
+
+/** How a frame is written here: the same call the connection makes, on the test's own channel. */
+const table = new ProcessTable("odd");
+const send = (channel: Channel, store: BlobStore, body: Record<string, unknown>): Promise<void> =>
+  Promise.resolve(channel.send(encodeFrame({ $msg: { fromName: "test", body } }, table, 1, store)));
 
 describe("a blob across a fifo", () => {
-  it("carries ten megabytes whole, from one process to another", async () => {
+  it("carries ten megabytes out and back, as a body with bytes in it", async () => {
     const { channel, frames } = await withPeer();
+    const store = new BlobStore(channel, "odd", { chunkBytes: CHUNK });
 
     const bytes = payload(SIZE);
     const sha256 = createHash("sha256").update(bytes).digest("hex");
-    const store = new BlobStore(channel, "odd", { chunkBytes: CHUNK });
-    const ref = store.offer({
-      size: bytes.byteLength,
-      mime: "application/octet-stream",
-      name: "ten.bin",
-      sha256,
-      open: () => bytes,
-    });
-    expect(store.held()).toEqual([ref.id]);
+    expect(store.held()).toEqual([]);
 
     const started = Date.now();
-    await channel.send({ $msg: { fromName: "test", body: { type: "READ_BLOB", blob: blobValue(ref) } } });
-    const answer = bodyOf(await frames.next(answered, "the peer's answer"));
+    // The application writes bytes.  Nothing here knows a reference exists.
+    await send(channel, store, { type: "READ_BLOB", blob: bytes });
+    const raw = await frames.next(answered, "the peer's answer");
     const elapsed = Date.now() - started;
 
-    expect(answer.type).toBe("BLOB_OK");
-    // The reference crossed intact: the far side decided on these facts, not on a guess.
-    expect(answer.declared).toBe(SIZE);
-    expect(answer.mime).toBe("application/octet-stream");
-    expect(answer.name).toBe("ten.bin");
-    // The bytes crossed intact: the peer hashed what it assembled, here hashed the original.
-    expect(answer.bytes).toBe(SIZE);
-    expect(answer.sha256).toBe(sha256);
-    // …and they crossed as chunks, every one of them, at the size the connection chose.
-    expect(answer.chunks).toBe(Math.ceil(SIZE / CHUNK));
-    expect(answer.endBytes).toBe(SIZE);
+    const decoded = decodeFrame(raw, (ref) => ref, store) as { $msg: { body: Record<string, unknown> } };
+    const body = decoded.$msg.body;
+
+    expect(body.type).toBe("BLOB_ECHO");
+    // Out: the peer hashed what it assembled, the test hashed the original.
+    expect(body.declared).toBe(SIZE);
+    expect(body.mime).toBeUndefined();
+    expect(body.bytes).toBe(SIZE);
+    expect(body.sha256).toBe(sha256);
+    expect(body.chunks).toBe(Math.ceil(SIZE / CHUNK));
+    expect(body.endBytes).toBe(SIZE);
+
+    // Back: a value with the facts on it, whose await is the bytes — the same line an
+    // application writes when the peer is a process in this one.
+    const echoed = body.blob as BlobHandle;
+    expect(echoed).toBeInstanceOf(BlobHandle);
+    expect(echoed.size).toBe(SIZE);
+    const returned = await echoed;
+    expect(returned.byteLength).toBe(SIZE);
+    expect(createHash("sha256").update(returned).digest("hex")).toBe(sha256);
+
     // A guard, not a benchmark: a minute would mean something is holding the wire up.
     expect(elapsed).toBeLessThan(45_000);
 
-    await channel.send({ $msg: { fromName: "test", body: { type: "STOP" } } });
+    await send(channel, store, { type: "STOP" });
     const exit = await frames.next((frame) => "$exit" in frame, "the peer's exit");
     expect((exit.$exit as { code: number }).code).toBe(0);
     await channel.close();
@@ -161,8 +172,8 @@ describe("a blob across a fifo", () => {
 
   it("refuses a blob the peer cannot be given, and says why", async () => {
     const { channel, frames } = await withPeer();
-
     const store = new BlobStore(channel, "odd");
+
     // The reference promises four bytes and the offer cannot produce them: the peer is told
     // why, and no chunk of the wrong length is sent for it to find out by reading.
     const ref = store.offer({
@@ -177,11 +188,9 @@ describe("a blob across a fifo", () => {
     const answer = bodyOf(await frames.next(answered, "the peer's answer"));
 
     expect(answer.type).toBe("BLOB_ERROR");
-    expect(answer.reason).toBe(
-      `blob ${ref.id} could not be read: ENOENT: no such file, open '/tmp/missing.bin'`,
-    );
+    expect(answer.reason).toBe(`blob ${ref.id} could not be read: ENOENT: no such file, open '/tmp/missing.bin'`);
 
-    await channel.send({ $msg: { fromName: "test", body: { type: "STOP" } } });
+    await send(channel, store, { type: "STOP" });
     await frames.next((frame) => "$exit" in frame, "the peer's exit");
     await channel.close();
   }, 60_000);

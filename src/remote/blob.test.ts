@@ -318,3 +318,66 @@ describe("reading a blob", () => {
     });
   });
 });
+
+describe("bytes cross without the application naming a reference", () => {
+  it("turns a byte array anywhere in a body into one reference this side serves", () => {
+    const channel = new FakeChannel();
+    const store = new BlobStore(channel, "even");
+    const bytes = text("hello");
+    const note = { file: bytes, label: "one" };
+
+    const encoded = store.encode({ $msg: { fromName: "a", body: note } }) as {
+      $msg: { body: { file: unknown; label: string } };
+    };
+
+    expect(encoded.$msg.body.file).toEqual({ $b: { id: 0, size: 5 } });
+    expect(encoded.$msg.body.label).toBe("one");
+    expect(store.held()).toEqual([0]);
+    // The walk copies: the application's own object is not rewritten under it.
+    expect(note.file).toBe(bytes);
+    expect(bytes.byteLength).toBe(5);
+  });
+
+  it("treats a Buffer and an ArrayBuffer as bytes too", () => {
+    const store = new BlobStore(new FakeChannel(), "even");
+    const fromBuffer = store.encode({ a: Buffer.from("abc") }) as { a: { $b: { size: number } } };
+    const fromArray = store.encode({ a: new Uint8Array([1, 2, 3, 4]).buffer }) as { a: { $b: { size: number } } };
+    expect(fromBuffer.a.$b.size).toBe(3);
+    expect(fromArray.a.$b.size).toBe(4);
+  });
+
+  it("hands the reader a value whose await is the bytes, as a local one already is", async () => {
+    const writer = new FakeChannel();
+    const reader = new FakeChannel();
+    const source = new BlobStore(writer, "even");
+    const sink = new BlobStore(reader, "odd");
+    const bytes = text("the bytes");
+
+    const frame = source.encode({ $msg: { fromName: "a", body: { file: bytes } } }) as Record<string, unknown>;
+    const decoded = sink.decode(frame) as {
+      $msg: { body: { file: { size: number } & PromiseLike<Uint8Array> } };
+    };
+
+    // What an application wrote: one line, the same one it writes to a process in this
+    // process.  What it gets: the bytes.
+    const value = decoded.$msg.body.file;
+    expect(value.size).toBe(9);
+    const read = Promise.resolve(value);
+
+    writer.receive({ $blobAsk: { id: 0, seq: 1 } });
+    await writer.until(2);
+    for (const sent of writer.sent) reader.receive(sent);
+
+    expect(new TextDecoder().decode(await read)).toBe("the bytes");
+  });
+
+  it("leaves alone what is not bytes", () => {
+    const store = new BlobStore(new FakeChannel(), "even");
+    const value = { when: new Date(0), set: new Set([1]), text: "é", n: 1 };
+    const encoded = store.encode(value) as Record<string, unknown>;
+    expect(encoded.text).toBe("é");
+    expect(encoded.n).toBe(1);
+    expect(encoded.when).toBe(value.when);
+    expect(encoded.set).toBe(value.set);
+  });
+});
