@@ -144,6 +144,9 @@ and one subprocess case found it in its first run.
   if it must be).
 - No compression, no encryption, no integrity beyond the per-chunk checksum.
 - No persistence: a stream lives as long as the side that offered it, and no longer than the connection.
+- No names, and only one direction.  A stream is referenced by an id its offerer minted, so only that side knows the
+  number, and the bytes go one way.  `stream-names.md` proposes a pipe with both directions and a name, and where
+  the fd layer goes once a stream can be found.
 
 ## The checksum
 
