@@ -102,7 +102,7 @@ maybe(
     expect(listing.code).toBe(0);
     expect(listing.stdout.trim().split("\n")[0]).not.toBe("");
 
-    const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage(resolve));
+    const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage((frame) => ("$stream" in frame ? undefined : resolve(frame))));
     await channel.send({ $msg: { fromName: "test", body: { echo: "hi" } } });
     expect(await heard).toEqual({ $msg: { fromName: "fifo-payload", body: { echo: "hi" } } });
 
@@ -159,7 +159,7 @@ maybe(
       reapMs: 5_000,
     });
     const guest = await second({});
-    const heard = new Promise<Record<string, unknown>>((resolve) => guest.onMessage(resolve));
+    const heard = new Promise<Record<string, unknown>>((resolve) => guest.onMessage((frame) => ("$stream" in frame ? undefined : resolve(frame))));
     await guest.send({ $msg: { fromName: "test", body: { echo: "again" } } });
     expect(await heard).toEqual({ $msg: { fromName: "fifo-payload", body: { echo: "hi" } } });
 

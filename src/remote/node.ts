@@ -23,14 +23,13 @@ export {
   fdStreams,
   serverChannel,
 } from "./stdio.js";
-export { stderrSink, withOutput } from "./output.js";
+export { pumpOutput, stderrSink } from "./output.js";
 export type { OutputSink } from "./output.js";
 
 // the connection as streams: what each end's root prints, and what it reads
-export { connectionFds, fdWriter, logStream } from "./streams.js";
-export type { FdSet, FdStream, LineLog, OutputSender } from "./streams.js";
+export { logStream } from "./streams.js";
+export type { LineLog } from "./streams.js";
 export type { ClientChannelOptions, LineStreams } from "./stdio.js";
-export type { OutputFd } from "./channel.js";
 export {
   DEFAULT_KIT_PARENT,
   DEFAULT_RUNTIMES,

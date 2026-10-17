@@ -30,15 +30,19 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import type { OutputFd } from "./channel.js";
-import { encode } from "./protocols/json1.js";
-import { fdWriter } from "./streams.js";
+import { channelThrough } from "./channel.js";
+import { json1Channel } from "./protocols/json1.js";
+import { lowBand } from "./process-ref.js";
+import { StreamStore } from "./stream.js";
 import { errorFrame } from "./stdio.js";
 import type { LineTransport } from "./stdio.js";
 import { LineTransport as Lines } from "./stdio.js";
 import { FifoUtf8NlineTransport } from "./transports/fifo.js";
 
 const run = promisify(execFile);
+
+/** How much of a dying payload's own words travels in the reason a failed start carries. */
+const REASON_TAIL = 4096;
 
 /** Exit code for "this environment could not be set up". */
 export const GATEWAY_FAILED = 1;
@@ -113,15 +117,16 @@ async function fail(wire: LineTransport, reason: string): Promise<void> {
   }
 }
 
-/** Copy everything the payload prints to the client, as output frames of the fd it came in on. */
-function forwardOutput(stream: NodeJS.ReadableStream, wire: LineTransport, fd: OutputFd): void {
-  stream.setEncoding("utf-8");
-  const out = fdWriter((frame) => wire.send(encode(frame)), fd);
-  // The client hung up: the payload's exit is what matters now, and a frame that could not be
-  // delivered is not something anyone here can act on.
-  out.on("error", () => {});
-  stream.pipe(out, { end: false });
+/** The payload's own prints, as a stream: the pipe's chunks as they arrive. */
+async function* chunksOf(stream: NodeJS.ReadableStream, prefix = ""): AsyncIterable<Uint8Array> {
+  if (prefix.length > 0) yield new TextEncoder().encode(prefix);
+  for await (const chunk of stream as AsyncIterable<Buffer | string>) {
+    yield typeof chunk === "string" ? new TextEncoder().encode(chunk) : new Uint8Array(chunk);
+  }
 }
+
+/** Everything a payload printed into its pipes, up to the point they end: what a start that dies
+ *  before its channel says about itself.  A stream cannot carry it — there is no connection yet. */
 
 /**
  * Serve one environment over stdin/stdout.  Returns the exit code; the caller
@@ -129,6 +134,11 @@ function forwardOutput(stream: NodeJS.ReadableStream, wire: LineTransport, fd: O
  */
 export async function runGateway(argv: string[] = process.argv.slice(2)): Promise<number> {
   const wire = new Lines({ read: process.stdin, write: process.stdout });
+  // One channel on the client wire, and the ids this gateway speaks from: the low band, which neither
+  // the client nor the payload allocates in, so a stream of its own cannot collide with one of theirs.
+  // The store answers only for the streams it offered; everything else belongs to the far side.
+  const client = json1Channel(wire);
+  const output = new StreamStore(client, "even", { ids: lowBand("even"), attach: false });
 
   let booted: GatewayBoot;
   try {
@@ -192,8 +202,34 @@ export async function runGateway(argv: string[] = process.argv.slice(2)): Promis
     stdio: ["ignore", "pipe", "pipe"],
   });
   child = workerProc;
-  forwardOutput(workerProc.stdout, wire, 1);
-  forwardOutput(workerProc.stderr, wire, 2);
+  /** What the payload printed before the client spoke: a start that dies that early has no connection
+   *  to announce a stream on, and its words are the only way to say why it went.  Kept per stream, so
+   *  the output that comes after is still attributed to the right one. */
+  const early = { stdout: "", stderr: "" };
+  const keep =
+    (name: "stdout" | "stderr") =>
+    (chunk: Buffer | string): void => {
+      early[name] = (early[name] + String(chunk)).slice(-REASON_TAIL);
+    };
+  const keepOut = keep("stdout");
+  const keepErr = keep("stderr");
+  workerProc.stdout?.on("data", keepOut);
+  workerProc.stderr?.on("data", keepErr);
+
+  /** Announce the payload's own output as the two streams a program's prints belong on, with whatever
+   *  it said before the connection could carry it replayed as the first chunk. */
+  const offerOutput = (): void => {
+    const sides = [
+      { stream: workerProc.stdout, name: "stdout", keep: keepOut },
+      { stream: workerProc.stderr, name: "stderr", keep: keepErr },
+    ] as const;
+    for (const { stream, name, keep: drop } of sides) {
+      if (!stream) continue;
+      stream.off("data", drop);
+      stream.pause();
+      output.offer(chunksOf(stream, early[name]), name);
+    }
+  };
 
   const exited = new Promise<number>((settle) => {
     // A payload killed by a signal (the client hung up, and we killed it) has no
@@ -209,24 +245,45 @@ export async function runGateway(argv: string[] = process.argv.slice(2)): Promis
       }),
     ]);
   } catch (err) {
-    await fail(wire, errorText(err));
+    // A payload that dies before it opens its channel printed into pipes nobody is reading yet: its
+    // last words are the only way to say why, and they are not a stream because no connection exists
+    // to announce one on.
+    const said = `${early.stdout}${early.stderr}`.trim();
+    await fail(wire, `${errorText(err)}${said ? `: ${said}` : ""}`);
     await teardown();
     abandon();
   }
 
-  // Relay: the protocol is the client's and the payload's business, not ours.
-  const relay = fifo;
-  relay.onMessage((line) => {
-    void wire.send(line).catch(() => {
-      /* client gone */
+  // Relay frames, not lines: the gateway has streams of its own now — the payload's output — and one
+  // the store claims is the gateway's, not the payload's business.  Everything else crosses unchanged.
+  // `fifo` is settled by the race above: a start that failed took the exit path and never got here.
+  const payload = json1Channel(fifo as FifoUtf8NlineTransport);
+  const fromClient = channelThrough(client, (frame) => output.handle(frame));
+  const forward = (send: (frame: Record<string, unknown>) => unknown, frame: Record<string, unknown>): void => {
+    void Promise.resolve(send(frame)).catch(() => {
+      /* the far side is gone; its own exit path cleans up */
     });
+  };
+  let offered = false;
+  fromClient.onMessage((frame) => {
+    if (!offered) {
+      offered = true;
+      // The client has spoken, which means its store exists: an announcement made before that would
+      // land in a connection with nobody listening for it.
+      offerOutput();
+    }
+    forward((next) => payload.send(next), frame);
   });
-  wire.onMessage((line) => {
-    void relay.send(line).catch(() => {
-      /* the payload is gone; its exit path cleans up */
-    });
+  fromClient.onSegment?.((head, bytes) => {
+    payload.sendSegment?.(head, bytes);
   });
-  wire.onClose(() => {
+  payload.onMessage((frame) => {
+    forward((next) => client.send(next), frame);
+  });
+  payload.onSegment?.((head, bytes) => {
+    client.sendSegment?.(head, bytes);
+  });
+  client.onClose(() => {
     child?.kill();
   });
 

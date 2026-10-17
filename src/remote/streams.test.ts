@@ -6,7 +6,7 @@ import { describe, expect, it } from "vitest";
 import type { Writable } from "node:stream";
 
 import { frameReaders, type Channel } from "./channel.js";
-import { connectionFds, fdWriter, logStream, type LineLog } from "./streams.js";
+import { logStream, type LineLog } from "./streams.js";
 
 class FakeChannel implements Channel {
   readonly sent: Record<string, unknown>[] = [];
@@ -46,79 +46,6 @@ function write(to: Writable, chunk: string): Promise<void> {
   return new Promise((done) => to.write(chunk, () => done()));
 }
 
-describe("connectionFds", () => {
-  it("writes what this end's root says as frames of the connection", async () => {
-    const channel = new FakeChannel();
-    const fds = connectionFds(channel);
-
-    await write(fds.stdout.write, "hello\n");
-    await write(fds.stderr.write, "it broke\n");
-    await write(fds.stdin.write, "typed");
-
-    expect(channel.sent).toEqual([
-      { $fd: 1, data: "hello\n" },
-      { $fd: 2, data: "it broke\n" },
-      { $fd: 0, data: "typed" },
-    ]);
-  });
-
-  it("reads the far end's frames as the stream that names them", async () => {
-    const channel = new FakeChannel();
-    const fds = connectionFds(channel);
-    const heard: string[] = [];
-    const got = new Promise<void>((resolve) => {
-      fds.stderr.read.on("data", (chunk: Buffer) => {
-        heard.push(String(chunk));
-        resolve();
-      });
-    });
-
-    channel.receive({ $fd: 2, data: "boom\n" });
-    await got;
-
-    expect(heard.join("")).toBe("boom\n");
-  });
-
-  it("stops reading the connection, and ends its streams, when it is closed", async () => {
-    const channel = new FakeChannel();
-    const fds = connectionFds(channel);
-    const heard: string[] = [];
-    fds.stdout.read.on("data", (chunk: Buffer) => heard.push(String(chunk)));
-    const ended = new Promise<void>((resolve) => fds.stdout.read.on("end", resolve));
-
-    channel.receive({ $fd: 1, data: "before\n" });
-    fds.close();
-    channel.receive({ $fd: 1, data: "after\n" });
-    await ended;
-
-    expect(heard.join("")).toBe("before\n");
-  });
-});
-
-describe("fdWriter", () => {
-  it("writes one frame per chunk", async () => {
-    const sent: Record<string, unknown>[] = [];
-    const stream = fdWriter((frame) => void sent.push(frame), 1);
-
-    await write(stream, "one");
-    await write(stream, "two");
-
-    expect(sent).toEqual([
-      { $fd: 1, data: "one" },
-      { $fd: 1, data: "two" },
-    ]);
-  });
-
-  it("reports a frame that could not be sent as the stream's error", async () => {
-    const stream = fdWriter(() => Promise.reject(new Error("the client hung up")), 2);
-    const failed = new Promise<Error>((resolve) => stream.on("error", resolve));
-
-    stream.write("gone");
-
-    expect((await failed).message).toBe("the client hung up");
-  });
-});
-
 describe("logStream", () => {
   it("turns chunks into lines, holding the tail until it is finished", async () => {
     const lines: string[] = [];
@@ -137,7 +64,7 @@ describe("logStream", () => {
 
   it("sends what a stream calls an error to warn", async () => {
     const lines: string[] = [];
-    const stream = logStream(collectingLog(lines), { fd: 2 });
+    const stream = logStream(collectingLog(lines), { name: "stderr" });
 
     await write(stream, "it broke\n");
 

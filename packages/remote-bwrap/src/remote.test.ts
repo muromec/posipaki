@@ -50,7 +50,7 @@ function harness(extra: Partial<BwrapRemoteSpec<{ env: string }>> = {}) {
   const stageCommands: string[][] = [];
   const fed: string[] = [];
   const commands: string[][] = [];
-  const output: Array<[number, string]> = [];
+  const output: Array<[string, string]> = [];
   const gone: number[] = [];
 
   const run: HostRun = async (command, stdin) => {
@@ -72,7 +72,7 @@ function harness(extra: Partial<BwrapRemoteSpec<{ env: string }>> = {}) {
       children.push(child);
       return child;
     },
-    onOutput: (fd, data) => output.push([fd, data]),
+    onOutput: (name, data) => output.push([name, data]),
     onGone: () => gone.push(1),
     ...extra,
   });
@@ -126,11 +126,11 @@ it("stages through the sandbox, runs the gateway in it, and speaks the wire", as
     ],
   ]);
 
-  const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage(resolve));
+  const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage((frame) => ("$stream" in frame ? undefined : resolve(frame))));
   await channel.send({ $msg: { fromName: "client", body: { echo: "hi" } } });
   expect(await heard).toEqual({ $msg: { fromName: "staged-payload", body: { echo: "hi" } } });
   // What the far end prints is output, never protocol.
-  expect(live.output).toContainEqual([2, "the far end is ready\n"]);
+  expect(live.output).toContainEqual(["stderr", "the far end is ready\n"]);
 
   await stop(channel, child);
 });
@@ -140,7 +140,7 @@ it("tells the caller when the sandbox's process is gone", async () => {
   const channel = await live.spawner({ env: "agent" });
   const child = children[0]!;
   try {
-    const last = new Promise<Record<string, unknown>>((resolve) => channel.onMessage(resolve));
+    const last = new Promise<Record<string, unknown>>((resolve) => channel.onMessage((frame) => ("$stream" in frame ? undefined : resolve(frame))));
     await channel.send({ $msg: { body: { type: "BYE" } } });
     expect(await last).toEqual({ $exit: { code: 0, state: { said: true } } });
     await new Promise<void>((settle) =>

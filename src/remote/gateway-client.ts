@@ -49,7 +49,6 @@ import type { Kit, KitApp } from "./kit.js";
 import { clientChannel } from "./stdio.js";
 import { stderrSink, type OutputSink } from "./output.js";
 import type { LineStreams } from "./stdio.js";
-import type { OutputFd } from "./channel.js";
 
 /** posipaki's own gateway program.  A consumer with one of its own stages that instead. */
 export const GATEWAY_ENTRY = "posipaki/remote/gateway-cli.js";
@@ -247,12 +246,6 @@ async function openChannel(
   command: string[],
   spawn: SpawnChild,
 ): Promise<Channel> {
-  const sink = spec.onOutput ?? stderrSink(spec.name);
-  let tail = "";
-  const output: OutputSink = (fd: OutputFd, data: string) => {
-    if (fd === 2) tail = (tail + data).slice(-REASON_TAIL);
-    sink(fd, data);
-  };
 
   // The run's own stdin and stdout *are* the wire, so both have to be pipes.
   const stdio: StdioOptions = ["pipe", "pipe", "pipe"];
@@ -263,7 +256,16 @@ async function openChannel(
   // in itself speaks — "bwrap: Can't find source path", "Permission denied" — so it goes
   // to the sink, and the tail of it becomes the reason a start that died is reported with.
   child.stderr?.setEncoding("utf-8");
-  child.stderr?.on("data", (chunk: string) => output(2, chunk));
+  child.stderr?.on("data", (chunk: string) => {
+    tail = (tail + chunk).slice(-REASON_TAIL);
+    sink("stderr", chunk);
+  });
+  // The run's own stdin and stdout *are* the wire; its stderr is not.  That is where the way in
+  // itself speaks — "bwrap: Can't find source path", "Permission denied" — so it goes to the sink as
+  // `stderr`, and the tail of it becomes the reason a start that died is reported with.  What the
+  // payload behind the gateway prints is a different thing: it arrives as a stream the payload named.
+  const sink = spec.onOutput ?? stderrSink(spec.name);
+  let tail = "";
 
   const exited = new Promise<never>((_, reject) => {
     // `close`, not `exit`: the process being gone is not the same as everything it said
@@ -283,7 +285,6 @@ async function openChannel(
   try {
     channel = await Promise.race([
       clientChannel(streams, {
-        onOutput: output,
         ...(spec.handshakeTimeoutMs === undefined ? {} : { timeoutMs: spec.handshakeTimeoutMs }),
       }),
       exited,

@@ -12,9 +12,12 @@ import { describe, expect, it } from "vitest";
 import { GATEWAY_FAILED, gatewayArgs, gatewayBoot } from "./gateway.js";
 import type { GatewayBoot } from "./gateway.js";
 import { hostVersion } from "./kit.js";
+import { channelThrough } from "./channel.js";
 import type { Channel } from "./channel.js";
 import { clientChannel } from "./stdio.js";
 import type { LineStreams } from "./stdio.js";
+import { pumpOutput } from "./output.js";
+import { StreamStore } from "./stream.js";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 /** The program under test: this file's sibling, under our own extension. */
@@ -28,11 +31,27 @@ const HOST = hostVersion(APP);
 interface Session {
   child: ChildProcess;
   channel: Channel;
-  output: Array<[number, string]>;
+  store: StreamStore;
+  output: Array<[string, string]>;
   exit: Promise<number | null>;
 }
 
+/** Wait for a line the payload printed, or fail saying what did arrive. */
+async function printed(session: Session, text: string): Promise<void> {
+  const deadline = Date.now() + 20_000;
+  while (!session.output.some(([, line]) => line.includes(text))) {
+    if (Date.now() > deadline) throw new Error(`no ${JSON.stringify(text)} among ${JSON.stringify(session.output)}`);
+    await new Promise((done) => setTimeout(done, 10));
+  }
+}
+
 /** Start the gateway the way a client does, and speak the wire to it. */
+/** A frame that belongs to a stream rather than to the protocol: the tests below speak the protocol. */
+function isStreamFrame(frame: Record<string, unknown>): boolean {
+  return ["$stream", "$streamAsk", "$streamDone", "$streamFail", "$streamCancel", "$chunk", "$chunkEnd"].some(
+    (key) => key in frame,
+  );
+}
 async function session(boot: Partial<GatewayBoot> = {}): Promise<Session> {
   // The first argument is the program to start: a runtime, with the payload it runs as the
   // first of its arguments — which is what the client composes, staged or installed.
@@ -44,14 +63,17 @@ async function session(boot: Partial<GatewayBoot> = {}): Promise<Session> {
   const child = spawn(process.execPath, [GATEWAY, ...args], {
     stdio: ["pipe", "pipe", "pipe"],
   });
-  const output: Array<[number, string]> = [];
+  const output: Array<[string, string]> = [];
   const exit = new Promise<number | null>((settle) => child.once("exit", (code) => settle(code)));
   const streams = { read: child.stdout!, write: child.stdin! } as LineStreams;
-  const channel = await clientChannel(streams, {
-    onOutput: (fd, data) => output.push([fd, data]),
-    timeoutMs: 20_000,
+  const channel = await clientChannel(streams, { timeoutMs: 20_000 });
+  // The payload's own output is a stream it names; the client reads the two output names and hands
+  // them to whatever sink it has, which is what this watches.
+  const store = new StreamStore(channel, "odd");
+  store.onNamed((name, stream) => {
+    if (name === "stdout" || name === "stderr") pumpOutput(stream, name, (which, data) => output.push([which, data]));
   });
-  return { child, channel, output, exit };
+  return { child, channel: channelThrough(channel, isStreamFrame), store, output, exit };
 }
 
 /** Let a session go, whatever state it is in. */
@@ -130,7 +152,7 @@ describe("gateway", () => {
       const sent = new Promise<Record<string, unknown>>((resolve) => running.channel.onMessage(resolve));
       await running.channel.send({ $msg: { body: { echo: "hi" } } });
       expect(await sent).toEqual({ $msg: { fromName: "payload", body: { echo: "hi" } } });
-      expect(running.output).toContainEqual([1, "payload alive\n"]);
+      await printed(running, "payload alive");
     } finally {
       await stop(running);
     }
@@ -181,21 +203,23 @@ describe("gateway", () => {
       stdio: ["pipe", "pipe", "pipe"],
     });
     const exit = new Promise<number | null>((settle) => child.once("exit", (code) => settle(code)));
-    const said: string[] = [];
     try {
       const streams = { read: child.stdout!, write: child.stdin! } as LineStreams;
-      await expect(
-        clientChannel(streams, {
-          onOutput: (_fd, chunk) => said.push(chunk),
-          timeoutMs: 20_000,
-        }),
-      ).rejects.toThrow(/exited with code 2 before it opened its channel/);
+      const failure = await clientChannel(streams, { timeoutMs: 20_000 }).then(
+        () => "",
+        (err: unknown) => (err instanceof Error ? err.message : String(err)),
+      );
+      expect(failure).toMatch(/exited with code 2 before it opened its channel/);
 
-      // What the payload was actually started with.  The runtime consumed the script, so what
-      // the payload sees is what the client put after it: the host version, then the caller's
-      // arguments in the order and the spelling they were given, then the fifo pair the
-      // gateway made — appended last, because it is the gateway's own addition to the line.
-      const argv = JSON.parse(said.join("")) as string[];
+      // What the payload was actually started with.  The runtime consumed the script, so what the
+      // payload sees is what the client put after it: the host version, then the caller's arguments
+      // in the order and the spelling they were given, then the fifo pair the gateway made —
+      // appended last, because it is the gateway's own addition to the line.  The payload printed
+      // them before it died, so they arrive in the reason: a start that never opened its channel has
+      // no connection to announce a stream on.
+      const printed = /\[.*\]/.exec(failure)?.[0];
+      expect(printed).toBeDefined();
+      const argv = JSON.parse(printed!) as string[];
       expect(argv.slice(0, 4)).toEqual([
         `--host-version=${HOST}`,
         "--env=agent",
@@ -220,7 +244,7 @@ describe("gateway", () => {
     const exit = new Promise<number | null>((settle) => child.once("exit", (code) => settle(code)));
     try {
       const streams = { read: child.stdout!, write: child.stdin! } as LineStreams;
-      await expect(clientChannel(streams, { onOutput: () => {}, timeoutMs: 20_000 })).rejects.toThrow(
+      await expect(clientChannel(streams, { timeoutMs: 20_000 })).rejects.toThrow(
         /exited with code 2 before it opened its channel/,
       );
       expect(await exit).toBe(GATEWAY_FAILED);

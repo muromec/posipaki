@@ -46,12 +46,18 @@ export {
 } from "./channel.js";
 // what a wire that could not be read says: unreadable frames never arrive as exceptions
 export { BAD_PREFIX_LIMIT, badFrame, badReason, errorFrame, errorReason, isBad, isError } from "./channel.js";
-export { outputFrame, outputOf } from "./channel.js";
-export type { OutputFd } from "./channel.js";
-export { withOutput } from "./output.js";
+export { pumpOutput, stderrSink } from "./output.js";
 export type { OutputSink } from "./output.js";
-
-// json1 protocol
+export {
+  RemoteBlob,
+  RemoteBytes,
+  RemoteStream,
+  StreamStore,
+  isBlobRef,
+  isBytesRef,
+  isStreamRef,
+} from "./stream.js";
+export type { Blob, BlobFacts, BlobRef, BlobSource, BytesRef, Stream, StreamRef, StreamStoreOptions } from "./stream.js";
 export { VERSION, encode, decode, readFrame, json1Channel } from "./protocols/json1.js";
 
 // transports

@@ -20,9 +20,7 @@ import {
   serverChannel,
   type LineStreams,
 } from "./stdio.js";
-import { outputFrame, outputOf } from "./channel.js";
-import { stderrSink, withOutput } from "./output.js";
-import { json1Channel, VERSION } from "./protocols/json1.js";
+import { stderrSink } from "./output.js";
 
 /** Two ends of one wire: what one end writes, the other reads. */
 function wirePair(): [LineStreams, LineStreams] {
@@ -79,43 +77,10 @@ describe("LineTransport", () => {
   });
 });
 
-describe("output frames", () => {
-  it("reads back what it writes", () => {
-    expect(outputOf(outputFrame(1, "hi"))).toEqual({ fd: 1, data: "hi" });
-    expect(outputOf(outputFrame(2, ""))).toEqual({ fd: 2, data: "" });
-  });
-
-  it("leaves protocol frames and rubbish alone", () => {
-    expect(outputOf({ $proto: "json.v1" })).toBeNull();
-    expect(outputOf({ $fd: 3, data: "out of range" })).toBeNull();
-    expect(outputOf({ $fd: "1", data: "a stream is a number" })).toBeNull();
-  });
-
-  it("stringifies a payload that is not a string rather than losing it", () => {
-    expect(outputOf({ $fd: 1, data: { a: 1 } })).toEqual({ fd: 1, data: '{"a":1}' });
-  });
-
+describe("error frames", () => {
   it("carries a reason", () => {
     expect(errorReason(JSON.parse(errorFrame("no runtime in there")))).toBe("no runtime in there");
     expect(errorReason({ $proto: "json.v1" })).toBeNull();
-  });
-});
-
-describe("withOutput", () => {
-  it("takes the far end's own output off, and passes every other frame through", async () => {
-    const [left, right] = wirePair();
-    const output: Array<[number, string]> = [];
-    const connection = withOutput(json1Channel(new LineTransport(right)), (fd, data) =>
-      output.push([fd, data]),
-    );
-
-    const arrived = new Promise<Record<string, unknown>>((resolve) => connection.onMessage(resolve));
-    const far = json1Channel(new LineTransport(left));
-    await far.send(outputFrame(1, "chatter"));
-    await far.send({ $proto: "json.v1" });
-
-    expect(await arrived).toEqual({ $proto: "json.v1" });
-    expect(output).toEqual([[1, "chatter"]]);
   });
 });
 
@@ -129,8 +94,8 @@ describe("stderrSink", () => {
     }) as typeof process.stderr.write;
     try {
       const sink = stderrSink("env");
-      sink(1, "one\ntwo");
-      sink(2, "bad");
+      sink("stdout", "one\ntwo");
+      sink("stderr", "bad");
     } finally {
       process.stderr.write = original;
     }
@@ -143,7 +108,7 @@ describe("handshakes", () => {
     const [a, b] = wirePair();
     // Order matters: the client's handler is in place before the peer speaks,
     // because a line with no handler is a line nobody wanted.
-    const started = clientChannel(a, { onOutput: () => {} });
+    const started = clientChannel(a);
     const server = await serverChannel(b);
     const client = await started;
 
@@ -154,41 +119,28 @@ describe("handshakes", () => {
 
   it("reports a failed start as its reason", async () => {
     const [a, b] = wirePair();
-    const started = clientChannel(a, { onOutput: () => {} });
+    const started = clientChannel(a);
     await new LineTransport(b).send(errorFrame("no runtime in there"));
     await expect(started).rejects.toThrow("no runtime in there");
   });
 
   it("refuses a protocol it does not speak", async () => {
     const [a, b] = wirePair();
-    const started = clientChannel(a, { onOutput: () => {} });
+    const started = clientChannel(a);
     await new LineTransport(b).send(JSON.stringify({ $proto: "json.v9" }));
     await expect(started).rejects.toThrow(/unsupported protocol json.v9/);
   });
 
   it("refuses a first frame that is not a protocol frame", async () => {
     const [a, b] = wirePair();
-    const started = clientChannel(a, { onOutput: () => {} });
+    const started = clientChannel(a);
     await new LineTransport(b).send(JSON.stringify({ $state: {} }));
     await expect(started).rejects.toThrow(/unexpected first frame/);
   });
 
-  it("reads past the far end's own output while it waits for the protocol", async () => {
-    const [a, b] = wirePair();
-    const output: Array<[number, string]> = [];
-    const started = clientChannel(a, { onOutput: (fd, data) => output.push([fd, data]) });
-    const far = new LineTransport(b);
-    await far.send(JSON.stringify(outputFrame(1, "before the handshake")));
-    await far.send(JSON.stringify({ $proto: VERSION }));
-
-    const client = await started;
-    expect(output).toEqual([[1, "before the handshake"]]);
-    await client.close();
-  });
-
   it("gives up waiting for a peer that never speaks", async () => {
     const [a] = wirePair();
-    await expect(clientChannel(a, { onOutput: () => {}, timeoutMs: 20 })).rejects.toThrow(
+    await expect(clientChannel(a, { timeoutMs: 20 })).rejects.toThrow(
       /no protocol frame within 20ms/,
     );
   });

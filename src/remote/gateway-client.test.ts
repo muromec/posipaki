@@ -92,7 +92,7 @@ describe("the client side of the gateway, over this machine", () => {
       expect(kits[0]).toContain(hostVersion(APP));
       expect(readdirSync(kits[0]!).sort()).toEqual(["gateway.js", "payload.js", "version.json"]);
 
-      const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage(resolve));
+      const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage((frame) => ("$stream" in frame ? undefined : resolve(frame))));
       await channel.send({ $msg: { body: { echo: "hi" } } });
       expect(await heard).toEqual({ $msg: { fromName: "payload", body: { echo: "hi" } } });
     } finally {

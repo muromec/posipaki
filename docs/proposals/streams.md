@@ -106,6 +106,19 @@ and a run of octets as a binary one; the reader cannot tell the difference.  The
 `sendSegment`/`onSegment` for the same reason, and the wrappers above a protocol pass them through
 (`channelThrough`) so a wrapped connection does not quietly drop a stream.
 
+## A program's own output
+
+A process that prints announces two streams, `stdout` and `stderr`, and writes its prints into them; the
+reader finds them by name (`named`, `onNamed`) and no frame is spent on the text.  Built 2026-10-17, replacing the
+`$fd` frame: that frame carried the text as a JSON string with no credit and no checksum, and it was read by three
+separate places, each installing its own handler.
+
+Who announces: whoever holds the writing end.  A payload cannot read its own stdout, so a first stage that holds
+the pipe announces on its behalf — from the low band, which is what that band is for.  What the payload printed
+*before* the client could hear (before the connection's other end had a store) is replayed as the stream's first
+chunk, and if the payload dies that early its words ride the `$error` frame instead: there is no stream to announce
+them on, because there is no connection yet.
+
 ## Order of work
 
 Four slices, each tested before the next one starts, and every test at the **process level** — two real

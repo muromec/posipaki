@@ -12,6 +12,7 @@ import type { HookResult } from "../hooks.js";
 import type { ActorDefinition, HandlerOptions, MethodOptions, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import type { Channel } from "./channel.js";
+import { pumpOutput, stderrSink, type OutputSink } from "./output.js";
 import {
   IdSpace,
   ProcessTable,
@@ -59,6 +60,12 @@ export interface ClientContext {
  */
 export interface RemoteClientOptions {
   onChannel?(channel: Channel, ctx: ClientContext): void | (() => void | Promise<void>);
+  /**
+   * Where what the far end prints goes.  A process that prints announces its `stdout` and `stderr`
+   * as streams on the connection; this is the sink they are read into, and the first two names are
+   * the only ones taken.  Defaults to our own stderr, tagged with the process's name.
+   */
+  onOutput?: OutputSink;
 }
 
 
@@ -135,6 +142,13 @@ export function remoteClient<
       // that forked it, and the far side spells its own subtree off whatever it is told, so a
       // short name would be a second spelling of one process — and the tree would show both.
       const fromName = this.ctx.pname;
+
+      // What the far end prints arrives as streams it announced under a name; the two output names
+      // are read into the caller's sink, and any other name is the application's to ask for.
+      const output = options.onOutput ?? stderrSink(fromName);
+      byteStreams.onNamed((name, stream) => {
+        if (name === "stdout" || name === "stderr") pumpOutput(stream, name, output);
+      });
       // And the process above it, which is who a message to the served root comes from: the
       // far side is told the same thing a child here is told about its parent.
       const parentName = this.ctx.parentName ?? this.ctx.pname;

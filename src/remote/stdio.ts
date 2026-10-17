@@ -25,13 +25,13 @@ import {
   errorFrame as wireErrorFrame,
   errorReason as wireErrorReason,
   isProto,
-  outputOf,
+
   type Channel,
-  type OutputFd,
+
   type StringTransport,
 } from "./channel.js";
 import { VERSION, json1Channel } from "./protocols/json1.js";
-import { stderrSink, withOutput, type OutputSink } from "./output.js";
+
 
 /** The stream pair a line transport talks over. */
 export interface LineStreams {
@@ -210,51 +210,40 @@ export function fdStreams(readFd: number, writeFd: number): LineStreams {
 
 // ── handshakes ─────────────────────────────────────────────────────────────
 
-/** The next frame that is the protocol's, or a timeout.  The far end's own output is not the
- *  protocol's: it goes to `sink` while this waits, and the wait carries on. */
-async function nextFrame(
-  channel: Channel,
-  timeoutMs: number,
-  sink: OutputSink,
-): Promise<Record<string, unknown>> {
+/** The next frame that is the protocol's, or a timeout. */
+async function nextFrame(channel: Channel, timeoutMs: number): Promise<Record<string, unknown>> {
   return await new Promise((resolve, reject) => {
     const timer = setTimeout(
       () => reject(new StdioWireError(`no protocol frame within ${timeoutMs}ms`)),
       timeoutMs,
     );
     timer.unref?.();
-      const off = channel.onMessage((frame) => {
-        const output = outputOf(frame);
-        if (output) {
-          sink(output.fd, output.data);
-          return;
-        }
-        off();
-        clearTimeout(timer);
-        resolve(frame);
-      });
+    const off = channel.onMessage((frame) => {
+      off();
+      clearTimeout(timer);
+      resolve(frame);
+    });
   });
 }
 
 export interface ClientChannelOptions {
-  /** Where the far end's own output goes.  Defaults to our stderr. */
-  onOutput?: OutputSink;
   /** How long to wait for the peer's protocol frame.  Defaults to {@link HANDSHAKE_TIMEOUT_MS}. */
   timeoutMs?: number;
 }
 
 /**
- * The client end of the connection: hand the streams to the seam and wait for the peer's `$proto`,
- * with the far end's own output going to `onOutput` (our stderr by default) as it arrives.  A
- * first stage reports a failed start as an `$error` frame instead.
+ * The client end of the connection: hand the streams to the seam and wait for the peer's `$proto`.
+ * A first stage reports a failed start as an `$error` frame instead.
+ *
+ * What the far end prints is not here: it arrives as a stream the far end announces under a name,
+ * and whoever wants it reads it by that name.
  */
 export async function clientChannel(
   streams: LineStreams,
   opts: ClientChannelOptions = {},
 ): Promise<Channel> {
   const channel = json1Channel(new LineTransport(streams));
-  const sink = opts.onOutput ?? stderrSink();
-  const frame = await nextFrame(channel, opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS, sink);
+  const frame = await nextFrame(channel, opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS);
 
   const reason = errorReason(frame);
   if (reason) throw new StdioWireError(reason);
@@ -264,9 +253,7 @@ export async function clientChannel(
   if (frame.$proto !== VERSION) {
     throw new StdioWireError(`unsupported protocol ${String(frame.$proto)}, expected ${VERSION}`);
   }
-  // From here on the far end's own output is this connection's business and not the transport's:
-  // every frame reaches the seam, and the ones that are its print are taken off on the way in.
-  return withOutput(channel, sink);
+  return channel;
 }
 
 /** The server end of the wire — a payload speaking stdio itself. */

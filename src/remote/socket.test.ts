@@ -8,7 +8,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { defineActor, defineMessages } from "../index.js";
-import { isMsg, isState, outputFrame } from "./channel.js";
+import { isMsg, isState } from "./channel.js";
 import { rootIdFor } from "./process-ref.js";
 import { reactor, type Session } from "./reactor.js";
 import { connectUnixSocket, unixSocketListener } from "./socket.js";
@@ -130,36 +130,4 @@ describe("unixSocketListener", () => {
     expect(await attempt).toMatch(/nothing answered|ENOENT/);
   });
 
-  it("hands the far end's own output to the client's sink", async () => {
-    const dir = await scratch();
-    const path = join(dir, "service.sock");
-    const listener = await unixSocketListener({ path });
-    const Writing = defineActor({
-      name: "writing",
-      handlers: {},
-      async setup() {
-        await this.ctx.connection?.send(outputFrame(2, "a line of its own"));
-        return {};
-      },
-    });
-    const r = reactor(listener, Writing);
-
-    const printed: [number, string][] = [];
-    const channel = await socketClientSpawner<{ path: string }>((args) => args.path, {
-      onOutput: (fd, data) => printed.push([fd, data]),
-    })({ path });
-
-    // The client routes the far end's output above the protocol, so it arrives at the sink and never
-    // at the seam's dispatch.
-    const heard: Record<string, unknown>[] = [];
-    channel.onMessage((frame) => heard.push(frame));
-
-    await channel.send({ $init: { rootName: "echo", parentName: "root", parentIdName: "root" } });
-    await waitUntil(() => printed.length === 1, "the client's sink");
-
-    expect(printed).toEqual([[2, "a line of its own"]]);
-    expect(heard.some((frame) => "$fd" in frame)).toBe(false);
-
-    await r.stop();
-  });
 });

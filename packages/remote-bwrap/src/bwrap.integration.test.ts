@@ -76,7 +76,7 @@ maybe(
     expect(existsSync(kitParent)).toBe(true);
     expect(readdirSync(kitParent).length).toBeGreaterThan(0);
 
-    const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage(resolve));
+    const heard = new Promise<Record<string, unknown>>((resolve) => channel.onMessage((frame) => ("$stream" in frame ? undefined : resolve(frame))));
     await channel.send({ $msg: { fromName: "test", body: { echo: "hi" } } });
     expect(await heard).toEqual({ $msg: { fromName: "fifo-payload", body: { echo: "hi" } } });
 

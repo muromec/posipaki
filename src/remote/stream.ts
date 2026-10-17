@@ -475,6 +475,10 @@ export interface StreamStoreOptions {
   /** Where stream ids come from.  One space per side, shared with the process table so a number
    *  names one thing on the connection whatever it names. */
   ids?: IdSpace;
+  /** Whether the store reads the connection itself.  A party that carries a connection it does not
+   *  speak — a first stage — sets this false and hands frames in with `handle()`, so the far side's
+   *  frames are never mistaken for its own. */
+  attach?: boolean;
 }
 
 /**
@@ -510,10 +514,13 @@ export class StreamStore implements ValueCodec {
     this.windowBytes = options.windowBytes ?? DEFAULT_WINDOW_BYTES;
     this.maxBytes = options.maxBytes ?? DEFAULT_MAX_BYTES;
     this.ids = options.ids ?? new IdSpace(parity);
-    this.pvtOff = channel.onMessage((frame) => {
-      this.onFrame(frame);
-    });
-    this.pvtSegmentOff = channel.onSegment?.((head, bytes) => this.onSegment(head, bytes)) ?? null;
+    const attached = options.attach !== false;
+    this.pvtOff = attached
+      ? channel.onMessage((frame) => {
+          this.onFrame(frame);
+        })
+      : () => {};
+    this.pvtSegmentOff = attached ? (channel.onSegment?.((head, bytes) => this.onSegment(head, bytes)) ?? null) : null;
   }
 
   /** Whether this connection can carry a stream at all: it must carry octets beside its lines. */
@@ -606,6 +613,21 @@ export class StreamStore implements ValueCodec {
   /** The ids this side is holding, in the order they were offered. */
   held(): number[] {
     return [...this.pvtOffers.keys()];
+  }
+
+  /**
+   * Take a frame if it is one this store answers for, and say whether it did.  A party that carries a
+   * connection it does not speak — a first stage, relaying a client to a payload — has to know which
+   * inbound frames are its own and which belong to the far side, and this is the question it asks.
+   * Only frames about a stream this side offered are claimed, so a stream the far side offers passes
+   * through untouched.
+   */
+  handle(frame: Record<string, unknown>): boolean {
+    if (this.pvtClosed) return false;
+    const id = frameId(frame);
+    if (id === null || !this.pvtOffers.has(id)) return false;
+    this.onFrame(frame);
+    return true;
   }
 
   /**
@@ -955,4 +977,13 @@ function asOctets(value: ArrayBuffer | ArrayBufferView): Uint8Array {
 
 function reasonOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
+}
+
+/** The stream id a control frame names, or null when it names none of them. */
+function frameId(frame: Record<string, unknown>): number | null {
+  for (const key of ["$streamAsk", "$streamCancel", "$streamDone", "$streamFail"]) {
+    const body = frame[key] as { id?: unknown } | undefined;
+    if (typeof body?.id === "number") return body.id;
+  }
+  return null;
 }
