@@ -105,12 +105,18 @@ and one subprocess case found it in its first run.
    facts; a blob announced and never read (no octet on the wire, no read of the source); a blob handed on without
    being read here; a blob over the reader's bound, refused before a chunk is asked for.
 3. **Typed arrays.**  Built, and simpler than planned: the bytes are already here, so an array is offered as a
-   stream of one piece and the far side gets a `RemoteBytes`, a `PromiseLike<Uint8Array>` — `await body.file` is
-   the whole of the receiving API, which is the awaitability the old blob handle had.
-4. **Performance, per primitive.**  Bytes per second through one wire for a raw pipe, a stream, a blob and a
-   typed array, plus the overhead of each step over the one below it.  The numbers this replaces: the blob
-   slice measured 5.0 MB/s against 14 MB/s for the same frames through a hand-written sink, and 185 MB/s for the
-   raw pipe — with the wire, not the reader's arithmetic, as the pacer.
+   stream of one piece and the far side gets a `RemoteBytes` — awaited it is the array, iterated it is the chunks,
+   `arrayBuffer()` gives the platform's shape.  `await body.file` is the shortest form, which is the awaitability
+   the old blob handle had.
+
+4. **Performance, per primitive.**  Measured 2026-10-17, 10 MiB over one fifo between two processes, 64 KiB
+   chunks, this box (riscv64, bun 1.4.2): **stream 13.0 MB/s, typed array 9.4, blob 8.5**, against **185 MB/s**
+   for raw octets through the same pipe (measured 2026-10-16, same hardware).  The stream is the fastest of the
+   three because nothing puts it back together: the far side hashes each chunk as it arrives, where a blob and an
+   array are assembled — one 10 MiB copy — before the application sees them.  The medium is not the pacer: the
+   same frames through a hand-written sink measured 35–40 MB/s in the blob slice.  No lever was pulled; the
+   candidates are named in the blob slice's notes (base64 is gone from chunks, so what is left is one JSON head
+   and one JSON tail per 64 KiB).
 
 ## What it does not do
 

@@ -302,10 +302,11 @@ export class RemoteBlob implements Blob {
 }
 
 /**
- * Bytes that crossed a connection: materialised at the far end from a stream over them, and awaited
- * where the message is read.  The sender's array is one piece, so this is the whole of its shape.
+ * Bytes that crossed a connection: the sender's array, taken apart into a stream and put back
+ * together here.  Read them once — `await` hands back the array, `for await` hands back the chunks,
+ * and the whole of it is one shot at either.
  */
-export class RemoteBytes implements PromiseLike<Uint8Array> {
+export class RemoteBytes implements PromiseLike<Uint8Array>, AsyncIterable<Uint8Array> {
   private readonly body: RemoteStream;
 
   constructor(body: RemoteStream) {
@@ -317,11 +318,21 @@ export class RemoteBytes implements PromiseLike<Uint8Array> {
     return bytesOf(this.body);
   }
 
+  /** The same octets as an array's buffer, for a caller that wants the platform's shape. */
+  async arrayBuffer(): Promise<ArrayBuffer> {
+    const all = await this.bytes();
+    return all.buffer as ArrayBuffer;
+  }
+
   then<TResult1 = Uint8Array, TResult2 = never>(
     onfulfilled?: ((value: Uint8Array) => TResult1 | PromiseLike<TResult1>) | null,
     onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
   ): Promise<TResult1 | TResult2> {
     return this.bytes().then(onfulfilled, onrejected);
+  }
+
+  [Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
+    return this.body[Symbol.asyncIterator]();
   }
 }
 
