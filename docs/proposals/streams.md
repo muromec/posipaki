@@ -77,8 +77,11 @@ as bytes rather than base64 inside JSON.
   in the head at all — without it, rejection would mean guessing where the next frame starts.
 - **Ids are the connection's own**, and one space serves everything numbered on it: the process table and the
   stream store draw from the same counter on the same parity split, so a number names one thing and its parity says
-  which side made it.  A stream's id is alive from its announcement until `$streamDone`/`$streamFail`, or until the
-  connection ends; an error anywhere drops it on both sides, and a reference to a dropped id is a named error.
+  which side made it.  Nought and one are the two roots; **2 through 8 are the low band**, where a party that speaks
+  on a connection it otherwise only relays — a first stage, and its `stdout`/`stderr` — takes its ids, so a band id
+  cannot collide with one either end mints.  Allocation starts at 9 (odd) and 10 (even).  A stream's id is alive
+  from its announcement until `$streamDone`/`$streamFail`, or until the connection ends; an error anywhere drops it
+  on both sides, and a reference to a dropped id is a named error.
 
 ## What a stream is in the API
 

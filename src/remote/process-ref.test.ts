@@ -14,6 +14,7 @@ import {
   PROCESS_REF,
   IdSpace,
   ProcessTable,
+  lowBand,
   asProcessRef,
   decodeProcessRefs,
   encodeProcessRefs,
@@ -48,13 +49,13 @@ describe("ProcessTable", () => {
     const first = await makeProcess("first");
     const second = await makeProcess("second");
 
-    expect(table.handleFor(first)).toBe(3);
-    expect(table.handleFor(first)).toBe(3);
-    expect(table.handleFor(second)).toBe(5);
+    expect(table.handleFor(first)).toBe(9);
+    expect(table.handleFor(first)).toBe(9);
+    expect(table.handleFor(second)).toBe(11);
 
-    // The first two ids of the parity are the two ends' roots, and neither is ever
-    // handed out for anything else.
-    expect(table.handleFor(await makeProcess("third"))).toBe(7);
+    // The low band is nobody's to allocate from, so the first id handed out is past it.
+    // Roots are 0 and 1; 2 through 8 belong to a relay that speaks for itself.
+    expect(table.handleFor(await makeProcess("third"))).toBe(13);
   });
 
   it("keeps the first id of its parity for the root it was bound to", async () => {
@@ -70,7 +71,7 @@ describe("ProcessTable", () => {
 
     // The root takes a number like anything else, and the id in between is the far
     // side's root: the first id this side hands out is past both of them.
-    expect(odd.handleFor(await makeProcess("kid"))).toBe(3);
+    expect(odd.handleFor(await makeProcess("kid"))).toBe(9);
 
     even.bindRoot(root);
     expect(even.rootId()).toBe(0);
@@ -82,10 +83,10 @@ describe("ProcessTable", () => {
     const odd = new ProcessTable("odd");
     const even = new ProcessTable("even");
 
-    expect(odd.handleFor(await makeProcess("kid"))).toBe(3);
-    expect(odd.handleFor(await makeProcess("other"))).toBe(5);
-    expect(even.handleFor(await makeProcess("kid"))).toBe(2);
-    expect(even.handleFor(await makeProcess("other"))).toBe(4);
+    expect(odd.handleFor(await makeProcess("kid"))).toBe(9);
+    expect(odd.handleFor(await makeProcess("other"))).toBe(11);
+    expect(even.handleFor(await makeProcess("kid"))).toBe(10);
+    expect(even.handleFor(await makeProcess("other"))).toBe(12);
   });
 
   it("holds the far side's processes under the ids they came with, apart from its own", async () => {
@@ -93,16 +94,16 @@ describe("ProcessTable", () => {
     const mine = await makeProcess("mine");
     const theirs = makeHandle({ id: 2, pname: "remote:kid" });
 
-    expect(table.handleFor(mine)).toBe(3);
+    expect(table.handleFor(mine)).toBe(9);
     table.bindFar(theirs.ref.id, theirs);
 
     // One number belongs to one side, so what it resolves to does not depend on
     // which way the frame that carries it was going.
-    expect(table.processFor(3)).toBe(mine);
+    expect(table.processFor(9)).toBe(mine);
     expect(table.processFor(2)).toBeUndefined();
     expect(table.farHandleFor(2)).toBe(theirs);
-    expect(table.farHandleFor(3)).toBeUndefined();
-    expect(table.resolve(3)).toBe(mine);
+    expect(table.farHandleFor(9)).toBeUndefined();
+    expect(table.resolve(9)).toBe(mine);
     expect(table.resolve(2)).toBe(theirs);
     expect(table.resolve(4)).toBeUndefined();
     expect(table.handles()).toEqual([theirs]);
@@ -163,7 +164,7 @@ describe("encodeProcessRefs", () => {
     const table = new ProcessTable("odd");
 
     expect(encodeProcessRefs(proc, table)).toEqual({
-      [PROCESS_REF]: { id: 3, pname: "kid" },
+      [PROCESS_REF]: { id: 9, pname: "kid" },
     });
     expect(encodeProcessRefs({ count: 2, ok: true, missing: null }, table)).toEqual({
       count: 2,
@@ -180,10 +181,10 @@ describe("encodeProcessRefs", () => {
     const encoded = encodeProcessRefs({ kids: [kid, { deep: other }], again: kid }, table);
     expect(encoded).toEqual({
       kids: [
-        { [PROCESS_REF]: { id: 3, pname: "kid" } },
-        { deep: { [PROCESS_REF]: { id: 5, pname: "other" } } },
+        { [PROCESS_REF]: { id: 9, pname: "kid" } },
+        { deep: { [PROCESS_REF]: { id: 11, pname: "other" } } },
       ],
-      again: { [PROCESS_REF]: { id: 3, pname: "kid" } },
+      again: { [PROCESS_REF]: { id: 9, pname: "kid" } },
     });
   });
 
@@ -196,7 +197,7 @@ describe("encodeProcessRefs", () => {
 
     expect(encoded).not.toBe(state);
     expect(state.child).toBe(proc);
-    expect(encoded).toEqual({ child: { [PROCESS_REF]: { id: 3, pname: "kid" } } });
+    expect(encoded).toEqual({ child: { [PROCESS_REF]: { id: 9, pname: "kid" } } });
   });
 
   it("writes a root with the id its own side gave it", async () => {
@@ -282,9 +283,9 @@ describe("the connection's id space", () => {
     const first = await makeProcess("first");
     const second = await makeProcess("second");
 
-    expect(table.handleFor(first)).toBe(3);
-    expect(ids.next()).toBe(5);
-    expect(table.handleFor(second)).toBe(7);
+    expect(table.handleFor(first)).toBe(9);
+    expect(ids.next()).toBe(11);
+    expect(table.handleFor(second)).toBe(13);
     expect(table.rootId()).toBe(1);
   });
 
@@ -294,6 +295,17 @@ describe("the connection's id space", () => {
     expect(ours.root()).toBe(0);
     expect(theirs.root()).toBe(1);
     const taken = [ours.next(), ours.next(), ours.next(), theirs.next(), theirs.next(), theirs.next()];
-    expect(taken).toEqual([2, 4, 6, 3, 5, 7]);
+    expect(taken).toEqual([10, 12, 14, 9, 11, 13]);
+  });
+
+  it("keeps the low band out of both ends' numbering, and refuses once it is spent", () => {
+    // The band is where a party that only relays a connection speaks: its ids cannot be one either
+    // end mints, because neither end allocates below the band.
+    const relay = lowBand("even");
+    expect([relay.next(), relay.next(), relay.next(), relay.next()]).toEqual([2, 4, 6, 8]);
+    expect(() => relay.next()).toThrow(/the low band is spent/);
+
+    expect(new IdSpace("odd").next()).toBe(9);
+    expect(new IdSpace("even").next()).toBe(10);
   });
 });

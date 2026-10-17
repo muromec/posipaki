@@ -247,12 +247,12 @@ describe("remoteClient process references", () => {
 
     const answer = surface["probe.child"]!();
     channel.handler!({
-      [`${REFLECT_RESULT}probe.child`]: { seq: 1, value: { [PROCESS_REF]: { id: 4, pname: "tools:kid" } } },
+      [`${REFLECT_RESULT}probe.child`]: { seq: 1, value: { [PROCESS_REF]: { id: 12, pname: "tools:kid" } } },
     });
 
     const found = (await answer) as RemoteProcess;
     expect(found).toBeInstanceOf(RemoteProcess);
-    expect(found.ref.id).toBe(4);
+    expect(found.ref.id).toBe(12);
     expect(found.pname).toBe("tools:kid");
     expect(found.isConnected()).toBe(true);
 
@@ -264,19 +264,19 @@ describe("remoteClient process references", () => {
 
     const first = surface["probe.child"]!();
     channel.handler!({
-      [`${REFLECT_RESULT}probe.child`]: { seq: 1, value: { [PROCESS_REF]: { id: 4, pname: "tools:kid" } } },
+      [`${REFLECT_RESULT}probe.child`]: { seq: 1, value: { [PROCESS_REF]: { id: 12, pname: "tools:kid" } } },
     });
     const handle = (await first) as RemoteProcess;
 
     const second = surface["probe.child"]!();
     channel.handler!({
-      [`${REFLECT_RESULT}probe.child`]: { seq: 2, value: { [PROCESS_REF]: { id: 4, pname: "tools:kid" } } },
+      [`${REFLECT_RESULT}probe.child`]: { seq: 2, value: { [PROCESS_REF]: { id: 12, pname: "tools:kid" } } },
     });
     // Handed over twice, it is one process, so it is one handle.
     expect(await second).toBe(handle);
 
     handle.send({ type: "PING" });
-    const sent = channel.sent.find((f) => frameTo(f) === 4 && isMsg(f));
+    const sent = channel.sent.find((f) => frameTo(f) === 12 && isMsg(f));
     expect(sent?.$msg).toEqual({ fromName: "probe", body: { type: "PING" } });
 
     await endProxy(channel, proc);
@@ -287,7 +287,7 @@ describe("remoteClient process references", () => {
 
     const answer = surface["probe.child"]!();
     channel.handler!({
-      [`${REFLECT_RESULT}probe.child`]: { seq: 1, value: { [PROCESS_REF]: { id: 4, pname: "tools:kid" } } },
+      [`${REFLECT_RESULT}probe.child`]: { seq: 1, value: { [PROCESS_REF]: { id: 12, pname: "tools:kid" } } },
     });
     const handle = (await answer) as RemoteProcess;
 
@@ -340,7 +340,7 @@ describe("remoteClient process references", () => {
     channel.handler!({
       [`${REFLECT_RESULT}probe.children`]: {
         seq: 1,
-        value: { kids: [{ [PROCESS_REF]: { id: 4, pname: "a" } }] },
+        value: { kids: [{ [PROCESS_REF]: { id: 12, pname: "a" } }] },
       },
     });
 
@@ -353,14 +353,14 @@ describe("remoteClient process references", () => {
   it("writes a reference back into the frame, with the id it came with", async () => {
     const { channel, proc, surface } = await spawnProxy(["probe.use"]);
 
-    const ref = makeHandle({ id: 4, pname: "tools:kid" });
+    const ref = makeHandle({ id: 12, pname: "tools:kid" });
     const answer = surface["probe.use"]!([ref]);
     await waitUntil(() => channel.sent.some((f) => frameKey(f, REFLECT_CALL)), "the call");
 
     const call = channel.sent.find((f) => frameKey(f, REFLECT_CALL))!;
     expect(call[`${REFLECT_CALL}probe.use`]).toEqual({
       seq: 1,
-      args: [[{ [PROCESS_REF]: { id: 4, pname: "tools:kid" } }]],
+      args: [[{ [PROCESS_REF]: { id: 12, pname: "tools:kid" } }]],
     });
 
     channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
@@ -379,7 +379,7 @@ describe("remoteClient process references", () => {
     const call = channel.sent.find((f) => frameKey(f, REFLECT_CALL))!;
     expect(call[`${REFLECT_CALL}probe.use`]).toEqual({
       seq: 1,
-      args: [{ [PROCESS_REF]: { id: 3, pname: "mine" } }],
+      args: [{ [PROCESS_REF]: { id: 9, pname: "mine" } }],
     });
 
     channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
@@ -402,17 +402,17 @@ describe("a process of this side, handed over", () => {
     // told about a process it cannot name yet has nowhere to put the news.  It is
     // not one of the three categories, so it crosses even in silence.
     const carrying = channel.sent.findIndex((f) => frameKey(f, REFLECT_CALL));
-    const announced = channel.sent.findIndex((f) => f.to === 3 && isReflectionMethods(f));
+    const announced = channel.sent.findIndex((f) => f.to === 9 && isReflectionMethods(f));
     expect(carrying).toBeGreaterThanOrEqual(0);
     expect(announced).toBeGreaterThan(carrying);
     expect(channel.sent[announced][REFLECT_METHODS]).toEqual(["echo.pings"]);
     // And nothing else: a process crosses silent.
-    expect(channel.sent.some((f) => f.to === 3 && isState(f))).toBe(false);
+    expect(channel.sent.some((f) => f.to === 9 && isState(f))).toBe(false);
 
     // Asked for what it holds, it is said there and then.
-    channel.handler!({ to: 3, $tune: { streams: ["state"] } });
-    await waitUntil(() => channel.sent.some((f) => f.to === 3 && isState(f)), "the state it asked for");
-    expect(channel.sent.find((f) => f.to === 3 && isState(f))?.$state).toEqual({ pings: 0 });
+    channel.handler!({ to: 9, $tune: { streams: ["state"] } });
+    await waitUntil(() => channel.sent.some((f) => f.to === 9 && isState(f)), "the state it asked for");
+    expect(channel.sent.find((f) => f.to === 9 && isState(f))?.$state).toEqual({ pings: 0 });
 
     channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
     await answer;
@@ -431,15 +431,15 @@ describe("a process of this side, handed over", () => {
     await answer;
 
     // What it does is said only once the far side has asked to hear it.
-    channel.handler!({ to: 3, $tune: { streams: ["message", "state"] } });
-    await waitUntil(() => channel.sent.some((f) => f.to === 3 && isState(f)), "the state it asked for");
+    channel.handler!({ to: 9, $tune: { streams: ["message", "state"] } });
+    await waitUntil(() => channel.sent.some((f) => f.to === 9 && isState(f)), "the state it asked for");
 
-    channel.handler!({ to: 3, $msg: { fromName: "remote", body: { type: "PING" } } });
+    channel.handler!({ to: 9, $msg: { fromName: "remote", body: { type: "PING" } } });
     await waitUntil(() => (mine.state as unknown as { pings: number }).pings === 1, "the work it did");
 
     // And what it did about it crosses back, addressed to the process that asked.
-    await waitUntil(() => channel.sent.some((f) => f.to === 3 && isMsg(f)), "what it said");
-    const told = channel.sent.find((f) => f.to === 3 && isMsg(f));
+    await waitUntil(() => channel.sent.some((f) => f.to === 9 && isMsg(f)), "what it said");
+    const told = channel.sent.find((f) => f.to === 9 && isMsg(f));
     expect(told?.$msg).toEqual({ fromName: "mine", body: { type: "PONG" } });
 
     await mine.stop();
@@ -456,7 +456,7 @@ describe("a process of this side, handed over", () => {
 
     // A call the far side addressed to it: the method is this side's to run, and the
     // answer goes back by name and seq the way the root's does.
-    channel.handler!({ to: 3, [`${REFLECT_CALL}echo.pings`]: { seq: 7, args: [] } });
+    channel.handler!({ to: 9, [`${REFLECT_CALL}echo.pings`]: { seq: 7, args: [] } });
     await waitUntil(() => answersFor(channel, "echo.pings").length === 1, "the answer");
     expect(answersFor(channel, "echo.pings")[0]).toEqual({ seq: 7, value: 0 });
     // Answered to the far side's own end: an answer is about the call, not about a
@@ -465,7 +465,7 @@ describe("a process of this side, handed over", () => {
     expect(frameTo(answered!)).toBe(SERVER_ROOT);
 
     // A name it cannot answer is refused, and the refusal names it.
-    channel.handler!({ to: 3, [`${REFLECT_CALL}echo.nope`]: { seq: 8, args: [] } });
+    channel.handler!({ to: 9, [`${REFLECT_CALL}echo.nope`]: { seq: 8, args: [] } });
     await waitUntil(() => answersFor(channel, "echo.nope").length === 1, "the refusal");
     expect(answersFor(channel, "echo.nope")[0]).toEqual({
       seq: 8,
@@ -485,7 +485,7 @@ describe("a process of this side, handed over", () => {
       to: SERVER_ROOT,
       $msg: {
         fromName: "remote",
-        body: { type: "KID", kid: { [PROCESS_REF]: { id: 4, pname: "remote:kid" } } },
+        body: { type: "KID", kid: { [PROCESS_REF]: { id: 12, pname: "remote:kid" } } },
       },
     });
 
@@ -504,7 +504,7 @@ describe("a process of this side, handed over", () => {
     const answer = surface["probe.use"]!({ kids: [mine, { second: mine }] });
     await waitUntil(() => channel.sent.some((f) => frameKey(f, REFLECT_CALL)), "the call");
 
-    const expected = { [PROCESS_REF]: { id: 3, pname: "mine" } };
+    const expected = { [PROCESS_REF]: { id: 9, pname: "mine" } };
     const call = channel.sent.find((f) => frameKey(f, REFLECT_CALL))!;
     expect(call[`${REFLECT_CALL}probe.use`]).toEqual({
       seq: 1,
@@ -527,12 +527,12 @@ describe("a process of this side, handed over", () => {
     const proc = await actor.spawn({}, { awaitReady: false });
     await waitUntil(() => channel.handler !== null, "the handshake handler");
 
-    channel.handler!({ to: SERVER_ROOT, $state: { kid: { [PROCESS_REF]: { id: 2, pname: "remote:one" } } } });
+    channel.handler!({ to: SERVER_ROOT, $state: { kid: { [PROCESS_REF]: { id: 10, pname: "remote:one" } } } });
     await proc.ready();
     const first = (proc.state as { kid?: RemoteProcess }).kid;
     expect(first?.pname).toBe("remote:one");
 
-    channel.handler!({ to: SERVER_ROOT, $state: { kid: { [PROCESS_REF]: { id: 4, pname: "remote:two" } } } });
+    channel.handler!({ to: SERVER_ROOT, $state: { kid: { [PROCESS_REF]: { id: 12, pname: "remote:two" } } } });
     await waitUntil(
       () => (proc.state as { kid?: RemoteProcess }).kid?.pname === "remote:two",
       "the process that replaced it",
@@ -540,7 +540,7 @@ describe("a process of this side, handed over", () => {
 
     const second = (proc.state as { kid?: RemoteProcess }).kid;
     expect(second).not.toBe(first);
-    expect(second?.ref.id).toBe(4);
+    expect(second?.ref.id).toBe(12);
 
     await endProxy(channel, proc);
   });
@@ -555,14 +555,14 @@ describe("a process of this side, handed over", () => {
 
     // The end has to be asked for before it is asked to stop: whether an exit is
     // sent is decided by what the far side has been told to say when it comes.
-    channel.handler!({ to: 3, $tune: { streams: ["exit"] } });
-    channel.handler!({ to: 3, $stop: {} });
+    channel.handler!({ to: 9, $tune: { streams: ["exit"] } });
+    channel.handler!({ to: 9, $stop: {} });
     await mine.wait();
 
     // Its exit crosses back like everything else it does: the far side asked, so
     // it is the one that has to be told.
-    await waitUntil(() => channel.sent.some((f) => f.to === 3 && isExit(f)), "its exit");
-    const exit = channel.sent.find((f) => f.to === 3 && isExit(f));
+    await waitUntil(() => channel.sent.some((f) => f.to === 9 && isExit(f)), "its exit");
+    const exit = channel.sent.find((f) => f.to === 9 && isExit(f));
     expect(exit?.$exit).toEqual({ code: 0, state: { pings: 0 } });
 
     await endProxy(channel, proc);
@@ -577,12 +577,12 @@ describe("a process of this side, handed over", () => {
     channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
     await answer;
 
-    channel.handler!({ to: 3, $pause: {} });
-    channel.handler!({ to: 3, $msg: { fromName: "remote", body: { type: "PING" } } });
+    channel.handler!({ to: 9, $pause: {} });
+    channel.handler!({ to: 9, $msg: { fromName: "remote", body: { type: "PING" } } });
     await sleep(20);
     expect((mine.state as unknown as { pings: number }).pings).toBe(0);
 
-    channel.handler!({ to: 3, $resume: {} });
+    channel.handler!({ to: 9, $resume: {} });
     await waitUntil(() => (mine.state as unknown as { pings: number }).pings === 1, "the message it took");
 
     await mine.stop();
@@ -597,16 +597,16 @@ describe("a process of this side, handed over", () => {
     await waitUntil(() => channel.sent.some((f) => frameKey(f, REFLECT_CALL)), "the call");
     channel.handler!({ [`${REFLECT_RESULT}probe.use`]: { seq: 1, value: true } });
     await answer;
-    channel.handler!({ to: 3, $tune: { streams: ["message", "state"] } });
-    await waitUntil(() => channel.sent.some((f) => f.to === 3 && isState(f)), "the state it asked for");
+    channel.handler!({ to: 9, $tune: { streams: ["message", "state"] } });
+    await waitUntil(() => channel.sent.some((f) => f.to === 9 && isState(f)), "the state it asked for");
 
-    channel.handler!({ to: 3, $release: {} });
+    channel.handler!({ to: 9, $release: {} });
     await sleep(10);
     channel.sent.length = 0;
 
     // The id is this connection's no longer: a message for it goes nowhere, and
     // what the process does is not this connection's news.
-    channel.handler!({ to: 3, $msg: { fromName: "remote", body: { type: "PING" } } });
+    channel.handler!({ to: 9, $msg: { fromName: "remote", body: { type: "PING" } } });
     await sleep(20);
     expect((mine.state as unknown as { pings: number }).pings).toBe(0);
     expect(channel.sent).toEqual([]);
@@ -623,12 +623,12 @@ describe("a process of this side, handed over", () => {
     );
     const proc = await actor.spawn({}, { awaitReady: false });
     await waitUntil(() => channel.handler !== null, "the handshake handler");
-    channel.handler!({ to: SERVER_ROOT, $state: { kid: { [PROCESS_REF]: { id: 2, pname: "remote:kid" } } } });
+    channel.handler!({ to: SERVER_ROOT, $state: { kid: { [PROCESS_REF]: { id: 10, pname: "remote:kid" } } } });
     await proc.ready();
 
     const kid = (proc.state as { kid?: RemoteProcess }).kid!;
     const waiting = kid.wait();
-    channel.handler!({ to: 2, $exit: { code: 0, state: { pings: 2 } } });
+    channel.handler!({ to: 10, $exit: { code: 0, state: { pings: 2 } } });
 
     expect(await waiting).toEqual({ code: 0, state: { pings: 2 } });
     expect(kid.hasEnded()).toBe(true);
@@ -644,7 +644,7 @@ describe("the address on a frame", () => {
   it("names the process it is about, and nothing when it names none", () => {
     expect(frameTo({ $msg: {} })).toBeNull();
     expect(frameTo({ $msg: {}, to: SERVER_ROOT })).toBe(SERVER_ROOT);
-    expect(frameTo({ $msg: {}, to: 4 })).toBe(4);
+    expect(frameTo({ $msg: {}, to: 12 })).toBe(12);
     expect(frameTo({ $msg: {}, to: "4" })).toBeNull();
   });
 
@@ -654,7 +654,7 @@ describe("the address on a frame", () => {
 
     const frame = encodeFrame({ $msg: { fromName: "local", body: { kid: mine } } }, table, SERVER_ROOT);
     expect(frame).toEqual({
-      $msg: { fromName: "local", body: { kid: { [PROCESS_REF]: { id: 3, pname: "mine" } } } },
+      $msg: { fromName: "local", body: { kid: { [PROCESS_REF]: { id: 9, pname: "mine" } } } },
       to: SERVER_ROOT,
     });
     // Every frame names the process it is about, the root of the connection included:
@@ -666,13 +666,13 @@ describe("the address on a frame", () => {
 
   it("walks a whole frame in: references become what this side knows of them", () => {
     const frame = decodeFrame(
-      { $msg: { fromName: "far", body: { kid: { [PROCESS_REF]: { id: 4, pname: "theirs" } } } } },
+      { $msg: { fromName: "far", body: { kid: { [PROCESS_REF]: { id: 12, pname: "theirs" } } } } },
       makeHandle,
     );
     const kid = (frame.$msg as { body: { kid: RemoteProcess } }).body.kid;
 
     expect(kid).toBeInstanceOf(RemoteProcess);
-    expect(kid.ref.id).toBe(4);
+    expect(kid.ref.id).toBe(12);
     expect(kid.pname).toBe("theirs");
   });
 
@@ -687,7 +687,7 @@ describe("the address on a frame", () => {
     const proc = await actor.spawn({}, { awaitReady: false });
     await waitUntil(() => channel.handler !== null, "the handshake handler");
 
-    channel.handler!({ to: SERVER_ROOT, $state: { kid: { [PROCESS_REF]: { id: 2, pname: "remote:kid" } } } });
+    channel.handler!({ to: SERVER_ROOT, $state: { kid: { [PROCESS_REF]: { id: 10, pname: "remote:kid" } } } });
     await proc.ready();
 
     const kid = (proc.state as unknown as { kid?: RemoteProcess }).kid;
@@ -964,7 +964,7 @@ describe("serveRemoteActor reflection", () => {
     await waitUntil(() => answersFor(channel, "probe.children").length === 1, "both answers");
 
     expect(answersFor(channel, "probe.child")).toEqual([
-      { seq: 8, value: { [PROCESS_REF]: { id: 2, pname: "remote:one" } } },
+      { seq: 8, value: { [PROCESS_REF]: { id: 10, pname: "remote:one" } } },
     ]);
     // The same process handed over again is the same reference; the second child
     // is a different process, so it gets an id of its own.
@@ -972,8 +972,8 @@ describe("serveRemoteActor reflection", () => {
       {
         seq: 9,
         value: [
-          { [PROCESS_REF]: { id: 2, pname: "remote:one" } },
-          { [PROCESS_REF]: { id: 4, pname: "remote:two" } },
+          { [PROCESS_REF]: { id: 10, pname: "remote:one" } },
+          { [PROCESS_REF]: { id: 12, pname: "remote:two" } },
         ],
       },
     ]);
@@ -1031,7 +1031,7 @@ describe("serveRemoteActor reflection", () => {
     // The frame that carried it, not the last one: the process it carries has a
     // state of its own, which streams as soon as it has crossed.
     const carrying = rootStates(channel).find((frame) => "child" in frame.$state);
-    expect(carrying?.$state.child).toEqual({ [PROCESS_REF]: { id: 2, pname: "remote:one" } });
+    expect(carrying?.$state.child).toEqual({ [PROCESS_REF]: { id: 10, pname: "remote:one" } });
 
     await endServer(channel, served);
   });
@@ -1045,19 +1045,19 @@ describe("serveRemoteActor reflection", () => {
 
     // What it can answer, about the process that just crossed: not one of the three
     // categories, so it is said even to a far side that asked for nothing.
-    const announced = channel.sent.filter((f) => f.to === 2 && isReflectionMethods(f));
+    const announced = channel.sent.filter((f) => f.to === 10 && isReflectionMethods(f));
     expect(announced.length).toBe(1);
     // And nothing else: what it holds and what it says wait to be asked for.
-    expect(channel.sent.some((f) => f.to === 2 && isState(f))).toBe(false);
-    expect(channel.sent.some((f) => f.to === 2 && isMsg(f))).toBe(false);
+    expect(channel.sent.some((f) => f.to === 10 && isState(f))).toBe(false);
+    expect(channel.sent.some((f) => f.to === 10 && isMsg(f))).toBe(false);
 
     // Asked for both, it is said now rather than at the next change.
-    channel.handler!({ to: 2, $tune: { streams: ["message", "state"] } });
-    await waitUntil(() => channel.sent.some((f) => f.to === 2 && isState(f)), "the state it asked for");
+    channel.handler!({ to: 10, $tune: { streams: ["message", "state"] } });
+    await waitUntil(() => channel.sent.some((f) => f.to === 10 && isState(f)), "the state it asked for");
 
-    channel.handler!({ to: 2, $msg: { fromName: "client", body: { type: "PING" } } });
-    await waitUntil(() => channel.sent.some((f) => f.to === 2 && isMsg(f)), "its message");
-    const told = channel.sent.find((f) => f.to === 2 && isMsg(f));
+    channel.handler!({ to: 10, $msg: { fromName: "client", body: { type: "PING" } } });
+    await waitUntil(() => channel.sent.some((f) => f.to === 10 && isMsg(f)), "its message");
+    const told = channel.sent.find((f) => f.to === 10 && isMsg(f));
     expect(told?.$msg).toEqual({ fromName: "remote:one", body: { type: "PONG" } });
 
     await endServer(channel, served);
@@ -1067,13 +1067,13 @@ describe("serveRemoteActor reflection", () => {
     const { channel, served } = await serveProbe();
 
     channel.handler!({
-      [`${REFLECT_CALL}probe.take`]: { seq: 20, args: [{ [PROCESS_REF]: { id: 3, pname: "mine" } }] },
+      [`${REFLECT_CALL}probe.take`]: { seq: 20, args: [{ [PROCESS_REF]: { id: 9, pname: "mine" } }] },
       to: SERVER_ROOT,
     });
     await waitUntil(() => answerFor(channel, "probe.take") !== undefined, "the handle");
-    expect(answerFor(channel, "probe.take")).toEqual({ seq: 20, value: 3 });
+    expect(answerFor(channel, "probe.take")).toEqual({ seq: 20, value: 9 });
 
-    channel.handler!({ to: 3, $state: { pings: 1 } });
+    channel.handler!({ to: 9, $state: { pings: 1 } });
     channel.handler!({ [`${REFLECT_CALL}probe.held`]: { seq: 21, args: [] } , to: SERVER_ROOT });
     await waitUntil(() => answerFor(channel, "probe.held") !== undefined, "what it holds");
     expect(answerFor(channel, "probe.held")).toEqual({
@@ -1102,7 +1102,7 @@ describe("serveRemoteActor reflection", () => {
       to: SERVER_ROOT,
       $msg: {
         fromName: "client",
-        body: { type: "KEEP", kid: { [PROCESS_REF]: { id: 3, pname: "mine" } } },
+        body: { type: "KEEP", kid: { [PROCESS_REF]: { id: 9, pname: "mine" } } },
       },
     });
     await waitUntil(() => channel.sent.some((f) => isState(f) && "kept" in f.$state), "the state it set");
@@ -1126,15 +1126,15 @@ describe("serveRemoteActor reflection", () => {
       to: SERVER_ROOT,
       $msg: {
         fromName: "client",
-        body: { type: "KEEP", kid: { [PROCESS_REF]: { id: 3, pname: "mine" } } },
+        body: { type: "KEEP", kid: { [PROCESS_REF]: { id: 9, pname: "mine" } } },
       },
     });
     await waitUntil(() => channel.sent.some((f) => isState(f) && "kept" in f.$state), "the state it set");
-    channel.handler!({ to: 3, [REFLECT_METHODS]: ["echo.pings"] });
+    channel.handler!({ to: 9, [REFLECT_METHODS]: ["echo.pings"] });
 
     channel.handler!({ [`${REFLECT_CALL}probe.ask`]: { seq: 30, args: ["echo.pings", []] } , to: SERVER_ROOT });
-    await waitUntil(() => channel.sent.some((f) => f.to === 3 && frameKey(f, REFLECT_CALL)), "the call it made");
-    const made = asReflectionCall(channel.sent.find((f) => f.to === 3 && frameKey(f, REFLECT_CALL))!)!;
+    await waitUntil(() => channel.sent.some((f) => f.to === 9 && frameKey(f, REFLECT_CALL)), "the call it made");
+    const made = asReflectionCall(channel.sent.find((f) => f.to === 9 && frameKey(f, REFLECT_CALL))!)!;
     expect(made.name).toBe("echo.pings");
     expect(made.args).toEqual([]);
 
@@ -1160,10 +1160,10 @@ describe("serveRemoteActor reflection", () => {
 
     // Asked for the end first, then asked to stop: an exit nobody asked for is
     // never sent, so the asking has to be there before the end can be.
-    channel.handler!({ to: 2, $tune: { streams: ["exit"] } });
-    channel.handler!({ to: 2, $stop: {} });
-    await waitUntil(() => channel.sent.some((f) => f.to === 2 && isExit(f)), "its exit");
-    expect(channel.sent.find((f) => f.to === 2 && isExit(f))?.$exit).toEqual({ code: 0, state: null });
+    channel.handler!({ to: 10, $tune: { streams: ["exit"] } });
+    channel.handler!({ to: 10, $stop: {} });
+    await waitUntil(() => channel.sent.some((f) => f.to === 10 && isExit(f)), "its exit");
+    expect(channel.sent.find((f) => f.to === 10 && isExit(f))?.$exit).toEqual({ code: 0, state: null });
 
     await endServer(channel, served);
   });
@@ -1173,26 +1173,26 @@ describe("serveRemoteActor reflection", () => {
 
     channel.handler!({ [`${REFLECT_CALL}probe.expose`]: { seq: 42, args: [] } , to: SERVER_ROOT });
     await waitUntil(() => rootStates(channel).some((f) => "child" in f.$state), "the child it put out");
-    channel.handler!({ to: 2, $tune: { streams: ["state"] } });
-    await waitUntil(() => channel.sent.some((f) => f.to === 2 && isState(f)), "the state it asked for");
+    channel.handler!({ to: 10, $tune: { streams: ["state"] } });
+    await waitUntil(() => channel.sent.some((f) => f.to === 10 && isState(f)), "the state it asked for");
 
-    channel.handler!({ to: 2, $release: {} });
+    channel.handler!({ to: 10, $release: {} });
     await sleep(10);
     channel.sent.length = 0;
 
     // The id is no longer this connection's: a call to it is refused, and a message
     // to it goes nowhere.  The process itself is untouched, and nothing about it is
     // said here any more.
-    channel.handler!({ [`${REFLECT_CALL}probe.add`]: { seq: 43, args: [1, 2] }, to: 2 });
+    channel.handler!({ [`${REFLECT_CALL}probe.add`]: { seq: 43, args: [1, 2] }, to: 10 });
     await waitUntil(() => answerFor(channel, "probe.add") !== undefined, "the refusal");
     expect(answerFor(channel, "probe.add")).toEqual({
       seq: 43,
       error: "no process with that id on this connection",
     });
 
-    channel.handler!({ to: 2, $msg: { fromName: "client", body: { type: "PING" } } });
+    channel.handler!({ to: 10, $msg: { fromName: "client", body: { type: "PING" } } });
     await sleep(20);
-    expect(channel.sent.filter((f) => f.to === 2)).toEqual([]);
+    expect(channel.sent.filter((f) => f.to === 10)).toEqual([]);
 
     await endServer(channel, served);
   });
@@ -1203,14 +1203,14 @@ describe("serveRemoteActor reflection", () => {
     channel.handler!({ [`${REFLECT_CALL}probe.expose`]: { seq: 41, args: [] } , to: SERVER_ROOT });
     await waitUntil(() => rootStates(channel).some((f) => "child" in f.$state), "the child it put out");
 
-    channel.handler!({ to: 2, $tune: { streams: ["message", "state"] } });
-    channel.handler!({ to: 2, $pause: {} });
-    channel.handler!({ to: 2, $msg: { fromName: "client", body: { type: "PING" } } });
+    channel.handler!({ to: 10, $tune: { streams: ["message", "state"] } });
+    channel.handler!({ to: 10, $pause: {} });
+    channel.handler!({ to: 10, $msg: { fromName: "client", body: { type: "PING" } } });
     await sleep(20);
-    expect(channel.sent.some((f) => f.to === 2 && isMsg(f))).toBe(false);
+    expect(channel.sent.some((f) => f.to === 10 && isMsg(f))).toBe(false);
 
-    channel.handler!({ to: 2, $resume: {} });
-    await waitUntil(() => channel.sent.some((f) => f.to === 2 && isMsg(f)), "its answer");
+    channel.handler!({ to: 10, $resume: {} });
+    await waitUntil(() => channel.sent.some((f) => f.to === 10 && isMsg(f)), "its answer");
 
     await endServer(channel, served);
   });
@@ -1222,13 +1222,13 @@ describe("serveRemoteActor reflection", () => {
     await waitUntil(() => rootStates(channel).some((f) => "child" in f.$state), "the child it put out");
 
     // Nothing this vocabulary has a word for: frames to drop, not to guess at.
-    channel.handler!({ to: 2, $tune: { streams: "state" } });
-    channel.handler!({ to: 2, $tune: { streams: ["nonsense"] } });
-    channel.handler!({ to: 2, $tune: {} });
+    channel.handler!({ to: 10, $tune: { streams: "state" } });
+    channel.handler!({ to: 10, $tune: { streams: ["nonsense"] } });
+    channel.handler!({ to: 10, $tune: {} });
     channel.handler!({ to: 99, $tune: { streams: ["state"] } });
     await sleep(20);
 
-    expect(channel.sent.some((f) => f.to === 2 && isState(f))).toBe(false);
+    expect(channel.sent.some((f) => f.to === 10 && isState(f))).toBe(false);
 
     await endServer(channel, served);
   });
@@ -1242,7 +1242,7 @@ describe("serveRemoteActor reflection", () => {
     const sent = channel.sent.find(isMsg);
     expect(sent?.$msg.body).toEqual({
       type: "KID",
-      kid: { [PROCESS_REF]: { id: 2, pname: "remote:one" } },
+      kid: { [PROCESS_REF]: { id: 10, pname: "remote:one" } },
     });
 
     await endServer(channel, served);
@@ -1258,8 +1258,8 @@ describe("serveRemoteActor reflection", () => {
     await waitUntil(() => carried().length > 1, "the one that replaced it");
 
     // Two processes, two ids: what the state holds now is not what it held.
-    expect(carried()[0].$state.child).toEqual({ [PROCESS_REF]: { id: 2, pname: "remote:one" } });
-    expect(carried()[1].$state.child).toEqual({ [PROCESS_REF]: { id: 4, pname: "remote:two" } });
+    expect(carried()[0].$state.child).toEqual({ [PROCESS_REF]: { id: 10, pname: "remote:one" } });
+    expect(carried()[1].$state.child).toEqual({ [PROCESS_REF]: { id: 12, pname: "remote:two" } });
 
     await endServer(channel, served);
   });
@@ -1270,14 +1270,14 @@ describe("serveRemoteActor reflection", () => {
     channel.handler!({
       [`${REFLECT_CALL}probe.whatItGot`]: {
         seq: 11,
-        args: [{ [PROCESS_REF]: { id: 4, pname: "tools:kid" } }],
+        args: [{ [PROCESS_REF]: { id: 12, pname: "tools:kid" } }],
       },
       to: SERVER_ROOT,
     });
     await waitUntil(() => answerFor(channel, "probe.whatItGot") !== undefined, "the answer");
     expect(answerFor(channel, "probe.whatItGot")).toEqual({
       seq: 11,
-      value: { reference: "tools:kid", id: 4 },
+      value: { reference: "tools:kid", id: 12 },
     });
 
     await endServer(channel, served);
@@ -1293,7 +1293,7 @@ describe("serveRemoteActor reflection", () => {
     // Id 2 is this side's own child, so a reference to it is not something to
     // make a handle of: it is the process, back where it belongs.
     channel.handler!({
-      [`${REFLECT_CALL}probe.whatItGot`]: { seq: 16, args: [{ [PROCESS_REF]: { id: 2, pname: "remote:one" } }] },
+      [`${REFLECT_CALL}probe.whatItGot`]: { seq: 16, args: [{ [PROCESS_REF]: { id: 10, pname: "remote:one" } }] },
       to: SERVER_ROOT,
     });
     await waitUntil(() => answerFor(channel, "probe.whatItGot") !== undefined, "the answer");

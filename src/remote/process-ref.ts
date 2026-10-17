@@ -61,8 +61,13 @@ export interface ProcessHandle {
 /** Which ids a side hands out: the client takes the odd ones, the server the
  *  even ones, so one number can never name a process on both sides at once. */
 export type IdParity = "odd" | "even";
+/** The end of the low band: ids 0 and 1 are the two roots, 2 through 8 belong to a party that speaks
+ *  on a connection it otherwise only relays — the first stage's own streams — and nothing allocates
+ *  inside it, so a band id can never collide with one either end mints. */
+export const LOW_BAND_END = 8;
+
 /**
- * The ids one side of a connection hands out: its own parity, from two steps past its own root.
+ * The ids one side of a connection hands out: its own parity, from the far side of the low band.
  *
  * Everything numbered on the connection draws from one space — a process reference and a stream alike —
  * so a number names one thing, and the parity says which side made it.  Each side builds its own and
@@ -70,9 +75,15 @@ export type IdParity = "odd" | "even";
  */
 export class IdSpace {
   private pvtNext: number;
+  /** True for a space inside the low band, which refuses to leave it. */
+  private readonly pvtBand: boolean;
 
-  constructor(readonly parity: IdParity) {
-    this.pvtNext = rootIdFor(parity) + 2;
+  constructor(
+    readonly parity: IdParity,
+    first: number = parity === "odd" ? LOW_BAND_END + 1 : LOW_BAND_END + 2,
+  ) {
+    this.pvtNext = first;
+    this.pvtBand = first <= LOW_BAND_END;
   }
 
   /** This side's own end of the connection: the first id of its parity, never handed out. */
@@ -82,10 +93,20 @@ export class IdSpace {
 
   /** The next id of this side's parity, and never the same one twice. */
   next(): number {
+    if (this.pvtBand && this.pvtNext > LOW_BAND_END) throw new Error("IdSpace: the low band is spent");
     const id = this.pvtNext;
     this.pvtNext += 2;
     return id;
   }
+}
+
+/**
+ * A space inside the low band, for a party that speaks on a connection it otherwise relays: its ids
+ * come from a range no end allocates in, so announcing something of its own cannot take a number
+ * either end might mint.
+ */
+export function lowBand(parity: IdParity): IdSpace {
+  return new IdSpace(parity, parity === "odd" ? 3 : 2);
 }
 
 /**

@@ -149,7 +149,7 @@ describe("a stream on the wire", () => {
     const { ref, file } = await handOver(aStore, bStore, source);
     // The announcement is written before anything names it, and what a message carries is a reference.
     // Ids come from the connection's space, two past this side's root: the odd side's first is 3.
-    expect(a.frames[0]).toMatchObject({ $stream: { id: 3 } });
+    expect(a.frames[0]).toMatchObject({ $stream: { id: 9 } });
     expect(isStreamRef(ref)).toBe(true);
 
     const chunks = await readAll(file);
@@ -169,8 +169,8 @@ describe("a stream on the wire", () => {
     const source = Object.assign(counted(1, 4), { size: 4, type: "image/png", name: "shot.png" });
 
     const { ref } = await handOver(aStore, bStore, source);
-    expect(a.frames[0]).toEqual({ $stream: { id: 3 } });
-    expect(ref).toEqual({ $s: { id: 3 } });
+    expect(a.frames[0]).toEqual({ $stream: { id: 9 } });
+    expect(ref).toEqual({ $s: { id: 9 } });
     aStore.close();
     bStore.close();
   });
@@ -543,7 +543,7 @@ describe("named streams", () => {
     const { aStore, bStore } = wire({ a: { chunkBytes: 4 } });
     const ref = aStore.offer(counted(1, 4), "stderr");
     await settle();
-    expect(ref).toEqual({ $s: { id: 3 } });
+    expect(ref).toEqual({ $s: { id: 9 } });
 
     const decoded = bStore.decode({ log: { $s: { name: "stderr" } } }) as { log: RemoteStream };
     expect(decoded.log).toBe(bStore.named("stderr"));
