@@ -69,6 +69,11 @@ const reflector = defineActor({
     async "probe.add"(a, b) {
       return a + b;
     },
+    async "probe.echoBytes"(value) {
+      // Bytes are bytes on both sides of this line: what arrives is whatever it took the
+      // wire to carry, and what goes back is the same octets.
+      return new Uint8Array(await value);
+    },
     "probe.late"(ms) {
       return new Promise((resolve) => setTimeout(() => resolve(`late:${ms}`), ms));
     },

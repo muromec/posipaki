@@ -15,6 +15,7 @@ import type { FarProcess, TreeNode } from "../plugins/tree-introspection.js";
 import { inspect } from "../plugins/tree-introspection.js";
 import type { Message } from "../types.js";
 import { sleep } from "../util.js";
+import { createHash, randomBytes } from "node:crypto";
 
 type Surface = Record<string, (...args: unknown[]) => Promise<unknown>>;
 
@@ -449,4 +450,25 @@ describe("reflection across a process boundary", () => {
 
     await proc.stop();
   }, 20000);
+
+  it("carries bytes in and out, and the far side reads them as bytes", async () => {
+    const { proc, surface } = await spawnPayload();
+
+    // Ten megabytes: more chunks than one frame has any business carrying, and random, so a
+    // lost, doubled or reordered chunk cannot pass as the original.
+    const sent = new Uint8Array(randomBytes(10 * 1024 * 1024));
+    const started = Date.now();
+    const answer = await surface["probe.echoBytes"](sent);
+    const back = new Uint8Array((await answer) as ArrayLike<number>);
+    const elapsed = Date.now() - started;
+
+    expect(back.byteLength).toBe(sent.byteLength);
+    expect(createHash("sha256").update(back).digest("hex")).toBe(
+      createHash("sha256").update(sent).digest("hex"),
+    );
+    // A guard, not a benchmark: a call that takes this long has something holding the wire.
+    expect(elapsed).toBeLessThan(30_000);
+
+    await proc.stop();
+  }, 40_000);
 });

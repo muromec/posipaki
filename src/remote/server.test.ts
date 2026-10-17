@@ -3,10 +3,9 @@
 import { describe, it, expect } from "vitest";
 import { defineActor, defineMessages } from "../index.js";
 import { serveRemoteActor } from "./reactor.js";
-import { ProcessTable, rootIdFor } from "./process-ref.js";
-import { decodeFrame, encodeFrame, errorReason, frameReaders, isError, isExit, isMsg, isState } from "./channel.js";
+import { rootIdFor } from "./process-ref.js";
+import { errorReason, isError, isExit, isMsg, isState } from "./channel.js";
 import type { Channel } from "./channel.js";
-import { BlobStore } from "./blob.js";
 import { sleep } from "../util.js";
 
 class FakeChannel implements Channel {
@@ -256,105 +255,3 @@ describe("serveRemoteActor (unit)", () => {
   });
 });
 
-describe("bytes across the seam", () => {
-  /** A channel with several readers, and a far side to hand frames to: the fake above holds
-   *  one handler, and the point here is that the served actor and its blob store are two. */
-  class MultiChannel implements Channel {
-    readonly sent: Record<string, unknown>[] = [];
-    /** How many readers have asked to be handed frames: the server installs one before it
-     *  says anything, and a frame sent before that is a frame nobody held. */
-    subscribed = 0;
-    private deliver: (frame: Record<string, unknown>) => void = () => {};
-    private readonly readers = frameReaders((deliver) => {
-      this.deliver = deliver;
-    });
-
-    async send(frame: Record<string, unknown>): Promise<void> {
-      this.sent.push(frame);
-    }
-    onMessage(handler: (frame: Record<string, unknown>) => void): () => void {
-      this.subscribed += 1;
-      return this.readers(handler);
-    }
-    onClose(): void {
-      /* the test closes nothing */
-    }
-    async close(): Promise<void> {
-      /* nothing to release */
-    }
-    receive(frame: Record<string, unknown>): void {
-      this.deliver(frame);
-    }
-  }
-
-  /** Two channels, each the other's far side: what one sends, the other is handed. */
-  function bridge(): [MultiChannel, MultiChannel] {
-    const served = new MultiChannel();
-    const client = new MultiChannel();
-    served.send = async (frame: Record<string, unknown>) => {
-      served.sent.push(frame);
-      client.receive(frame);
-    };
-    client.send = async (frame: Record<string, unknown>) => {
-      client.sent.push(frame);
-      served.receive(frame);
-    };
-    return [served, client];
-  }
-
-  it("hands a byte array to the served actor as a value it can await, and back again", async () => {
-    const [servedChannel, clientChannel] = bridge();
-    // The client side first: it must be listening before the server says anything.
-    const clientBlobs = new BlobStore(clientChannel, "odd");
-    const table = new ProcessTable("odd");
-
-    /** What the served actor does with what it was handed: await it, and send it back. */
-    const Ear = defineActor({
-      name: "ear",
-      inMessages: defineMessages<{ type: "PING"; count: number; file?: unknown }>(),
-      outMessages: defineMessages<{ type: "PONG"; count: number; file?: unknown; length?: number }>(),
-      setup: () => ({ pings: 0 }),
-      handlers: {
-        async PING(msg: { type: "PING"; count: number; file?: unknown }) {
-          // The same line an application writes when the peer is a process in this one.
-          const bytes = new Uint8Array((await msg.file) as ArrayLike<number>);
-          this.state.pings += 1;
-          await this.emit({ type: "PONG", count: msg.count, file: bytes, length: bytes.byteLength });
-        },
-      },
-    });
-
-    const serve = serveRemoteActor(Ear, () => Promise.resolve(servedChannel));
-    await waitUntil(() => servedChannel.subscribed > 0, "the serving side's handler");
-
-    const send = (frame: Record<string, unknown>): Promise<void> =>
-      Promise.resolve(clientChannel.send(encodeFrame(frame, table, rootIdFor("even"), clientBlobs)));
-
-    await send({ $init: { parentName: "root", parentIdName: "root" } });
-    await send({ $tune: { streams: ["message", "state", "exit"] } });
-
-    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0x80, 0xc3, 0xa9, 0x0d, 0x0a]);
-    await send({ $msg: { fromName: "root", body: { type: "PING", count: 3, file: bytes } } });
-    const answer = await (async () => {
-      const deadline = Date.now() + 5000;
-      while (Date.now() < deadline) {
-        const frame = servedChannel.sent.map((raw) => decodeFrame(raw, (ref) => ref, clientBlobs)).find(isMsg);
-        if (frame) return frame as unknown as { $msg: { body: Record<string, unknown> } };
-        await sleep(1);
-      }
-      throw new Error("no $msg answer from the served actor");
-    })();
-
-    const body = answer.$msg.body;
-    expect(body.type).toBe("PONG");
-    expect(body.count).toBe(3);
-    // The value the actor got was the bytes it was sent: it counted them.
-    expect(body.length).toBe(bytes.byteLength);
-    // …and the bytes it sent back cross as a value this side awaits for the same octets.
-    const back = await (body.file as PromiseLike<Uint8Array>);
-    expect(Array.from(back)).toEqual(Array.from(bytes));
-
-    await send({ $msg: { fromName: "root", body: { type: "STOP" } } });
-    await serve;
-  });
-});

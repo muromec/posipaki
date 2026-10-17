@@ -151,10 +151,13 @@ export async function answerCall(
     return;
   }
   try {
-    // References in the arguments arrived as handles on processes of this side's own,
-    // and processes in the answer become references.  What is left has to be JSON, or
-    // the call is refused rather than half-written.
-    const value = encodeProcessRefs(await method(...call.args), table);
+    // References in the arguments arrived as handles on processes of this side's own, and
+    // processes in the answer become references.  Bytes become references too, and that
+    // walk runs before the check below: what has to be JSON is the frame, and a megabyte of
+    // bytes is JSON only once it is a reference to them (stringifying the array itself is
+    // a million keys — measured at 4.6 s for one megabyte, which is how this was found).
+    const answer = encodeProcessRefs(await method(...call.args), table);
+    const value = blobs === undefined ? answer : blobs.encode(answer);
     const problem = jsonProblem(value);
     if (problem !== null) {
       await reply({

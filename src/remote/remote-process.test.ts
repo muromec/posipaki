@@ -12,15 +12,15 @@ import { RemoteProcess } from "./remote-process.js";
 import type { Message } from "../types.js";
 
 type Ping = { type: "PING"; n: number } & Message;
-type Pong = { type: "PONG"; n: number } & Message;
+type Pong = { type: "PONG"; n: number; guest?: { refCount(): number } } & Message;
 
-function makeHandle(
+function makeHandle<In extends Message = Ping, Out extends Message = Pong>(
   sent: Array<[Record<string, unknown>, number]> = [],
   ref: { id: number; pname: string } = { id: 2, pname: "remote:kid" },
   kept = true,
 ) {
   const letGo: number[] = [];
-  const handle = new RemoteProcess<Ping, Pong>(
+  const handle = new RemoteProcess<In, Out>(
     ref,
     (frame, to) => {
       sent.push([frame, to]);
@@ -212,7 +212,7 @@ describe("RemoteProcess", () => {
   it("does not count a reference that arrived to be passed on, and drops it with the handle", () => {
     const parent = makeHandle();
     const guest = makeHandle([], { id: 6, pname: "remote:guest" }, false);
-    const body = { type: "PONG", n: 1, guest: guest.handle } as unknown as Pong;
+    const body: Pong = { type: "PONG", n: 1, guest: guest.handle };
 
     parent.handle.receiveMessage(body, "remote:kid");
     expect(guest.handle.refCount()).toBe(0);
@@ -225,7 +225,7 @@ describe("RemoteProcess", () => {
   it("leaves a reference somebody kept to them when the one that carried it goes", () => {
     const parent = makeHandle();
     const guest = makeHandle([], { id: 6, pname: "remote:guest" }, false);
-    const body = { type: "PONG", n: 1, guest: guest.handle } as unknown as Pong;
+    const body: Pong = { type: "PONG", n: 1, guest: guest.handle };
 
     parent.handle.receiveMessage(body, "remote:kid");
     guest.handle.holdRef();
@@ -429,5 +429,30 @@ describe("RemoteProcess", () => {
 
     handle.receiveExit({ code: 0, state: { pings: 3 } });
     await expect(waiting).resolves.toEqual({ code: 0, state: { pings: 3 } });
+  });
+
+  it("puts a body with bytes in it on the wire as the application made it, and hands one back the same way", () => {
+    type Carries = { type: "PING"; n: number; file: Uint8Array } & Message;
+    type Echoed = { type: "PONG"; n: number; file: unknown } & Message;
+    const { handle, sent } = makeHandle<Carries, Echoed>();
+    const bytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47]);
+
+    handle.send({ type: "PING", n: 1, file: bytes });
+
+    // A handle's job is the frame and the id.  Turning bytes into a reference is the
+    // connection's (`encodeFrame`), and the walk that does it copies rather than rewrites,
+    // so what is still the application's value here has to stay that value.
+    const [frame, to] = sent[0]!;
+    expect(sent).toHaveLength(1);
+    expect(to).toBe(2);
+    expect((frame as { $msg: { body: { file: unknown } } }).$msg.body.file).toBe(bytes);
+
+    // And what arrives is handed on as the connection decoded it: a handle for a blob is
+    // the subscriber's to await, not this layer's to unwrap.
+    const seen: Echoed[] = [];
+    handle.subscribe("message", (msg) => seen.push(msg));
+    const arrived: Echoed = { type: "PONG", n: 1, file: { size: 4 } };
+    handle.receiveMessage(arrived, "remote:kid");
+    expect(seen).toEqual([arrived]);
   });
 });
