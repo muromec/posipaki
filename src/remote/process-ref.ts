@@ -24,6 +24,7 @@
 
 import { isProcess } from "../process.async.js";
 import type { RemoteProcess } from "./remote-process.js";
+import { isPlainObject, isStreamLike } from "./channel.js";
 
 /** The key that marks a process reference inside an otherwise JSON value. */
 export const PROCESS_REF = "$p";
@@ -188,12 +189,6 @@ export class ProcessTable<P extends ProcessHandle = ProcessHandle> {
   }
 }
 
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-  if (typeof value !== "object" || value === null) return false;
-  const proto = Object.getPrototypeOf(value) as object | null;
-  return proto === Object.prototype || proto === null;
-}
-
 /** Whether `value` is the wire form of a reference. */
 export function asProcessRef(value: unknown): ProcessRef | null {
   if (typeof value !== "object" || value === null) return null;
@@ -235,6 +230,9 @@ export function encodeProcessRefs(
   table: ProcessTable,
   seen: Set<unknown> = new Set(),
 ): unknown {
+  // A stream is carried by reference too, and its behaviour lives on a symbol-keyed property a
+  // copy would drop.  It is the stream layer's value to offer, so it is left as it is here.
+  if (isStreamLike(value)) return value;
   if (isRemoteProcess(value)) {
     return { [PROCESS_REF]: { id: value.ref.id, pname: value.ref.pname } };
   }
@@ -267,6 +265,9 @@ export function decodeProcessRefs(
   resolve: RefResolver,
   seen: Set<unknown> = new Set(),
 ): unknown {
+  // A stream is carried by reference too, and its behaviour lives on a symbol-keyed property a
+  // copy would drop.  It is the stream layer's value to offer, so it is left as it is here.
+  if (isStreamLike(value)) return value;
   const ref = asProcessRef(value);
   if (ref) return resolve(ref);
   if (Array.isArray(value)) {

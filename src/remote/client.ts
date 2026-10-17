@@ -25,6 +25,7 @@ import {
   REFLECT_METHODS,
   asReflectionCall,
   badReason,
+  combineCodecs,
   decodeFrame,
   encodeFrame,
   errorReason,
@@ -42,6 +43,7 @@ import {
 } from "./channel.js";
 import { CallSide, answerCall } from "./call-side.js";
 import { BlobStore } from "./blob.js";
+import { StreamStore } from "./stream.js";
 
 export type ClientSpawner<Args> = (args: Args) => Promise<Channel>;
 
@@ -119,6 +121,10 @@ export function remoteClient<
       // The connection's blobs, numbered on this side's parity: the bytes get an engine of
       // their own beside the process table, and neither has to know about the other.
       const blobs = new BlobStore(channel, "odd");
+      // Its byte streams, on the same parity split.  They are walked first: a stream is the thing
+      // a blob or a typed array becomes, so what is still a stream must be offered as one.
+      const byteStreams = new StreamStore(channel, "odd");
+      const codecs = combineCodecs(byteStreams, blobs);
       // The connection this proxy holds is the process's own fact, so whatever the process
       // does with the frames asks the same place the remote layer does.
       this.ctx.connection = channel;
@@ -152,7 +158,7 @@ export function remoteClient<
       /** Every frame leaves this way: the processes in it become references, and
        *  what the frame is addressed to becomes the id the far side knows. */
       const sendTo: FrameSink = (frame, to) => {
-        void write(encodeFrame(frame, table, to, blobs)).catch((error: unknown) => {
+        void write(encodeFrame(frame, table, to, codecs)).catch((error: unknown) => {
           // A live wire reports a lost frame loudly; a wire that is ending reports nothing, because
           // its last words are exactly what cannot be delivered any more (see server.ts).
           if (pvtWindDown) return;
@@ -179,7 +185,7 @@ export function remoteClient<
       // This side both makes calls and answers them, and so does the other end of
       // every connection: what a call is, and how an answer finds the one waiting
       // for it, is written once in call-side.ts.
-      const calls = new CallSide(write, table, blobs);
+      const calls = new CallSide(write, table, codecs);
 
       /**
        * The handle for a reference that arrived.  A process handed over twice is one
@@ -267,6 +273,7 @@ export function remoteClient<
         calls.rejectAll();
         // A blob read still in flight has no answer coming either.
         blobs.close();
+        byteStreams.close();
         // Handles live on this connection: with it gone there is nothing to reach, and
         // nothing to wait for either.
         for (const held of table.handles()) {
@@ -292,7 +299,7 @@ export function remoteClient<
           wireGone();
           return;
         }
-        const frame = decodeFrame(raw, handleFor, blobs);
+        const frame = decodeFrame(raw, handleFor, codecs);
         // An answer is about the call waiting for it and not about a process: it names
         // the seq, and is settled before anything is looked up.
         if (calls.settle(frame)) return;
@@ -379,7 +386,7 @@ export function remoteClient<
         // A call into a process of this side's own, made from over there: the method is
         // this side's to run, and the answer goes back by name and seq.
         const call = asReflectionCall(frame);
-        if (call) void answerCall(call, mine, write, table, blobs);
+        if (call) void answerCall(call, mine, write, table, codecs);
       });
       // A wire that goes before the far root does leaves nothing to wait for: the handles are gone,
       // and the far root's end is the connection's end, which is what `wait()` on it rejects about.

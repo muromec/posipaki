@@ -33,20 +33,58 @@ export interface StringTransport {
 }
 
 /**
- * What the frame layer needs of a connection's blobs: two walks, and no knowledge of how the
- * bytes travel.  The frame vocabulary lives in this file and the machinery in `blob.ts`, so a
- * store comes in as this shape rather than as an import from here.
+/**
+ * What the frame layer needs of a connection's values: two walks, and no knowledge of how the
+ * bytes travel.  The frame vocabulary lives in this file and the machinery in `blob.ts` and
+ * `stream.ts`, so a store comes in as this shape rather than as an import from here.
  */
-export interface BlobCodec {
-  /** Replace every byte array in a value with a reference this connection serves. */
+export interface ValueCodec {
+  /** Replace every value that must cross by reference with one this connection serves. */
   encode(value: unknown): unknown;
   /** Replace every reference in a value with something the reader can hold. */
   decode(value: unknown): unknown;
 }
 
+/** The name this had while blobs were the only thing that crossed by reference. */
+export type BlobCodec = ValueCodec;
+
+/**
+ * Several codecs over one connection, each value through all of them, in the order given.
+ *
+ * A connection carries more than one kind of thing by reference — a blob, a stream — and each
+ * store knows only its own.  Walking a value through every store in turn is what keeps them
+ * from having to know about each other.
+ */
+export function combineCodecs(...codecs: ValueCodec[]): ValueCodec {
+  return {
+    encode: (value) => codecs.reduce((current, codec) => codec.encode(current), value),
+    decode: (value) => codecs.reduce((current, codec) => codec.decode(current), value),
+  };
+}
+
 /** The frames of one connection, as the remote layer speaks them: the process's own `FrameChannel`,
  *  where a reader has the unsubscribe `onMessage` returned rather than a handler to take back. */
 export type Channel = FrameChannel;
+
+/** Is this something JSON would carry as an object, rather than an instance with behaviour? */
+export function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== "object" || value === null) return false;
+  const prototype = Object.getPrototypeOf(value) as object | null;
+  return prototype === Object.prototype || prototype === null;
+}
+
+/**
+ * Is this a stream — a value whose bytes come later, carried by reference?
+ *
+ * The question every walk that copies containers has to ask: copying a stream keeps the object and
+ * loses the behaviour, because its iterator is a symbol-keyed property and `Object.entries` does not
+ * see those.  What such a value is belongs to `stream.ts`; that it must be left alone belongs to
+ * every layer that walks a message.
+ */
+export function isStreamLike(value: unknown): value is AsyncIterable<Uint8Array> {
+  if (typeof value !== "object" || value === null) return false;
+  return typeof (value as Partial<AsyncIterable<Uint8Array>>)[Symbol.asyncIterator] === "function";
+}
 
 /**
  * One handler on the wire, however many readers on it.  A transport holds one handler — and reports a
@@ -126,10 +164,10 @@ export function encodeFrame(
   frame: Record<string, unknown>,
   table: ProcessTable,
   to: number,
-  blobs?: BlobCodec,
+  codecs?: ValueCodec,
 ): Record<string, unknown> {
   const withProcesses = encodeProcessRefs(frame, table) as Record<string, unknown>;
-  const encoded = blobs === undefined ? withProcesses : (blobs.encode(withProcesses) as Record<string, unknown>);
+  const encoded = codecs === undefined ? withProcesses : (codecs.encode(withProcesses) as Record<string, unknown>);
   return { ...encoded, to };
 }
 
@@ -141,10 +179,10 @@ export function encodeFrame(
 export function decodeFrame(
   frame: Record<string, unknown>,
   resolve: RefResolver,
-  blobs?: BlobCodec,
+  codecs?: ValueCodec,
 ): Record<string, unknown> {
   const resolved = decodeProcessRefs(frame, resolve) as Record<string, unknown>;
-  return blobs === undefined ? resolved : (blobs.decode(resolved) as Record<string, unknown>);
+  return codecs === undefined ? resolved : (codecs.decode(resolved) as Record<string, unknown>);
 }
 
 // ── frame guards ──────────────────────────────────────────────────────────

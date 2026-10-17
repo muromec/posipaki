@@ -1,8 +1,11 @@
 # Streams
 
 **Status:** drawn 2026-10-16 from the operator's spec, after the blob slice (`blob-references.md`) showed what
-it could not do.  Nothing is built; the blob work in the tree is superseded by this.  Written first, because
-the wire is posipaki's business and this changes the wire.
+it could not do.  **Streams alone are built** (2026-10-17, slice 1 below): the transport carries octets beside its
+lines, the store carries announcements, credit, chunks, done and fail, and a stream in an ordinary message body
+crosses without the application doing anything.  Blobs and typed arrays are not on it yet, and the blob code still
+in the tree runs its own wire: superseded, not yet removed.  Written first, because the wire is posipaki's business
+and this changes the wire.
 
 ## The problem with a blob
 
@@ -41,17 +44,17 @@ as bytes rather than base64 inside JSON.
 {"$stream": {"id": 7, "size": 10485760, "type": "image/png", "name": "shot.png"}}\n   announcement
 {"$msg": {"fromName": "a", "body": {"file": {"$s": {"id": 7}}}}}\n              the message that names it
 {"$streamAsk": {"id": 7, "credit": 262144}}\n                                      the reader's demand, in bytes
-{"$chunk": {"id": 7, "seq": 1, "bytes": 65536, "crc32": "9f2c1a4b"}}\n         head
+{"$chunk": {"id": 7, "seq": 1, "bytes": 65536}}\n head: the length comes first, so framing does not scan
 <65536 raw bytes>                                                               body
-{"$chunkEnd": {"id": 7, "seq": 1}}\n                                             tail
+{"$chunkEnd": {"id": 7, "seq": 1, "crc32": 2663770700}}\n tail: the checksum, over the octets just written
 {"$streamDone": {"id": 7}}\n    or    {"$streamFail": {"id": 7, "reason": "…"}}\n  the end of it
 ```
 
 - **Order matters**: the announcement goes out before the message that references it, and for a typed array the
   first chunk may follow it immediately — so a reader that wants one chunk never waits a round trip for it.
-- **Every chunk carries its length and a checksum.**  The reader knows exactly how many raw bytes follow the
-  head, so framing never depends on scanning; it verifies length and checksum before accepting the bytes.
-- **A wrong length is fatal to the connection** — the reader can no longer find the next frame.  **A wrong
+- **Every chunk carries its length, and the checksum after it.**  The head says how many raw octets come next, so
+  framing never scans; the tail carries the CRC-32 of those octets, so the reader hashes as they arrive and compares
+  at the end.  **A wrong length is fatal to the connection** — the reader cannot find the next frame — while **a wrong
   checksum fails the stream** and leaves the connection alone.
 - **Credit is the flow control, counted in bytes**: the reader grants a budget and the writer sends whole
   chunks until it is spent, carrying the remainder.  Chunk size is the framing unit, credit is the budget —
@@ -69,14 +72,19 @@ An **async iterable of `Uint8Array`** is the core: no runtime dependency, no `no
 a WHATWG `ReadableStream` exists.  `RemoteStream` is one; whoever wants the platform's own shape wraps it
 (`ReadableStream` where there is one, `node:stream.Readable` where that is what the runtime offers) rather
 than the library depending on either.  Backpressure is the credit above, so an iterable that is not pulled stops the wire.
+A stream also carries `info` — the size, media type and name the offerer gave, when it gave any — so a caller can
+ask what these bytes are before reading a byte of them.  It is a reading of the announcement, not a promise about
+the count: the truth of `size` still arrives with the octets.
 
 ## What the transports owe
 
-The segment needs bytes, and today every transport is strings: fifo, stdio and the unix socket carry
-newline-delimited UTF-8 through one line reader, the websocket sends string frames.  The change is small and
-uniform: a transport writes and reads **bytes**, and the protocol above it decides what is a line and what is a
-segment.  All four carriers can do it — a fifo is bytes, a socket is bytes, a websocket has binary frames — so
-the seam keeps its "one protocol, any carrier" property.
+The segment needs bytes, and every transport used to be strings.  Built 2026-10-17: a transport is asked, per
+line, how many raw octets follow it, hands them over whole, and carries on with lines — one state machine
+(`PartReader` in `lines.ts`) over whatever the carrier delivers, so a fifo, a stdio pair and a unix socket feed it
+bytes from the stream and a websocket feeds it one message at a time.  A websocket sends a line as a text message
+and a run of octets as a binary one; the reader cannot tell the difference.  The channel one layer up gained
+`sendSegment`/`onSegment` for the same reason, and the wrappers above a protocol pass them through
+(`channelThrough`) so a wrapped connection does not quietly drop a stream.
 
 ## Order of work
 
@@ -129,8 +137,11 @@ defends against a party who can write the wire.
   byte.
 - **Whether the announcement may be omitted when the first chunk rides along** — it would save a frame per
   stream, and cost the reader the size/type facts it decides on.
-- **Who reads the checksum's failure**: dropping the stream silently and telling the writer, or failing the
-  reader's `read()` with the sentence.
+- **Who reads the checksum's failure**: answered by the build, in the form the reader asked for — the stream's
+  `read()` fails with the sentence, the connection is untouched, and the writer is told with `$streamFail`.
+- **What a blob is now**: the blob slice's `BlobStore` and this store keep two tables on one connection.  The
+  proposal has a blob become a stream with facts, which would leave one table; that is slice 2 and it has not been
+  done, so today the two coexist.
 
 ## Supersedes
 
