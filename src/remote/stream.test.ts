@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import type { Channel } from "./channel.js";
 import {
   RemoteBlob,
+  RemoteBytes,
   StreamStore,
   crc32,
   isStreamRef,
@@ -159,11 +160,15 @@ describe("a stream on the wire", () => {
     bStore.close();
   });
 
-  it("says what the stream is, when the stream knows", async () => {
-    const { aStore, bStore } = wire();
+  it("keeps the facts on the reference, not on the stream", async () => {
+    const { a, aStore, bStore } = wire();
+    // A stream knows nothing about what it carries: a source that happens to have `size`, `type` and
+    // `name` on it does not make the announcement any richer.
     const source = Object.assign(counted(1, 4), { size: 4, type: "image/png", name: "shot.png" });
-    const { file } = await handOver(aStore, bStore, source);
-    expect(file.info).toEqual({ size: 4, type: "image/png", name: "shot.png" });
+
+    const { ref } = await handOver(aStore, bStore, source);
+    expect(a.frames[0]).toEqual({ $stream: { id: 1 } });
+    expect(ref).toEqual({ $s: { id: 1 } });
     aStore.close();
     bStore.close();
   });
@@ -272,16 +277,19 @@ describe("a stream on the wire", () => {
     bStore.close();
   });
 
-  it("refuses a stream past its bound before asking for a chunk", async () => {
-    const { a, b, aStore, bStore } = wire({ b: { maxBytes: 8 } });
-    // 32 octets and it says so: the reader can refuse without reading a byte.
-    const source = Object.assign(counted(4, 8), { size: 32 });
+  it("counts a stream past its bound as it arrives, and fails it there", async () => {
+    const { a, b, aStore, bStore } = wire({ b: { maxBytes: 8, windowBytes: 8 } });
+    // A stream states no length, so the reader cannot refuse it up front: it counts the octets as
+    // they land and stops as soon as they pass the bound.
+    const source = counted(4, 8);
     const { file } = await handOver(aStore, bStore, source);
 
-    await expect(readAll(file)).rejects.toThrow(/over this side's bound of 8/);
+    await expect(readAll(file)).rejects.toThrow(/passed this side's bound of 8 bytes/);
     await settle();
-    expect(b.frames.some((frame) => "$streamAsk" in frame)).toBe(false);
-    expect(a.segments).toHaveLength(0);
+    // It did ask — a stream has to be read to be measured — and then told the far side to stop.
+    expect(b.frames.some((frame) => "$streamAsk" in frame)).toBe(true);
+    expect(b.frames.some((frame) => "$streamFail" in frame)).toBe(true);
+    expect(a.sentOctets()).toBeLessThanOrEqual(16);
     aStore.close();
     bStore.close();
   });
@@ -398,6 +406,82 @@ describe("a blob on the wire", () => {
     expect(b.frames.some((frame) => "$streamFail" in frame)).toBe(true);
     expect(source.reads.count).toBe(0);
     await expect(file.arrayBuffer()).rejects.toThrow(/over this side's bound/);
+    aStore.close();
+    bStore.close();
+  });
+});
+
+/** The same hand-over, for a value that comes back as bytes. */
+async function handOverBytes(from: StreamStore, to: StreamStore, value: unknown): Promise<{ carried: RemoteBytes }> {
+  const reference = from.encode({ data: value }) as { data: unknown };
+  await settle();
+  const decoded = to.decode({ data: reference.data }) as { data: unknown };
+  expect(decoded.data).toBeInstanceOf(RemoteBytes);
+  // Wrapped: a `RemoteBytes` is a thenable, and a promise resolving to one adopts it — the helper
+  // would hand back the array instead of the handle.  The object keeps the value intact.
+  return { carried: decoded.data as RemoteBytes };
+}
+
+describe("a typed array on the wire", () => {
+  it("states its length on the reference and is asked for the moment it is named", async () => {
+    const { a, aStore, bStore } = wire({ a: { chunkBytes: 4 } });
+    const source = new Uint8Array([1, 2, 3, 4, 5, 6]);
+
+    const { carried } = await handOverBytes(aStore, bStore, source);
+    // Not lazy: the reference arriving is the demand, so the octets are already on their way here
+    // before anything on this side reads the value.
+    await settle();
+    expect(a.sentOctets()).toBe(6);
+
+    expect(carried.size).toBe(6);
+    expect([...(await carried)]).toEqual([1, 2, 3, 4, 5, 6]);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("is refused before a chunk is asked for when it is over the reader's bound", async () => {
+    const { a, b, aStore, bStore } = wire({ b: { maxBytes: 4 } });
+    const { carried } = await handOverBytes(aStore, bStore, new Uint8Array([1, 2, 3, 4, 5]));
+    await settle();
+
+    expect(b.frames.some((frame) => "$streamFail" in frame)).toBe(true);
+    expect(b.frames.some((frame) => "$streamAsk" in frame)).toBe(false);
+    expect(a.sentOctets()).toBe(0);
+    await expect(carried.bytes()).rejects.toThrow(/over this side's bound of 4/);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("says how short it was when fewer octets arrive than the reference stated", async () => {
+    const { b, aStore, bStore } = wire();
+    const four = new Uint8Array([1, 2, 3, 4]);
+    b.deliver({ $stream: { id: 3 } });
+    b.deliverSegment({ $chunk: { id: 3, seq: 0, bytes: 4 } }, four);
+    b.deliver({ $chunkEnd: { id: 3, seq: 0, crc32: crc32(four) } });
+    await settle();
+
+    const carried = bStore.decode({ data: { $bytes: { id: 3, size: 8 } } }) as { data: RemoteBytes };
+    b.deliver({ $streamDone: { id: 3 } });
+    await expect(carried.data.bytes()).rejects.toThrow(/the array is short: 4 of 8 octets/);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("refuses more octets than the reference stated", async () => {
+    const { b, aStore, bStore } = wire();
+    const four = new Uint8Array([1, 2, 3, 4]);
+    b.deliver({ $stream: { id: 5 } });
+    b.deliverSegment({ $chunk: { id: 5, seq: 0, bytes: 4 } }, four);
+    b.deliver({ $chunkEnd: { id: 5, seq: 0, crc32: crc32(four) } });
+    b.deliverSegment({ $chunk: { id: 5, seq: 1, bytes: 4 } }, four);
+    b.deliver({ $chunkEnd: { id: 5, seq: 1, crc32: crc32(four) } });
+    await settle();
+
+    const carried = bStore.decode({ data: { $bytes: { id: 5, size: 4 } } }) as { data: RemoteBytes };
+    await expect(carried.data.bytes()).rejects.toThrow(/longer than the 4 bytes it stated/);
+    // The far side is told to stop: the value is over, whatever it was going to send.
+    await settle();
+    expect(b.frames.some((frame) => "$streamCancel" in frame)).toBe(true);
     aStore.close();
     bStore.close();
   });

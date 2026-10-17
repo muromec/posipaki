@@ -2,9 +2,10 @@
 
 **Status:** drawn 2026-10-16 from the operator's spec, after the blob slice (`blob-references.md`) showed what
 it could not do.  **Streams, blobs and typed arrays are built** (2026-10-17): the transport carries octets beside
-its lines, the store carries announcements, credit, chunks, done and fail, a stream or a blob in an ordinary
-message body crosses without the application doing anything, and a typed array crosses as one piece, awaited on
-the far side.  The blob wire this replaces is gone: `BlobStore`, its base64 frames and its second table are
+its lines, the store carries announcements, credit, chunks, done and fail, and a stream, a blob or a typed array in
+an ordinary message body crosses without the application doing anything.  The announcement says only that octets
+are coming: what they are, and the facts about them, ride the reference (corrected 2026-10-17, before any of this
+was published).  The blob wire this replaces is gone: `BlobStore`, its base64 frames and its second table are
 deleted, and one store per connection carries all three.  Written first, because the wire is posipaki's business
 and this changes the wire.
 
@@ -22,14 +23,16 @@ can take them.
 ## The shape
 
 **At the process API three kinds of value may appear in a message; on the wire they all collapse to one: the
-stream.**
+stream — and the value that references it says which of the three it was.**
 
 - **A typed array** — `Uint8Array` and friends.  Materialised **at the boundary**: the sender's bytes become a
-  stream as the frame is written, and the first chunk may ride along with the announcement.
+  stream as the frame is written, and the far side gets a **`RemoteBytes`** sized from the reference and filled as
+  the chunks land.  It is the one value that is not lazy: the reference arriving is the demand.
 - **A blob** — a lazy array.  Crosses as a stream over its bytes; the far side gets a **`RemoteBlob`**, whose
-  `arrayBuffer()` and `stream()` are backed by that stream.  Nothing is read until it is asked for.
+  `size`, `type` and `name` come from the reference and whose `arrayBuffer()` and `stream()` are backed by that
+  stream.  Nothing is read until it is asked for.
 - **A stream** — a `Stream` here, a **`RemoteStream`** there.  The same object locally (a fork in this process
-  is handed the stream itself), a reader over the wire when it crossed.
+  is handed the stream itself), a reader over the wire when it crossed.  It carries no facts about its contents.
 
 The library knows one thing: bytes moving.  Turning a stream into a `Uint8Array`, a `Blob` or a digest is the
 platform's job (`new Response(stream).blob()`, `createHash().update(chunk)` per chunk) and one helper
@@ -42,8 +45,10 @@ segment: a JSON head, then raw bytes, then a JSON tail — announced by length a
 as bytes rather than base64 inside JSON.
 
 ```
-{"$stream": {"id": 7, "size": 10485760, "type": "image/png", "name": "shot.png"}}\n   announcement
-{"$msg": {"fromName": "a", "body": {"file": {"$s": {"id": 7}}}}}\n              the message that names it
+{"$stream": {"id": 7}}\n                                                            octets are coming
+{"$msg": {"fromName": "a", "body": {"file": {"$s": {"id": 7}}}}}\n                  a stream
+{"$msg": {"fromName": "a", "body": {"data": {"$bytes": {"id": 7, "size": 4}}}}}\n   a typed array
+{"$msg": {"fromName": "a", "body": {"shot": {"$blob": {"id": 7, "size": 4, "type": "image/png", "name": "shot.png"}}}}}\n
 {"$streamAsk": {"id": 7, "credit": 262144}}\n                                      the reader's demand, in bytes
 {"$chunk": {"id": 7, "seq": 1, "bytes": 65536}}\n head: the length comes first, so framing does not scan
 <65536 raw bytes>                                                               body
@@ -51,15 +56,22 @@ as bytes rather than base64 inside JSON.
 {"$streamDone": {"id": 7}}\n    or    {"$streamFail": {"id": 7, "reason": "…"}}\n  the end of it
 ```
 
-- **Order matters**: the announcement goes out before the message that references it, and for a typed array the
-  first chunk may follow it immediately — so a reader that wants one chunk never waits a round trip for it.
+- **The announcement carries the id and nothing else.**  It says octets are coming; what they are is the
+  reference's to say, and the facts a reader decides on — a blob's size, an array's length — arrive with it,
+  before a chunk is asked for.
+- **Order matters**: the announcement goes out before the message that references it, so a reference is always
+  decodable.
 - **Every chunk carries its length, and the checksum after it.**  The head says how many raw octets come next, so
   framing never scans; the tail carries the CRC-32 of those octets, so the reader hashes as they arrive and compares
   at the end.  **A wrong length is fatal to the connection** — the reader cannot find the next frame — while **a wrong
   checksum fails the stream** and leaves the connection alone.
 - **Credit is the flow control, counted in bytes**: the reader grants a budget and the writer sends whole
   chunks until it is spent, carrying the remainder.  Chunk size is the framing unit, credit is the budget —
-  nothing is written ahead of demand, so a slow reader slows the writer instead of filling a buffer.
+  nothing is written ahead of demand, so a slow reader slows the writer instead of filling a buffer.  A typed
+  array is the exception in when it asks, not in whether it is paced: the ask goes out on delivery, and credit
+  still bounds what can be in flight.
+- **The bound splits by what the reference states.**  An array and a blob can be refused before a chunk is asked
+  for; a stream states no length, so its bound is counted as octets land and it is failed when it passes.
 - **A chunk names its stream**, so a chunk for an id nobody announced is rejected: the reader skips exactly the
   length the head announced and carries on, and the connection is untouched.  That is the reason the length is
   in the head at all — without it, rejection would mean guessing where the next frame starts.
@@ -73,9 +85,11 @@ An **async iterable of `Uint8Array`** is the core: no runtime dependency, no `no
 a WHATWG `ReadableStream` exists.  `RemoteStream` is one; whoever wants the platform's own shape wraps it
 (`ReadableStream` where there is one, `node:stream.Readable` where that is what the runtime offers) rather
 than the library depending on either.  Backpressure is the credit above, so an iterable that is not pulled stops the wire.
-A stream also carries `info` — the size, media type and name the offerer gave, when it gave any — so a caller can
-ask what these bytes are before reading a byte of them.  It is a reading of the announcement, not a promise about
-the count: the truth of `size` still arrives with the octets.
+
+**A stream carries no facts about its contents.**  A stream from a file does not know the file's name, and a
+`ReadableStream` has no length to report, so `size`, `type` and `name` are not the stream's to carry.  They belong
+to the value that references it, which is also where the receiver learns what it was given: `{"$s": {"id"}}` is a
+stream, `{"$bytes": {"id", "size"}}` an array, `{"$blob": {"id", "size", "type", "name"}}` a file.
 
 ## What the transports owe
 
@@ -104,16 +118,18 @@ and one subprocess case found it in its first run.
    read until somebody reads it; `BlobStore` and its frames are deleted.  Tests: a blob round trip carrying its
    facts; a blob announced and never read (no octet on the wire, no read of the source); a blob handed on without
    being read here; a blob over the reader's bound, refused before a chunk is asked for.
-3. **Typed arrays.**  Built, and simpler than planned: the bytes are already here, so an array is offered as a
-   stream of one piece and the far side gets a `RemoteBytes` — awaited it is the array, iterated it is the chunks,
-   `arrayBuffer()` gives the platform's shape.  `await body.file` is the shortest form, which is the awaitability
-   the old blob handle had.
+3. **Typed arrays.**  Built, and the one value that is not lazy: the bytes are already here, so the reference
+   arriving *is* the demand.  The far side asks at once, sizes a buffer from the stated length and fills it as the
+   chunks land, so awaiting the `RemoteBytes` waits for the last chunk rather than for a read to start.  It is a
+   thenable rather than an array because an array answers `length` and `[i]` synchronously and bytes in flight
+   cannot; `arrayBuffer()` gives the platform's shape.
 
 4. **Performance, per primitive.**  Measured 2026-10-17, 10 MiB over one fifo between two processes, 64 KiB
    chunks, this box (riscv64, bun 1.4.2): **stream 13.0 MB/s, typed array 9.4, blob 8.5**, against **185 MB/s**
    for raw octets through the same pipe (measured 2026-10-16, same hardware).  The stream is the fastest of the
-   three because nothing puts it back together: the far side hashes each chunk as it arrives, where a blob and an
-   array are assembled — one 10 MiB copy — before the application sees them.  The medium is not the pacer: the
+   three because nothing puts it back together: the far side hashes each chunk as it arrives, where a blob is
+   assembled (one 10 MiB copy) and a typed array is written into a buffer sized from its reference.  The medium is
+   not the pacer: the
    same frames through a hand-written sink measured 35–40 MB/s in the blob slice.  No lever was pulled; the
    candidates are named in the blob slice's notes (base64 is gone from chunks, so what is left is one JSON head
    and one JSON tail per 64 KiB).
@@ -121,6 +137,8 @@ and one subprocess case found it in its first run.
 ## What it does not do
 
 - No seeking, no random access.  A stream is read once, forwards.
+- No `slice()` on a received blob.  The platform's `Blob` has one and the wire has no byte range, so a sliced view
+  could only be served by reading from the start and discarding; `RemoteBlob` is a Blob in everything but that.
 - No tee: one stream has one consumer.  A second reader is the application's problem (and a second announcement
   if it must be).
 - No compression, no encryption, no integrity beyond the per-chunk checksum.
@@ -144,8 +162,9 @@ defends against a party who can write the wire.
 - **Chunk size**: 64 KiB today.  It bounds a single segment, so it decides the granularity at which a reader can
   stop — smaller means finer credit and more frames, larger means fewer frames and a longer wait for the first
   byte.
-- **Whether the announcement may be omitted when the first chunk rides along** — it would save a frame per
-  stream, and cost the reader the size/type facts it decides on.
+- **A byte range on the ask**, which would let a received blob answer `slice()` and let a reader skip ahead: the ask
+  would carry an offset and the writer discard what is below it, or the source seek.  Not built — today a blob is
+  readable whole, and only whole.
 - **Who reads the checksum's failure**: answered by the build, in the form the reader asked for — the stream's
   `read()` fails with the sentence, the connection is untouched, and the writer is told with `$streamFail`.
 
@@ -156,6 +175,7 @@ edge — a blob is a convenience over a stream — but the wire it describes (ba
 is what this replaces.
 
 **What this removed.**  `src/remote/blob.ts`, `BlobStore`, `BlobHandle`, the `$b`/`$blobAsk`/`$blobData` frames and
-the second table a connection used to keep.  A blob is now a form an announcement can take (`"blob": true`) over
-the same store, and typed arrays take a third (`"bytes": true`).  Anything that imported the old names breaks:
-that is deliberate, and it is why this is one change rather than two wires kept alive beside each other.
+the second table a connection used to keep.  A blob and a typed array are now two shapes of *reference* over the
+same store — `{"$blob": {"id", "size", "type", "name"}}` and `{"$bytes": {"id", "size"}}` — and the announcement
+behind them says only that octets are coming.  Anything that imported the old names breaks: that is deliberate, and
+it is why this is one change rather than two wires kept alive beside each other.
