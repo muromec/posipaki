@@ -1,42 +1,52 @@
 // ── bytes across a real process boundary ───────────────────────────────────
 //
-// What a connection does with a file, end to end: a payload in a process of its own, asked
-// through the public client, and answering with a digest of what it read.  The sizes are the
-// ones a file comes in — a line of text, a screenshot, a document, a photo, and something
-// big enough that copying it is a decision — and each is its own case so a failure names it.
+// What a connection does with a file, end to end and over the path an application uses: a
+// message with bytes in it goes out, the payload in a process of its own reads them, and it
+// answers with a message carrying the digest.  The sizes are the ones a file comes in — a
+// line of text, a screenshot, a document, a photo, and something big enough that copying it
+// is a decision — and each is its own case so a failure names it.
 //
 // The digest rather than the bytes: sending the file back would only prove the same path
-// twice, and the digest is the thing that changes when a chunk is lost, doubled or
-// reordered.  It is bytes too, so it crosses the same way the file did.
+// twice, and the digest is what changes when a chunk is lost, doubled or reordered.  It is
+// bytes too, so it crosses the same way the file did.
 
 import { describe, it, expect } from "vitest";
 import { dirname, join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 
 import { remoteClient } from "./client.js";
-import type { HandlerOptions, MethodOptions } from "../actor-types.js";
 import { commandSpawner } from "./spawners/fifo-command.js";
 import type { Message } from "../types.js";
 
-/** What this test asks of the far side: one method, taking bytes, answering with bytes. */
-type Reader = { "probe.sha256"(bytes: Uint8Array): Promise<unknown> };
+/** What this test says, and what it expects back.  The digest is bytes either way: a
+ *  `Uint8Array` when the far side is in this process, something to await when it is not. */
+type Hash = { type: "HASH"; bytes: Uint8Array } & Message;
+type Hashed = { type: "HASHED"; digest: Uint8Array | PromiseLike<Uint8Array> } & Message;
 
 const fixture = join(dirname(import.meta.url.slice(7)), "./fixtures/blob-payload.js");
 
 async function spawnReader() {
-  // The reflection surface is stated in the client's own types, so what the far side can be
-  // asked is checked here rather than asserted after the fact.
-  const actor = remoteClient<
-    Record<string, unknown>,
-    Record<string, unknown>,
-    Message,
-    Message,
-    MethodOptions,
-    HandlerOptions<Message>,
-    Reader
-  >("reader", commandSpawner([process.argv[0], fixture]));
-  const proc = await actor.spawn({});
-  return { proc, surface: proc.$reflection };
+  const actor = remoteClient<Record<string, unknown>, Record<string, unknown>, Hash, Hashed>(
+    "reader",
+    commandSpawner([process.argv[0], fixture]),
+  );
+  return actor.spawn({});
+}
+
+/** The far side's next message, with a guard that names what it waited for.  Armed before
+ *  the act, because the answer can arrive before a caller looks. */
+function nextMessage(proc: { subscribe(kind: "message", handler: (msg: Hashed) => void): () => void }, what: string, ms: number): Promise<Hashed> {
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      stop();
+      reject(new Error(`no ${what} within ${ms}ms`));
+    }, ms);
+    const stop = proc.subscribe("message", (msg) => {
+      clearTimeout(timer);
+      stop();
+      resolve(msg);
+    });
+  });
 }
 
 const SIZES: Array<[string, number]> = [
@@ -56,14 +66,16 @@ describe("bytes across a process boundary", () => {
     it(
       `carries ${label} of bytes, and the far side answers with their digest`,
       async () => {
-        const { proc, surface } = await spawnReader();
+        const proc = await spawnReader();
 
         const sent = new Uint8Array(randomBytes(size));
         const digest = createHash("sha256").update(sent).digest();
 
         const started = Date.now();
-        const answer = await surface["probe.sha256"](sent);
-        const back = new Uint8Array((await answer) as ArrayLike<number>);
+        const answer = nextMessage(proc, `${label} of bytes hashed`, guard);
+        proc.send({ type: "HASH", bytes: sent });
+        const heard = await answer;
+        const back = new Uint8Array(await heard.digest);
         const elapsed = Date.now() - started;
 
         expect(back.byteLength).toBe(digest.byteLength);

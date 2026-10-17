@@ -1,8 +1,8 @@
 // ── a payload that reads bytes ─────────────────────────────────────────────
 //
-// Serves one actor whose only job is the far side of the blob tests: it reads what it is
-// handed and answers with the digest, so the proof that a file arrived whole is computed
-// where it landed rather than by the side that sent it.
+// The far side of the blob tests: an actor that is sent a message with bytes in it, reads
+// them, and answers with a message carrying the digest.  Ordinary messages on both legs —
+// what an application actually does — so nothing here depends on the reflection surface.
 
 import { createHash } from "node:crypto";
 
@@ -24,13 +24,12 @@ try {
 const reader = defineActor({
   name: "reader",
   setup: () => ({}),
-  handlers: {},
-  $reflectionMethods: {
-    async "probe.sha256"(value) {
-      // Read here, on the far side of the wire, and the digest goes back as bytes of its
-      // own: a chunk lost, doubled or reordered changes it.
-      const bytes = new Uint8Array(await value);
-      return new Uint8Array(createHash("sha256").update(bytes).digest());
+  handlers: {
+    async HASH(msg) {
+      // The bytes are read here, on the far side of the wire, and the digest goes back in
+      // the body of an ordinary message: a chunk lost, doubled or reordered changes it.
+      const bytes = new Uint8Array(await msg.bytes);
+      await this.emit({ type: "HASHED", digest: new Uint8Array(createHash("sha256").update(bytes).digest()) });
     },
   },
 });

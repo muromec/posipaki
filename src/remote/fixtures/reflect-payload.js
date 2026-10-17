@@ -3,6 +3,8 @@
 // Serves one actor that carries the inspect plugin and a few methods of its
 // own, so the client half can be asked for both a subtree and an answer.
 
+import { createHash } from "node:crypto";
+
 let defineActor;
 let inspect;
 let serveRemoteActor;
@@ -68,6 +70,13 @@ const reflector = defineActor({
   $reflectionMethods: {
     async "probe.add"(a, b) {
       return a + b;
+    },
+    async "probe.digest"(value) {
+      // An answer may carry bytes, and this is the path where it once could not: the
+      // answer's JSON check stringified the value, which for a megabyte of bytes is a
+      // million keys (4.6 s, measured).  Kept here so the answer path stays covered.
+      const bytes = new Uint8Array(await value);
+      return new Uint8Array(createHash("sha256").update(bytes).digest());
     },
     "probe.late"(ms) {
       return new Promise((resolve) => setTimeout(() => resolve(`late:${ms}`), ms));

@@ -15,6 +15,7 @@ import type { FarProcess, TreeNode } from "../plugins/tree-introspection.js";
 import { inspect } from "../plugins/tree-introspection.js";
 import type { Message } from "../types.js";
 import { sleep } from "../util.js";
+import { createHash, randomBytes } from "node:crypto";
 
 type Surface = Record<string, (...args: unknown[]) => Promise<unknown>>;
 
@@ -449,4 +450,22 @@ describe("reflection across a process boundary", () => {
 
     await proc.stop();
   }, 20000);
+
+  it("carries bytes in an answer, which is the path a value is checked on", async () => {
+    const { proc, surface } = await spawnPayload();
+
+    // One megabyte, not the sizes the blob tests use: what is being covered here is that an
+    // answer may carry bytes at all, and that the check on an answer runs on the frame rather
+    // than on the value (stringifying a megabyte of bytes is a million keys, 4.6 s, which is
+    // how the defect that made this case necessary was found).
+    const sent = new Uint8Array(randomBytes(1024 * 1024));
+    const digest = createHash("sha256").update(sent).digest();
+
+    const answer = await surface["probe.digest"](sent);
+    const back = new Uint8Array((await answer) as ArrayLike<number>);
+
+    expect(Buffer.from(back).toString("hex")).toBe(digest.toString("hex"));
+
+    await proc.stop();
+  }, 30000);
 });
