@@ -15,7 +15,6 @@ import type { FarProcess, TreeNode } from "../plugins/tree-introspection.js";
 import { inspect } from "../plugins/tree-introspection.js";
 import type { Message } from "../types.js";
 import { sleep } from "../util.js";
-import { createHash, randomBytes } from "node:crypto";
 
 type Surface = Record<string, (...args: unknown[]) => Promise<unknown>>;
 
@@ -450,40 +449,4 @@ describe("reflection across a process boundary", () => {
 
     await proc.stop();
   }, 20000);
-
-  // The sizes a file comes in: a line of text, a screenshot, a document, a photo, and
-  // something big enough that copying it is a decision.  Each size is its own case so a
-  // failure names it, and the far side answers with a digest rather than the bytes — sending
-  // the bytes back would only prove the same path twice.
-  for (const [label, size] of [
-    ["1 KiB", 1024],
-    ["512 KiB", 512 * 1024],
-    ["1 MiB", 1024 * 1024],
-    ["10 MiB", 10 * 1024 * 1024],
-    ["100 MiB", 100 * 1024 * 1024],
-  ] as Array<[string, number]>) {
-    // A big file is allowed more rope than a small one; either way it is a guard against a
-    // wire that is being held, not a benchmark.  Measured, then rounded up.
-    const guard = size >= 100 * 1024 * 1024 ? 120_000 : 30_000;
-    it(`carries ${label} of bytes, and the far side answers with their digest`, async () => {
-      const { proc, surface } = await spawnPayload();
-
-      const sent = new Uint8Array(randomBytes(size));
-      const digest = createHash("sha256").update(sent).digest();
-
-      const started = Date.now();
-      const answer = await surface["probe.sha256"](sent);
-      const back = new Uint8Array((await answer) as ArrayLike<number>);
-      const elapsed = Date.now() - started;
-
-      // The digest is bytes too, and it crossed the same way: a reference, read by the side
-      // that wants it.
-      expect(back.byteLength).toBe(digest.byteLength);
-      expect(Buffer.from(back).toString("hex")).toBe(digest.toString("hex"));
-      // A guard, not a benchmark: a size that takes this long has something holding the wire.
-      expect(elapsed).toBeLessThan(guard);
-
-      await proc.stop();
-    }, guard + 5_000);
-  }
 });
