@@ -4,6 +4,10 @@
 referenced by an id its announcing side minted.  Two things are wrong with that as a primitive: a stream is a pipe
 and both ends may talk on it, and a stream nobody can name is a stream nobody else can find.
 
+**Duplex is deferred** (operator, 2026-10-17): streams stay one-way for now, so the naming half below is what gets
+built and the pipe section is what duplex would take when it comes.  A one-way stream still needs a name for the fd
+layer to go.
+
 ## A stream is a pipe
 
 The built stream carries bytes one way: the announcer writes, the referrer reads.  That came from the platform's
