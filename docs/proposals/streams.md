@@ -81,10 +81,11 @@ as bytes rather than base64 inside JSON.
 
 ## What a stream is in the API
 
-An **async iterable of `Uint8Array`** is the core: no runtime dependency, no `node:stream`, no assumption that
-a WHATWG `ReadableStream` exists.  `RemoteStream` is one; whoever wants the platform's own shape wraps it
-(`ReadableStream` where there is one, `node:stream.Readable` where that is what the runtime offers) rather
-than the library depending on either.  Backpressure is the credit above, so an iterable that is not pulled stops the wire.
+An **async iterable of `Uint8Array`** is the core: no runtime dependency, no `node:stream`.  `RemoteStream` is one,
+and it also answers the platform's own surface — `getReader()`, `pipeTo()`, `tee()` — built over the same queue
+the first time it is asked for, so code written for a `ReadableStream` can take what arrives and the reader and
+the iterable share one lock.  A runtime with no `ReadableStream` keeps the iterable as the whole interface.
+Backpressure is the credit above, so a stream nobody pulls stops the wire.
 
 **A stream carries no facts about its contents.**  A stream from a file does not know the file's name, and a
 `ReadableStream` has no length to report, so `size`, `type` and `name` are not the stream's to carry.  They belong

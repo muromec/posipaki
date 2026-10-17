@@ -10,6 +10,7 @@ import { describe, expect, it } from "vitest";
 import type { Channel } from "./channel.js";
 import {
   RemoteBlob,
+  RemoteStream,
   RemoteBytes,
   StreamStore,
   crc32,
@@ -134,10 +135,10 @@ const settle = (): Promise<void> => new Promise((done) => setImmediate(done));
 
 /** Hand the far side what a message would have carried, and get back what it can read.  The
  *  announcement is written before the message, so it is delivered before it too. */
-async function handOver(from: StreamStore, to: StreamStore, value: unknown): Promise<{ ref: unknown; file: Stream }> {
+async function handOver(from: StreamStore, to: StreamStore, value: unknown): Promise<{ ref: unknown; file: RemoteStream }> {
   const reference = from.encode({ file: value }) as { file: unknown };
   await settle();
-  return { ref: reference.file, file: (to.decode({ file: reference.file }) as { file: Stream }).file };
+  return { ref: reference.file, file: (to.decode({ file: reference.file }) as { file: RemoteStream }).file };
 }
 
 describe("a stream on the wire", () => {
@@ -307,6 +308,43 @@ describe("a stream on the wire", () => {
     await expect(readAll(file)).rejects.toThrow(/disk went away/);
     await settle();
     expect(a.frames.some((frame) => "$streamFail" in frame)).toBe(true);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("answers the platform's reader, so code written for a ReadableStream can take it", async () => {
+    const { aStore, bStore } = wire({ a: { chunkBytes: 4 } });
+    const { file } = await handOver(aStore, bStore, counted(3, 4));
+    const stream = file;
+
+    const reader = stream.getReader();
+    // A second reader while one is held is the platform's refusal, not a second consumer.
+    expect(() => stream.getReader()).toThrow();
+    const first = await reader.read();
+    expect([...(first.value as Uint8Array)]).toEqual([1, 1, 1, 1]);
+    const second = await reader.read();
+    expect((second.value as Uint8Array)[0]).toBe(2);
+    const third = await reader.read();
+    expect(third.value?.[0]).toBe(3);
+    const end = await reader.read();
+    expect(end.done).toBe(true);
+    reader.releaseLock();
+    aStore.close();
+    bStore.close();
+  });
+
+  it("pipes into a sink, and the caller writes no loop", async () => {
+    const { aStore, bStore } = wire({ a: { chunkBytes: 4 } });
+    const { file } = await handOver(aStore, bStore, counted(3, 4));
+    const taken: number[] = [];
+    const sink = new WritableStream<Uint8Array>({
+      write: (chunk) => {
+        taken.push(chunk[0]);
+      },
+    });
+
+    await file.pipeTo(sink);
+    expect(taken).toEqual([1, 2, 3]);
     aStore.close();
     bStore.close();
   });

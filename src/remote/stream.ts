@@ -224,6 +224,7 @@ export class RemoteStream implements Stream {
   private ended = false;
   private failure: Error | null = null;
   private stopped = false;
+  private platform: ReadableStream<Uint8Array> | null = null;
 
   constructor(private readonly hooks: ReaderHooks) {}
 
@@ -282,8 +283,66 @@ export class RemoteStream implements Stream {
     return { value: undefined, done: true };
   }
 
-  [Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
-    return this;
+  /**
+   * The runtime's own stream, built over this one the first time something asks for it.  What a
+   * sender usually hands over is a `ReadableStream`, so what arrives offers the same interface —
+   * `getReader()`, `pipeTo()`, `tee()` — rather than a narrower shape of its own.  A runtime
+   * without `ReadableStream` keeps the iterable, which is the library's own interface.
+   */
+  asReadableStream(): ReadableStream<Uint8Array> {
+    const ctor = globalThis.ReadableStream;
+    if (typeof ctor !== "function") throw new Error("this runtime has no ReadableStream: read the stream with `for await`");
+    this.platform ??= new ctor({
+      pull: async (controller) => {
+        const next = await this.next();
+        if (next.done) controller.close();
+        else controller.enqueue(next.value);
+      },
+      cancel: (reason: unknown) => {
+        this.cancel(typeof reason === "string" ? reason : "the reader stopped");
+      },
+    });
+    return this.platform;
+  }
+
+  getReader(): ReadableStreamDefaultReader<Uint8Array> {
+    return this.asReadableStream().getReader();
+  }
+
+  pipeTo(destination: WritableStream<Uint8Array>, options?: StreamPipeOptions): Promise<void> {
+    return this.asReadableStream().pipeTo(destination, options);
+  }
+
+  tee(): [ReadableStream<Uint8Array>, ReadableStream<Uint8Array>] {
+    return this.asReadableStream().tee();
+  }
+
+  /** One consumer, whichever door it comes through: where the runtime has a platform stream this
+   *  path goes through it, so the lock and the queue are the platform's and not two of ours. */
+  async *[Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
+    if (typeof globalThis.ReadableStream !== "function") {
+      for (;;) {
+        const next = await this.next();
+        if (next.done) return;
+        yield next.value;
+      }
+    }
+    const reader = this.asReadableStream().getReader();
+    let finished = false;
+    try {
+      for (;;) {
+        const next = await reader.read();
+        if (next.done) {
+          finished = true;
+          return;
+        }
+        yield next.value;
+      }
+    } finally {
+      reader.releaseLock();
+      // A reader that walks away is a reader that takes no more: the far side is told to stop.
+      if (!finished) this.cancel();
+    }
   }
 }
 
