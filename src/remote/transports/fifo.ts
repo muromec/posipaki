@@ -5,13 +5,13 @@
 
 import { open, type FileHandle } from "node:fs/promises";
 import type { ReadStream, WriteStream } from "node:fs";
-import * as readline from "node:readline";
+import { readLines, type LineReader } from "../lines.js";
 import type { StringTransport } from "../channel.js";
 
 export class FifoUtf8NlineTransport implements StringTransport {
   private readFd: FileHandle | null;
   private writeFd: FileHandle | null;
-  private rl: readline.Interface | null;
+  private reader: LineReader | null;
   private rs: ReadStream | null;
   private ws: WriteStream | null;
   private pvtOnMessage: ((line: string) => void) | null = null;
@@ -25,17 +25,17 @@ export class FifoUtf8NlineTransport implements StringTransport {
     this.writeFd = opts.writeFd ?? null;
 
     if (this.readFd) {
-      this.rs = this.readFd.createReadStream({ encoding: "utf-8" });
-      this.rl = readline.createInterface({ input: this.rs });
-
-      this.rl.on("line", (line) => {
-        if (this.pvtOnMessage && !this.closed) this.pvtOnMessage(line);
-      });
-
-      this.rl.on("close", () => {
-        this.pvtOnClose?.();
-        this.close();
-      });
+      this.rs = this.readFd.createReadStream();
+      this.reader = readLines(
+        this.rs,
+        (line) => {
+          if (this.pvtOnMessage && !this.closed) this.pvtOnMessage(line);
+        },
+        () => {
+          this.pvtOnClose?.();
+          void this.close();
+        },
+      );
 
       this.rs.on("error", (err: Error) => {
         this.pvtError = err;
@@ -43,7 +43,7 @@ export class FifoUtf8NlineTransport implements StringTransport {
       });
     } else {
       this.rs = null;
-      this.rl = null;
+      this.reader = null;
     }
 
     if (this.writeFd) {
@@ -167,9 +167,9 @@ export class FifoUtf8NlineTransport implements StringTransport {
     // and prevent reentry
     await Promise.resolve();
 
-    if (this.rl) {
-      this.rl.close();
-      this.rl = null;
+    if (this.reader) {
+      this.reader.stop();
+      this.reader = null;
     }
     if (this.rs) {
       this.rs.destroy();

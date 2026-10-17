@@ -19,7 +19,7 @@
 // protocol's, since the far end's own print may come first.
 
 import { createReadStream, createWriteStream } from "node:fs";
-import * as readline from "node:readline";
+import { readLines } from "./lines.js";
 import type { Readable, Writable } from "node:stream";
 import {
   errorFrame as wireErrorFrame,
@@ -93,14 +93,16 @@ export class LineTransport implements StringTransport {
 
   constructor(streams: LineStreams) {
     this.streams = streams;
-    const lines = readline.createInterface({ input: streams.read });
-    lines.on("line", (line) => {
-      if (this.pvtOnMessage && !this.pvtClosed) this.pvtOnMessage(line);
-    });
-    lines.on("close", () => {
-      this.pvtOnClose?.();
-      void this.close();
-    });
+    readLines(
+      streams.read,
+      (line) => {
+        if (this.pvtOnMessage && !this.pvtClosed) this.pvtOnMessage(line);
+      },
+      () => {
+        this.pvtOnClose?.();
+        void this.close();
+      },
+    );
     // A stream error is a peer that went away, not a reason to take the process
     // down with an unhandled 'error' event.
     streams.read.on("error", () => {
