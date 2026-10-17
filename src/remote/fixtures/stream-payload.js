@@ -26,15 +26,24 @@ const reader = defineActor({
   setup: () => ({}),
   handlers: {
     async HASH(msg) {
-      // Read to the end, here, as it arrives: a chunk lost, doubled or reordered changes the
-      // digest, and nothing here knows how many chunks there will be.
+      // Two kinds of value arrive the same way: a stream is read to the end as it comes, a blob is
+      // asked for its bytes.  Both are the same octets on the same wire.
       const hash = createHash("sha256");
       let bytes = 0;
       let chunks = 0;
-      for await (const chunk of msg.file) {
-        hash.update(chunk);
-        bytes += chunk.length;
-        chunks += 1;
+      if (typeof msg.file.arrayBuffer === "function") {
+        const all = new Uint8Array(await msg.file.arrayBuffer());
+        hash.update(all);
+        bytes = all.length;
+        chunks = 1;
+      } else {
+        // Read to the end, here, as it arrives: a chunk lost, doubled or reordered changes the
+        // digest, and nothing here knows how many chunks there will be.
+        for await (const chunk of msg.file) {
+          hash.update(chunk);
+          bytes += chunk.length;
+          chunks += 1;
+        }
       }
       await this.emit({ type: "HASHED", digest: new Uint8Array(hash.digest()), bytes, chunks });
     },

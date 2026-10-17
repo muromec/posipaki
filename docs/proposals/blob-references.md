@@ -1,10 +1,13 @@
 # Blob References
 
-**Status:** draft, 2026-10-11, from a design conversation with the operator about carrying files; first slice
-built 2026-10-16 — the reference, the offer-and-read protocol over a line transport, and the tests that hold it
-("As built", at the foot).  Written here because the wire is posipaki's business; the first consumer is the
-harness, where a tool server may run in another process or on another host and has to get at a file that lives
-with the message archive.
+**Status: superseded by `streams.md`, 2026-10-17.**  The value, the reference and the lazy offer are still the
+shape at the API edge; the wire described below — base64 in JSON, one ask, no credit — is gone, and with it
+`BlobStore`, `BlobHandle` and every `$b` frame.  A blob is now a form of stream announcement, and the second
+table this design kept on a connection is deleted.  Kept for the reasoning, not for the protocol.
+
+**Status (as it was):** draft, 2026-10-11, from a design conversation with the operator about carrying files; first
+slice built 2026-10-16 — the reference, the offer-and-read protocol over a line transport, and the tests that hold
+it ("As built", at the foot).
 
 ## Motivation
 

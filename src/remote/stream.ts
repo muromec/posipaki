@@ -48,6 +48,8 @@ export interface StreamInfo {
   readonly name?: string;
 }
 
+/** What an announcement says the octets are, as the far side will hold them. */
+type ValueForm = "stream" | "blob" | "bytes";
 /** A stream of octets: what the library takes at one end of a connection and gives at the other. */
 export interface Stream extends AsyncIterable<Uint8Array> {
   /** What the offerer said about these bytes — total size, media type, a name — when it said anything. */
@@ -64,6 +66,55 @@ export function isStreamRef(value: unknown): value is StreamRef {
   const body = (value as { $s?: unknown }).$s;
   if (typeof body !== "object" || body === null) return false;
   return typeof (body as { id?: unknown }).id === "number";
+}
+
+/** What may be offered in place of a whole file: sized, and read on demand.  A platform `Blob` or
+ *  `File` is one as it stands, and so is a `RemoteBlob` that arrived from a connection — which is how
+ *  a file that was received can be passed on without being read here. */
+export interface BlobSource {
+  readonly size: number;
+  readonly type?: string;
+  readonly name?: string;
+  /** A window of the bytes, when the value can give one without reading the rest. */
+  readonly slice?: (start?: number, end?: number) => BlobSource;
+  readonly arrayBuffer: () => Promise<ArrayBuffer>;
+  /** The bytes over time, for a value that cannot be sliced. */
+  readonly stream?: () => AsyncIterable<Uint8Array>;
+}
+
+export function isBlob(value: unknown): value is BlobSource {
+  if (typeof value !== "object" || value === null) return false;
+  const candidate = value as { size?: unknown; arrayBuffer?: unknown; slice?: unknown; stream?: unknown };
+  if (typeof candidate.size !== "number") return false;
+  if (typeof candidate.arrayBuffer !== "function") return false;
+  return typeof candidate.slice === "function" || typeof candidate.stream === "function";
+}
+
+/** What a message carries in place of a blob: the same value, read off the connection. */
+export interface Blob {
+  readonly size?: number;
+  readonly type?: string;
+  readonly name?: string;
+  /** Read it once: the bytes are on the wire, not here. */
+  stream(): Stream;
+  arrayBuffer(): Promise<ArrayBuffer>;
+}
+
+/** Every octet of a stream, in one array. */
+export async function bytesOf(stream: AsyncIterable<Uint8Array>): Promise<Uint8Array> {
+  const parts: Uint8Array[] = [];
+  let total = 0;
+  for await (const part of stream) {
+    parts.push(part);
+    total += part.length;
+  }
+  const all = new Uint8Array(total);
+  let at = 0;
+  for (const part of parts) {
+    all.set(part, at);
+    at += part.length;
+  }
+  return all;
 }
 
 
@@ -130,6 +181,8 @@ interface ReaderHooks {
   consumed(bytes: number): void;
   /** The consumer will take no more. */
   cancelled(reason: string): void;
+  /** The consumer is waiting for octets: what the far side may now be asked for. */
+  wanted(): void;
 }
 
 /**
@@ -195,6 +248,8 @@ export class RemoteStream implements Stream {
     }
     if (this.failure) throw this.failure;
     if (this.ended || this.stopped) return { value: undefined, done: true };
+    // Nothing flows until somebody waits for it: a blob nobody opens is not read at all.
+    this.hooks.wanted();
     return new Promise<IteratorResult<Uint8Array>>((resolve, reject) => {
       this.waiting.push({ resolve, reject });
     });
@@ -207,6 +262,66 @@ export class RemoteStream implements Stream {
 
   [Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
     return this;
+  }
+}
+
+/**
+ * A blob that came over a connection: the same value the far side offered, with its bytes still
+ * over there.  Reading it is what asks for them — and only at the pace the reader takes them, so a
+ * file nobody opens costs nothing on the wire.
+ */
+export class RemoteBlob implements Blob {
+  readonly info: StreamInfo;
+  private readonly body: RemoteStream;
+
+  constructor(body: RemoteStream, info: StreamInfo = {}) {
+    this.body = body;
+    this.info = info;
+  }
+
+  get size(): number | undefined {
+    return this.info.size;
+  }
+
+  get type(): string | undefined {
+    return this.info.type;
+  }
+
+  get name(): string | undefined {
+    return this.info.name;
+  }
+
+  stream(): Stream {
+    return this.body;
+  }
+
+  async arrayBuffer(): Promise<ArrayBuffer> {
+    const all = await bytesOf(this.body);
+    return all.buffer as ArrayBuffer;
+  }
+}
+
+/**
+ * Bytes that crossed a connection: materialised at the far end from a stream over them, and awaited
+ * where the message is read.  The sender's array is one piece, so this is the whole of its shape.
+ */
+export class RemoteBytes implements PromiseLike<Uint8Array> {
+  private readonly body: RemoteStream;
+
+  constructor(body: RemoteStream) {
+    this.body = body;
+  }
+
+  /** The octets, once they are all here. */
+  bytes(): Promise<Uint8Array> {
+    return bytesOf(this.body);
+  }
+
+  then<TResult1 = Uint8Array, TResult2 = never>(
+    onfulfilled?: ((value: Uint8Array) => TResult1 | PromiseLike<TResult1>) | null,
+    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
+  ): Promise<TResult1 | TResult2> {
+    return this.bytes().then(onfulfilled, onrejected);
   }
 }
 
@@ -230,6 +345,9 @@ interface Offered {
 interface Incoming {
   id: number;
   reader: RemoteStream;
+  /** What the far side offered: the stream itself, a blob over it, or bytes it had already. */
+  form: ValueForm;
+  value: RemoteStream | RemoteBlob | RemoteBytes;
   /** Octets asked for, and octets the consumer has taken: what may still be in flight. */
   asked: number;
   consumed: number;
@@ -260,7 +378,7 @@ export class StreamStore implements ValueCodec {
   private readonly pvtIncoming = new Map<number, Incoming>();
   private pvtNext: number;
   /** Why streams that are over failed, for a reference that arrives after the fact. */
-  private readonly pvtRefused = new Map<number, string>();
+  private readonly pvtRefused = new Map<number, { reason: string; form: ValueForm }>();
   private readonly pvtOff: () => void;
   private readonly pvtSegmentOff: (() => void) | null = null;
   private pvtClosed = false;
@@ -287,11 +405,32 @@ export class StreamStore implements ValueCodec {
    * side asks for them.  What comes back is what a message carries in its place.
    */
   offer(stream: Stream, info: StreamInfo = {}): StreamRef {
+    return this.pvtOffer(stream[Symbol.asyncIterator](), info, "stream");
+  }
+
+  /**
+   * Offer a blob — a whole file, read on demand.  It crosses as a stream over its bytes and arrives
+   * on the far side as a `RemoteBlob`, so nothing of it is read until somebody wants the bytes.
+   */
+  offerBlob(blob: BlobSource): StreamRef {
+    return this.pvtOffer(this.pvtBlobChunks(blob), factsOf(blob), "blob");
+  }
+
+  /**
+   * Offer bytes this side already holds.  They cross the same way a stream does, and the far side
+   * gets them back as an array once all of them are here — a typed array is one piece, so the wire
+   * carries it as a stream of one.
+   */
+  offerBytes(bytes: Uint8Array): StreamRef {
+    return this.pvtOffer(this.pvtOnePiece(bytes), { size: bytes.length }, "bytes");
+  }
+
+  private pvtOffer(source: AsyncIterator<Uint8Array>, info: StreamInfo, form: ValueForm): StreamRef {
     const id = this.pvtNext;
     this.pvtNext += 2;
     const offered: Offered = {
       id,
-      source: stream[Symbol.asyncIterator](),
+      source,
       info,
       pending: null,
       credit: 0,
@@ -300,8 +439,28 @@ export class StreamStore implements ValueCodec {
       dropped: false,
     };
     this.pvtOffers.set(id, offered);
-    void this.channel.send({ $stream: { id, ...info } });
+    const said = form === "stream" ? {} : { [form]: true };
+    void this.channel.send({ $stream: { id, ...info, ...said } });
     return { $s: { id } };
+  }
+
+  private async *pvtOnePiece(bytes: Uint8Array): AsyncGenerator<Uint8Array> {
+    if (bytes.length > 0) yield bytes;
+  }
+
+  /** A blob's octets, a window at a time: sliced where the value can, streamed where it cannot. */
+  private async *pvtBlobChunks(blob: BlobSource): AsyncGenerator<Uint8Array> {
+    const slice = blob.slice;
+    if (slice) {
+      for (let at = 0; at < blob.size; at += this.chunkBytes) {
+        const end = Math.min(at + this.chunkBytes, blob.size);
+        yield new Uint8Array(await slice.call(blob, at, end).arrayBuffer());
+      }
+      return;
+    }
+    const stream = blob.stream;
+    if (!stream) throw new TypeError("a blob must offer a slice or a stream");
+    yield* stream.call(blob);
   }
 
   /** A value on its way out: every stream in it becomes an announcement and a reference. */
@@ -344,11 +503,14 @@ export class StreamStore implements ValueCodec {
     if (typeof value !== "object" || value === null) return value;
     // Offering reads the source's own facts (`size`, `type`, `name`), so it is asked before the
     // walk decides the value is a plain object to copy.
+    // A blob is offered before a stream is looked for: it is a value with bytes behind it, not the
+    // iterator itself, and the far side is given a blob back.
+    if (isBlob(value)) return this.offerBlob(value);
     if (isStreamLike(value)) return this.offer(value, factsOf(value));
     if (seen.has(value)) return value;
     seen.add(value);
     if (Array.isArray(value)) return value.map((item) => this.pvtEncode(item, seen));
-    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return value;
+    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return this.offerBytes(asOctets(value));
     // Only a plain object is walked into: a handle, a logger, anything with its own prototype is
     // the application's and is left as it is.  Copying one would take its methods away.
     if (!isPlainObject(value)) return value;
@@ -419,9 +581,9 @@ export class StreamStore implements ValueCodec {
    * Take a stream out of the live table and remember why it ended, for a reference that arrives
    * after the fact: "no stream was announced" is the wrong sentence for a stream that was refused.
    */
-  private pvtRetire(id: number, reason: string): void {
+  private pvtRetire(id: number, reason: string, form: ValueForm = "stream"): void {
     this.pvtIncoming.delete(id);
-    this.pvtRefused.set(id, reason);
+    this.pvtRefused.set(id, { reason, form });
     // A connection lives a long time and a refusal is rare; past a bound the oldest reason goes.
     if (this.pvtRefused.size > 64) {
       const oldest = this.pvtRefused.keys().next();
@@ -433,7 +595,7 @@ export class StreamStore implements ValueCodec {
 
   private pvtDecode(value: unknown, seen: Set<unknown>): unknown {
     if (typeof value !== "object" || value === null) return value;
-    if (isStreamRef(value)) return this.pvtReaderFor(value.$s.id);
+    if (isStreamRef(value)) return this.pvtValueFor(value.$s.id);
     if (seen.has(value)) return value;
     seen.add(value);
     if (Array.isArray(value)) return value.map((item) => this.pvtDecode(item, seen));
@@ -446,15 +608,18 @@ export class StreamStore implements ValueCodec {
     return copy;
   }
 
-  private pvtReaderFor(id: number): RemoteStream {
+  private pvtValueFor(id: number): RemoteStream | RemoteBlob | RemoteBytes {
     const incoming = this.pvtIncoming.get(id);
-    if (incoming) return incoming.reader;
-    // A reference to a stream that is over, or one this side was never told about.  The reader says
+    if (incoming) return incoming.value;
+    // A reference to a stream that is over, or one this side was never told about.  The value says
     // so when it is read rather than throwing in the middle of a decoded frame: it was the message's
     // fault, not the connection's.
-    const reason = this.pvtRefused.get(id) ?? `no stream was announced with id ${id}`;
-    const failed = new RemoteStream({ consumed() {}, cancelled() {} });
+    const ended = this.pvtRefused.get(id);
+    const reason = ended?.reason ?? `no stream was announced with id ${id}`;
+    const failed = new RemoteStream({ consumed() {}, cancelled() {}, wanted() {} });
     failed.fail(reason);
+    if (ended?.form === "blob") return new RemoteBlob(failed);
+    if (ended?.form === "bytes") return new RemoteBytes(failed);
     return failed;
   }
 
@@ -467,7 +632,7 @@ export class StreamStore implements ValueCodec {
     void this.channel.send({ $streamAsk: { id: incoming.id, credit } });
   }
 
-  private pvtAnnounced(id: number, info: StreamInfo): void {
+  private pvtAnnounced(id: number, info: StreamInfo, form: ValueForm): void {
     const existing = this.pvtIncoming.get(id);
     existing?.reader.fail(`a stream was announced twice with id ${id}`);
     // The reader is built before the record it lives in: its callbacks close over that record and only run
@@ -479,6 +644,9 @@ export class StreamStore implements ValueCodec {
           incoming.consumed += bytes;
           this.pvtAsk(incoming);
         },
+        wanted: () => {
+          this.pvtAsk(incoming);
+        },
         cancelled: (reason) => {
           incoming.done = true;
           this.pvtIncoming.delete(id);
@@ -487,17 +655,25 @@ export class StreamStore implements ValueCodec {
       },
       info,
     );
-    incoming = { id, reader, asked: 0, consumed: 0, chunk: null, done: false };
+    incoming = {
+      id,
+      reader,
+      form,
+      value: form === "blob" ? new RemoteBlob(reader, info) : form === "bytes" ? new RemoteBytes(reader) : reader,
+      asked: 0,
+      consumed: 0,
+      chunk: null,
+      done: false,
+    };
     this.pvtIncoming.set(id, incoming);
     // Refuse before a chunk is asked for: a stream this side will not read is a sentence now.
     if (info.size !== undefined && info.size > this.maxBytes) {
       incoming.done = true;
       reader.fail(`stream ${id} is ${info.size} bytes, over this side's bound of ${this.maxBytes}`);
       void this.channel.send({ $streamFail: { id, reason: "over the reader's bound" } });
-      this.pvtRetire(id, `stream ${id} is ${info.size} bytes, over this side's bound of ${this.maxBytes}`);
+      this.pvtRetire(id, `stream ${id} is ${info.size} bytes, over this side's bound of ${this.maxBytes}`, form);
       return;
     }
-    this.pvtAsk(incoming);
   }
 
   private onSegment(head: Record<string, unknown>, bytes: Uint8Array): void {
@@ -515,13 +691,20 @@ export class StreamStore implements ValueCodec {
   private onFrame(frame: Record<string, unknown>): void {
     if (this.pvtClosed) return;
     if ("$stream" in frame) {
-      const body = frame.$stream as { id?: unknown; size?: unknown; type?: unknown; name?: unknown } | undefined;
+      const body = frame.$stream as
+        | { id?: unknown; size?: unknown; type?: unknown; name?: unknown; blob?: unknown; bytes?: unknown }
+        | undefined;
+      const form: ValueForm = body?.blob === true ? "blob" : body?.bytes === true ? "bytes" : "stream";
       if (typeof body?.id !== "number") return;
-      this.pvtAnnounced(body.id, {
-        size: typeof body.size === "number" ? body.size : undefined,
-        type: typeof body.type === "string" ? body.type : undefined,
-        name: typeof body.name === "string" ? body.name : undefined,
-      });
+      this.pvtAnnounced(
+        body.id,
+        {
+          size: typeof body.size === "number" ? body.size : undefined,
+          type: typeof body.type === "string" ? body.type : undefined,
+          name: typeof body.name === "string" ? body.name : undefined,
+        },
+        form,
+      );
       return;
     }
     if ("$streamAsk" in frame) {
@@ -541,14 +724,14 @@ export class StreamStore implements ValueCodec {
       if (chunk === null || chunk.seq !== body?.seq) {
         incoming.done = true;
         incoming.reader.fail(`stream ${incoming.id} lost its framing: a chunk ended that never began`);
-        this.pvtRetire(incoming.id, `stream ${incoming.id} lost its framing: a chunk ended that never began`);
+        this.pvtRetire(incoming.id, `stream ${incoming.id} lost its framing: a chunk ended that never began`, incoming.form);
         void this.channel.send({ $streamFail: { id: incoming.id, reason: "lost the framing" } });
         return;
       }
       if (typeof body?.crc32 === "number" && crc32(chunk.bytes) !== body.crc32) {
         incoming.done = true;
         incoming.reader.fail(`stream ${incoming.id} arrived corrupt: chunk ${chunk.seq} failed its checksum`);
-        this.pvtRetire(incoming.id, `stream ${incoming.id} arrived corrupt: chunk ${chunk.seq} failed its checksum`);
+        this.pvtRetire(incoming.id, `stream ${incoming.id} arrived corrupt: chunk ${chunk.seq} failed its checksum`, incoming.form);
         void this.channel.send({ $streamFail: { id: incoming.id, reason: "a chunk failed its checksum" } });
         return;
       }
@@ -571,7 +754,7 @@ export class StreamStore implements ValueCodec {
       const reason = typeof body?.reason === "string" ? body.reason : `stream ${incoming.id} failed`;
       incoming.done = true;
       incoming.reader.fail(reason);
-      this.pvtRetire(incoming.id, reason);
+      this.pvtRetire(incoming.id, reason, incoming.form);
       return;
     }
     if ("$streamCancel" in frame) {
@@ -585,13 +768,19 @@ export class StreamStore implements ValueCodec {
 }
 
 /** What a stream says about itself before any of it is read, when it knows. */
-function factsOf(stream: Stream): StreamInfo {
-  const facts = stream as { size?: unknown; type?: unknown; name?: unknown };
+function factsOf(value: object): StreamInfo {
+  const facts = value as { size?: unknown; type?: unknown; name?: unknown };
   const info: { size?: number; type?: string; name?: string } = {};
   if (typeof facts.size === "number") info.size = facts.size;
   if (typeof facts.type === "string") info.type = facts.type;
   if (typeof facts.name === "string") info.name = facts.name;
   return info;
+}
+
+/** A typed array or an `ArrayBuffer` as the octets the wire carries. */
+function asOctets(value: ArrayBuffer | ArrayBufferView): Uint8Array {
+  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  return new Uint8Array(value);
 }
 
 function reasonOf(error: unknown): string {

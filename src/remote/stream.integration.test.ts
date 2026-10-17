@@ -19,7 +19,9 @@ import type { Message } from "../types.js";
 
 type File = AsyncIterable<Uint8Array>;
 
-type Hash = { type: "HASH"; file: File } & Message;
+/** A whole file the far side reads on demand: sized, named, and asked for its bytes. */
+type Blobish = { size: number; type?: string; arrayBuffer(): Promise<ArrayBuffer> };
+type Hash = { type: "HASH"; file: File | Blobish } & Message;
 type Serve = { type: "SERVE"; chunks: number; size: number } & Message;
 type Hashed = { type: "HASHED"; digest: Uint8Array | PromiseLike<Uint8Array>; bytes: number; chunks: number } & Message;
 type Served = { type: "SERVED"; file: File | PromiseLike<File> } & Message;
@@ -141,6 +143,23 @@ describe("streams across a process boundary", () => {
     expect(Buffer.from(new Uint8Array(await heard.digest)).toString("hex")).toBe(
       createHash("sha256").update(bytes).digest("hex"),
     );
+    await proc.stop();
+  });
+
+  it("carries a blob, which the far side reads on demand", async () => {
+    // A file the way an application has one: sized and typed, its bytes still here until asked for.
+    const proc = await spawnStreamer<Hash, Hashed>();
+    const bytes = randomBytes(512 * 1024);
+    const file = new Blob([bytes], { type: "application/octet-stream" });
+
+    const answer = nextMessage(proc);
+    proc.send({ type: "HASH", file });
+    const heard = await answer;
+
+    expect(Buffer.from(new Uint8Array(await heard.digest)).toString("hex")).toBe(
+      createHash("sha256").update(bytes).digest("hex"),
+    );
+    expect(heard.bytes).toBe(bytes.length);
     await proc.stop();
   });
 });

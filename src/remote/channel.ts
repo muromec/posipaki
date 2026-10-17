@@ -33,9 +33,8 @@ export interface StringTransport {
 }
 
 /**
-/**
  * What the frame layer needs of a connection's values: two walks, and no knowledge of how the
- * bytes travel.  The frame vocabulary lives in this file and the machinery in `blob.ts` and
+ * bytes travel.  The frame vocabulary lives in this file and the machinery in
  * `stream.ts`, so a store comes in as this shape rather than as an import from here.
  */
 export interface ValueCodec {
@@ -44,9 +43,6 @@ export interface ValueCodec {
   /** Replace every reference in a value with something the reader can hold. */
   decode(value: unknown): unknown;
 }
-
-/** The name this had while blobs were the only thing that crossed by reference. */
-export type BlobCodec = ValueCodec;
 
 /**
  * Several codecs over one connection, each value through all of them, in the order given.

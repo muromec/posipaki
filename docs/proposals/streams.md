@@ -1,10 +1,11 @@
 # Streams
 
 **Status:** drawn 2026-10-16 from the operator's spec, after the blob slice (`blob-references.md`) showed what
-it could not do.  **Streams alone are built** (2026-10-17, slice 1 below): the transport carries octets beside its
-lines, the store carries announcements, credit, chunks, done and fail, and a stream in an ordinary message body
-crosses without the application doing anything.  Blobs and typed arrays are not on it yet, and the blob code still
-in the tree runs its own wire: superseded, not yet removed.  Written first, because the wire is posipaki's business
+it could not do.  **Streams, blobs and typed arrays are built** (2026-10-17): the transport carries octets beside
+its lines, the store carries announcements, credit, chunks, done and fail, a stream or a blob in an ordinary
+message body crosses without the application doing anything, and a typed array crosses as one piece, awaited on
+the far side.  The blob wire this replaces is gone: `BlobStore`, its base64 frames and its second table are
+deleted, and one store per connection carries all three.  Written first, because the wire is posipaki's business
 and this changes the wire.
 
 ## The problem with a blob
@@ -98,12 +99,14 @@ and one subprocess case found it in its first run.
    a stream read whole; a reader that pulls slowly (credit honoured, the writer never runs ahead); a consumer
    that stops early (both tables drop the id); a corrupt chunk (the stream fails, the connection survives); a
    chunk for an id nobody announced (rejected by skipping its announced length); a stream that ends in an error.
-2. **Blobs on streams.**  `RemoteBlob` backed by a stream with `arrayBuffer()` and `stream()`; a local `Blob`
-   offered without being read.  Tests: a blob round trip; a blob announced and never read (nothing crosses); a
-   blob over the reader's bound, refused before a chunk is asked for.
-3. **Typed arrays on blobs.**  Materialised at the boundary: the sender's array is handed over as chunks that
-   are views over it, and the far side reads a blob.  Tests: bytes in a message body arrive readable; the array
-   is not copied whole on the sending side.
+2. **Blobs on streams.**  Built: `RemoteBlob` over the stream an offer becomes, with `arrayBuffer()` and
+   `stream()`; `isBlob` recognises a platform `Blob` or `File` and offers it by its slices, so nothing of it is
+   read until somebody reads it; `BlobStore` and its frames are deleted.  Tests: a blob round trip carrying its
+   facts; a blob announced and never read (no octet on the wire, no read of the source); a blob handed on without
+   being read here; a blob over the reader's bound, refused before a chunk is asked for.
+3. **Typed arrays.**  Built, and simpler than planned: the bytes are already here, so an array is offered as a
+   stream of one piece and the far side gets a `RemoteBytes`, a `PromiseLike<Uint8Array>` — `await body.file` is
+   the whole of the receiving API, which is the awaitability the old blob handle had.
 4. **Performance, per primitive.**  Bytes per second through one wire for a raw pipe, a stream, a blob and a
    typed array, plus the overhead of each step over the one below it.  The numbers this replaces: the blob
    slice measured 5.0 MB/s against 14 MB/s for the same frames through a hand-written sink, and 185 MB/s for the
@@ -139,12 +142,14 @@ defends against a party who can write the wire.
   stream, and cost the reader the size/type facts it decides on.
 - **Who reads the checksum's failure**: answered by the build, in the form the reader asked for — the stream's
   `read()` fails with the sentence, the connection is untouched, and the writer is told with `$streamFail`.
-- **What a blob is now**: the blob slice's `BlobStore` and this store keep two tables on one connection.  The
-  proposal has a blob become a stream with facts, which would leave one table; that is slice 2 and it has not been
-  done, so today the two coexist.
 
 ## Supersedes
 
 `blob-references.md`.  The value it describes, the reference and the lazy offer are all still right at the API
 edge — a blob is a convenience over a stream — but the wire it describes (base64 in JSON, one ask, no credit)
 is what this replaces.
+
+**What this removed.**  `src/remote/blob.ts`, `BlobStore`, `BlobHandle`, the `$b`/`$blobAsk`/`$blobData` frames and
+the second table a connection used to keep.  A blob is now a form an announcement can take (`"blob": true`) over
+the same store, and typed arrays take a third (`"bytes": true`).  Anything that imported the old names breaks:
+that is deliberate, and it is why this is one change rather than two wires kept alive beside each other.

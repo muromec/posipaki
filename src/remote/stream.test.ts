@@ -8,7 +8,15 @@
 import { describe, expect, it } from "vitest";
 
 import type { Channel } from "./channel.js";
-import { StreamStore, crc32, isStreamRef, type Stream, type StreamStoreOptions } from "./stream.js";
+import {
+  RemoteBlob,
+  StreamStore,
+  crc32,
+  isStreamRef,
+  type BlobSource,
+  type Stream,
+  type StreamStoreOptions,
+} from "./stream.js";
 
 /** One end of a fake wire: what it writes appears at the other end, in order, a tick later. */
 class FakeChannel implements Channel {
@@ -291,6 +299,105 @@ describe("a stream on the wire", () => {
     await expect(readAll(file)).rejects.toThrow(/disk went away/);
     await settle();
     expect(a.frames.some((frame) => "$streamFail" in frame)).toBe(true);
+    aStore.close();
+    bStore.close();
+  });
+});
+
+/** A blob the way a platform hands one over: sized, and read a window at a time.  `reads` counts
+ *  what was actually read, so "nothing was read" is a number rather than an argument. */
+function fileOf(bytes: Uint8Array, facts: { type?: string; name?: string } = {}) {
+  const reads = { count: 0 };
+  const window = (start: number, end: number): BlobSource => {
+    const part = bytes.subarray(start, end);
+    return {
+      size: part.length,
+      slice: (from = 0, to = part.length) => window(start + from, start + Math.min(to, part.length)),
+      arrayBuffer: async () => {
+        reads.count += 1;
+        return part.slice().buffer as ArrayBuffer;
+      },
+    };
+  };
+  return {
+    size: bytes.length,
+    ...facts,
+    reads,
+    slice: (start = 0, end = bytes.length) => window(start, end),
+    arrayBuffer: async () => {
+      reads.count += 1;
+      return bytes.slice().buffer as ArrayBuffer;
+    },
+  };
+}
+
+/** The same hand-over, for a value that comes back as a blob. */
+async function handOverBlob(from: StreamStore, to: StreamStore, value: unknown): Promise<RemoteBlob> {
+  const reference = from.encode({ file: value }) as { file: unknown };
+  await settle();
+  const decoded = to.decode({ file: reference.file }) as { file: unknown };
+  expect(decoded.file).toBeInstanceOf(RemoteBlob);
+  return decoded.file as RemoteBlob;
+}
+
+describe("a blob on the wire", () => {
+  it("crosses as a stream of its octets and arrives as a blob with its facts", async () => {
+    const { aStore, bStore } = wire();
+    const source = fileOf(new Uint8Array([1, 2, 3, 4, 5, 6]), { type: "image/png", name: "shot.png" });
+
+    const file = await handOverBlob(aStore, bStore, source);
+
+    expect(file.size).toBe(6);
+    expect(file.type).toBe("image/png");
+    expect(file.name).toBe("shot.png");
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([1, 2, 3, 4, 5, 6]);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("reads nothing of it until somebody reads it", async () => {
+    const { a, b, aStore, bStore } = wire();
+    const source = fileOf(new Uint8Array([7, 7, 7, 7]), { type: "text/plain" });
+
+    const file = await handOverBlob(aStore, bStore, source);
+    await settle();
+
+    // Announced, and that is all: no ask went out, so no octet did either.
+    expect(source.reads.count).toBe(0);
+    expect(a.sentOctets()).toBe(0);
+    expect(b.segments).toEqual([]);
+
+    expect([...new Uint8Array(await file.arrayBuffer())]).toEqual([7, 7, 7, 7]);
+    expect(source.reads.count).toBeGreaterThan(0);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("can be handed on without being read here", async () => {
+    const { aStore, bStore } = wire();
+    const source = fileOf(new Uint8Array([9, 8, 7]));
+    const first = await handOverBlob(aStore, bStore, source);
+
+    // Back the other way with the value that arrived, not with the one that was sent.
+    const reference = bStore.encode({ file: first }) as { file: unknown };
+    await settle();
+    const back = aStore.decode({ file: reference.file }) as { file: RemoteBlob };
+
+    expect([...new Uint8Array(await back.file.arrayBuffer())]).toEqual([9, 8, 7]);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("is refused before a chunk is asked for when it is over the reader's bound", async () => {
+    const { b, aStore, bStore } = wire({ b: { maxBytes: 4 } });
+    const source = fileOf(new Uint8Array([1, 2, 3, 4, 5]));
+
+    const file = await handOverBlob(aStore, bStore, source);
+    await settle();
+
+    expect(b.frames.some((frame) => "$streamFail" in frame)).toBe(true);
+    expect(source.reads.count).toBe(0);
+    await expect(file.arrayBuffer()).rejects.toThrow(/over this side's bound/);
     aStore.close();
     bStore.close();
   });
