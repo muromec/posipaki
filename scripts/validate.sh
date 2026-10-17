@@ -11,6 +11,7 @@ NC='\033[0m'
 ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 failures=0
+failed_names=()
 
 # ── the workspaces ───────────────────────────────────────────────
 # A package in packages/* is part of the tree: it has its own tsconfig and its
@@ -31,6 +32,7 @@ if bash "$ROOT/scripts/tsc.sh" --noEmit 2>&1; then
 else
   echo -e "${RED}FAIL${NC}"
   failures=$((failures + 1))
+  failed_names+=("typecheck")
 fi
 
 for dir in ${PACKAGE_DIRS[@]+"${PACKAGE_DIRS[@]}"}; do
@@ -40,6 +42,7 @@ for dir in ${PACKAGE_DIRS[@]+"${PACKAGE_DIRS[@]}"}; do
   else
     echo -e "${RED}FAIL${NC}"
     failures=$((failures + 1))
+    failed_names+=("typecheck packages/$(basename "$dir")")
   fi
 done
 
@@ -52,6 +55,7 @@ if bash "$ROOT/scripts/no-casts.sh" 2>&1; then
 else
   echo -e "${RED}FAIL${NC}"
   failures=$((failures + 1))
+  failed_names+=("no new casts")
 fi
 
 # ── lint ─────────────────────────────────────────────────────────
@@ -61,6 +65,7 @@ if bash "$ROOT/scripts/lint.sh" -D correctness -D suspicious src/ ${PACKAGE_SRC[
 else
   echo -e "${RED}FAIL${NC}"
   failures=$((failures + 1))
+  failed_names+=("lint")
 fi
 
 # ── format:check ──────────────────────────────────────────────────
@@ -79,6 +84,7 @@ if bash "$ROOT/scripts/test.sh" --reporter=dots 2>&1; then
 else
   echo -e "${RED}FAIL${NC}"
   failures=$((failures + 1))
+  failed_names+=("test")
 fi
 
 # ── result ────────────────────────────────────────────────────────
@@ -87,6 +93,6 @@ if [ $failures -eq 0 ]; then
   echo -e "${GREEN}All checks passed.${NC}"
   exit 0
 else
-  echo -e "${RED}${failures} check(s) failed.${NC}"
+  echo -e "${RED}${failures} check(s) failed: ${failed_names[*]}${NC}"
   exit 1
 fi
