@@ -43,6 +43,17 @@ for dir in ${PACKAGE_DIRS[@]+"${PACKAGE_DIRS[@]}"}; do
   fi
 done
 
+# ── casts ─────────────────────────────────────────────────────────
+# The lines this commit adds may not erase a type to assert another.  The ones already in
+# the tree are not argued with here: this is about not adding more.
+echo -n "  no new casts … "
+if bash "$ROOT/scripts/no-casts.sh" 2>&1; then
+  echo -e "${GREEN}ok${NC}"
+else
+  echo -e "${RED}FAIL${NC}"
+  failures=$((failures + 1))
+fi
+
 # ── lint ─────────────────────────────────────────────────────────
 echo -n "  lint … "
 if bash "$ROOT/scripts/lint.sh" -D correctness -D suspicious src/ ${PACKAGE_SRC[@]+"${PACKAGE_SRC[@]}"} 2>&1; then
