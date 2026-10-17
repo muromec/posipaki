@@ -3,7 +3,7 @@ import type { Message } from "../types.js";
 
 export function nextState<A, S, IM extends Message, OM extends Message, R extends object>(
   proc: AsyncProcess<A, S, IM, OM, R>,
-) {
+): Promise<AsyncProcess<A, S, IM, OM, R>["state"]> {
   return new Promise((resolve) => {
     const unsub = proc.subscribe("state", () => {
       unsub();
@@ -14,7 +14,7 @@ export function nextState<A, S, IM extends Message, OM extends Message, R extend
 
 export function nextMessage<A, S, IM extends Message, OM extends Message, R extends object>(
   proc: AsyncProcess<A, S, IM, OM, R>,
-) {
+): Promise<OM> {
   return new Promise((resolve) => {
     const unsub = proc.subscribe("message", (msg) => {
       unsub();

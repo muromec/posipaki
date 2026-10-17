@@ -15,6 +15,7 @@ import { dirname, join } from "node:path";
 import { createHash, randomBytes } from "node:crypto";
 
 import { remoteClient } from "./client.js";
+import { nextMessage } from "../testing/index.js";
 import { commandSpawner } from "./spawners/fifo-command.js";
 import type { Message } from "../types.js";
 
@@ -31,22 +32,6 @@ async function spawnReader() {
     commandSpawner([process.argv[0], fixture]),
   );
   return actor.spawn({});
-}
-
-/** The far side's next message, with a guard that names what it waited for.  Armed before
- *  the act, because the answer can arrive before a caller looks. */
-function nextMessage(proc: { subscribe(kind: "message", handler: (msg: Hashed) => void): () => void }, what: string, ms: number): Promise<Hashed> {
-  return new Promise((resolve, reject) => {
-    const timer = setTimeout(() => {
-      stop();
-      reject(new Error(`no ${what} within ${ms}ms`));
-    }, ms);
-    const stop = proc.subscribe("message", (msg) => {
-      clearTimeout(timer);
-      stop();
-      resolve(msg);
-    });
-  });
 }
 
 const SIZES: Array<[string, number]> = [
@@ -72,7 +57,9 @@ describe("bytes across a process boundary", () => {
         const digest = createHash("sha256").update(sent).digest();
 
         const started = Date.now();
-        const answer = nextMessage(proc, `${label} of bytes hashed`, guard);
+        // Armed before the send: the answer can arrive before a caller looks.  The guard is
+        // the runner's clock below, named by the case.
+        const answer = nextMessage(proc);
         proc.send({ type: "HASH", bytes: sent });
         const heard = await answer;
         const back = new Uint8Array(await heard.digest);
