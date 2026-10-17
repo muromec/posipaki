@@ -11,7 +11,7 @@ class FakeSocket implements WebSocketLike {
   onclose: (() => void) | null = null;
   closed = false;
 
-  send(data: string): void {
+  send(data: string | Uint8Array): void {
     if (this.closed) throw new Error("send on closed socket");
     this.peer?.deliver(data);
   }
@@ -21,7 +21,7 @@ class FakeSocket implements WebSocketLike {
     this.readyState = 3; // CLOSED
     this.peer?.peerClosed();
   }
-  deliver(data: string): void {
+  deliver(data: string | Uint8Array): void {
     this.onmessage?.({ data });
   }
   peerClosed(): void {
@@ -117,5 +117,32 @@ describe("WebSocketTransport", () => {
     await ta.close();
     await closed.promise;
     expect(tb.canSend).toBe(false);
+  });
+});
+
+describe("WebSocketTransport octets", () => {
+  it("carries the octets a line announced, as their own message, and reads lines after them", async () => {
+    const [a, b] = makePair();
+    const ta = new WebSocketTransport(a);
+    const tb = new WebSocketTransport(b);
+    const octets = makeWaiter<Uint8Array>();
+    const after = makeWaiter<string>();
+    const lines: string[] = [];
+    tb.onMessage((line) => {
+      lines.push(line);
+      if (line.startsWith('{"$chunk"')) return 6;
+      after.resolve(line);
+    });
+    tb.onBytes(octets.resolve);
+
+    await ta.send('{"$chunk":{"bytes":6}}');
+    await ta.sendBytes(Buffer.from([0x61, 0x0a, 0x62, 0x0d, 0x0a, 0x63]));
+    await ta.send('{"tail":true}');
+
+    expect(Buffer.from(await octets.promise)).toEqual(Buffer.from([0x61, 0x0a, 0x62, 0x0d, 0x0a, 0x63]));
+    expect(await after.promise).toBe('{"tail":true}');
+    expect(lines).toEqual(['{"$chunk":{"bytes":6}}', '{"tail":true}']);
+    await ta.close();
+    await tb.close();
   });
 });

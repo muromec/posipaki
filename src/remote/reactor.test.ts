@@ -21,16 +21,25 @@ import { sleep } from "../util.js";
 import { nextState } from "../testing/index.js";
 
 /** A transport the test drives: what the reactor writes is recorded, what the test writes is delivered. */
+/** A transport the test drives: what the reactor writes is recorded, what the test writes is delivered. */
 class FakeTransport implements StringTransport {
   readonly sent: string[] = [];
-  private handler: ((line: string) => void) | null = null;
+  readonly sentBytes: Uint8Array[] = [];
+  private handler: ((line: string) => number | void) | null = null;
+  private bytesHandler: ((bytes: Uint8Array) => void) | null = null;
   private closeHandler: (() => void) | null = null;
 
   send(frame: string): void {
     this.sent.push(frame);
   }
-  onMessage(handler: (line: string) => void): void {
+  sendBytes(bytes: Uint8Array): void {
+    this.sentBytes.push(bytes);
+  }
+  onMessage(handler: (line: string) => number | void): void {
     this.handler = handler;
+  }
+  onBytes(handler: (bytes: Uint8Array) => void): void {
+    this.bytesHandler = handler;
   }
   removeHandler(): void {
     this.handler = null;
@@ -49,6 +58,10 @@ class FakeTransport implements StringTransport {
   /** A frame from the far side. */
   receive(frame: Record<string, unknown>): void {
     this.handler?.(JSON.stringify(frame));
+  }
+  /** The octets the far side sends after a line that announced them. */
+  receiveBytes(bytes: Uint8Array): void {
+    this.bytesHandler?.(bytes);
   }
 }
 

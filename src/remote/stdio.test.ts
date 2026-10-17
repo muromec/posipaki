@@ -225,3 +225,37 @@ describe("fd streams", () => {
     }
   });
 });
+
+describe("stdio wire, octets", () => {
+  it("carries the octets a line announced, and reads lines again after them", async () => {
+    const [left, right] = wirePair();
+    const a = new LineTransport(left);
+    const b = new LineTransport(right);
+    const lines: string[] = [];
+    let carry = 0;
+    const heard = new Promise<Uint8Array>((resolve) => {
+      b.onBytes(resolve);
+    });
+    const after = new Promise<string>((resolve) => {
+      b.onMessage((line) => {
+        lines.push(line);
+        if (line.startsWith('{"$chunk"')) {
+          carry = 6;
+          return carry;
+        }
+        resolve(line);
+      });
+    });
+
+    await a.send('{"$chunk":{"bytes":6}}');
+    // A line ending and a carriage return inside the run: octets are not text and are not split.
+    await a.sendBytes(Buffer.from([0x61, 0x0a, 0x62, 0x0d, 0x0a, 0x63]));
+    await a.send('{"tail":true}');
+
+    expect(Buffer.from(await heard)).toEqual(Buffer.from([0x61, 0x0a, 0x62, 0x0d, 0x0a, 0x63]));
+    expect(await after).toBe('{"tail":true}');
+    expect(lines).toEqual(['{"$chunk":{"bytes":6}}', '{"tail":true}']);
+    await a.close();
+    await b.close();
+  });
+});

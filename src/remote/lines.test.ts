@@ -8,7 +8,7 @@
 import { describe, expect, it } from "vitest";
 import { PassThrough } from "node:stream";
 
-import { readLines } from "./lines.js";
+import { readLines, readParts } from "./lines.js";
 
 /** Feed the stream the given chunks and collect what the reader made of them. */
 function linesOf(chunks: Array<string | Uint8Array>): { lines: string[]; ended: () => boolean } {
@@ -71,5 +71,68 @@ describe("readLines", () => {
     reader.stop();
     await new Promise((done) => setImmediate(done));
     expect(lines).toEqual(['{"a":1}']);
+  });
+});
+
+describe("readParts", () => {
+  /** Feed the stream the given chunks; collect the lines and the octets the reader made of them. */
+  function partsOf(
+    chunks: Array<string | Uint8Array>,
+    announce: (line: string) => number | void,
+  ): { lines: string[]; octets: Uint8Array[]; ended: () => boolean } {
+    const stream = new PassThrough();
+    const lines: string[] = [];
+    const octets: Uint8Array[] = [];
+    let ended = false;
+    readParts(
+      stream,
+      (line) => {
+        lines.push(line);
+        return announce(line);
+      },
+      (bytes) => octets.push(bytes),
+      () => {
+        ended = true;
+      },
+    );
+    for (const chunk of chunks) stream.write(chunk);
+    stream.end();
+    return { lines, octets, ended: () => ended };
+  }
+
+  const asText = (bytes: Uint8Array): string => Buffer.from(bytes).toString("utf8");
+
+  it("hands over the octets a line announced, however they arrive", async () => {
+    const { lines, octets } = partsOf(
+      ["{\"$chunk\":{\"bytes\":4}}\n", "ab", "c", "d", '{"$chunkEnd":1}\n'],
+      (line) => (line === '{"$chunk":{"bytes":4}}' ? 4 : undefined),
+    );
+    await new Promise((done) => setImmediate(done));
+    expect(lines).toEqual(['{"$chunk":{"bytes":4}}', '{"$chunkEnd":1}']);
+    expect(octets.map(asText)).toEqual(["abcd"]);
+  });
+
+  it("keeps octets that contain a line ending", async () => {
+    // The reason the length is announced: a run of bytes is not text and is not split.
+    const bytes = Buffer.from([0x61, 0x0a, 0x62, 0x0d, 0x0a, 0x63]);
+    const { lines, octets } = partsOf([`{"$chunk":{"bytes":${bytes.length}}}\n`, bytes, '{"x":1}\n'], () =>
+      bytes.length,
+    );
+    await new Promise((done) => setImmediate(done));
+    expect(octets).toHaveLength(1);
+    expect(Buffer.from(octets[0]!).equals(bytes)).toBe(true);
+    expect(lines).toEqual([`{"$chunk":{"bytes":${bytes.length}}}`, '{"x":1}']);
+  });
+
+  it("reads a run that arrives in the same chunk as its line", async () => {
+    const { octets } = partsOf([`{"$chunk":{"bytes":3}}\nxyz`], () => 3);
+    await new Promise((done) => setImmediate(done));
+    expect(octets.map(asText)).toEqual(["xyz"]);
+  });
+
+  it("carries several runs on one stream", async () => {
+    const { octets } = partsOf(['{"$chunk":{"bytes":2}}\n', "ab", '{"$chunk":{"bytes":2}}\n', "cd"], () => 2);
+    await new Promise((done) => setImmediate(done));
+    expect(octets.map(asText)).toEqual(["ab", "cd"]);
   });
 });

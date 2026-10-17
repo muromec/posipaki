@@ -112,9 +112,15 @@ describe("wsClientSpawner", () => {
   });
 });
 
+/** What a message was, for an assertion about lines: the text, or a marker that fails the
+ *  comparison when octets were sent where a case expected a line. */
+function asText(data: string | Uint8Array): string {
+  return typeof data === "string" ? data : `<${data.length} octets>`;
+}
+
 describe("wsServerSpawner", () => {
   it("sends $proto and returns a ready channel", async () => {
-    const sent: string[] = [];
+    const sent: Array<string | Uint8Array> = [];
     const ws: WebSocketLike = {
       send: (data) => sent.push(data),
       close: () => {},
@@ -124,16 +130,16 @@ describe("wsServerSpawner", () => {
     };
 
     const channel = await wsServerSpawner(ws)();
-    expect(sent.map(decode)).toEqual([{ $proto: VERSION }]);
+    expect(sent.map(asText).map(decode)).toEqual([{ $proto: VERSION }]);
 
     await channel.send({ $init: { parentName: "x", parentIdName: "x" } });
-    expect(sent.map(decode)[1]).toEqual({ $init: { parentName: "x", parentIdName: "x" } });
+    expect(sent.map(asText).map(decode)[1]).toEqual({ $init: { parentName: "x", parentIdName: "x" } });
   });
 });
 
 describe("bunServerWebSocket", () => {
   it("adapts send/close and exposes settable message/close slots", () => {
-    const sent: string[] = [];
+    const sent: Array<string | Uint8Array> = [];
     let closed = false;
     const adapter = bunServerWebSocket({
       send: (data) => sent.push(data),

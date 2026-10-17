@@ -16,8 +16,17 @@ import {
 
 export interface StringTransport {
   send(frame: string): void | Promise<void>;
-  onMessage(handler: (frame: string) => void): void;
+  /**
+   * A line arrived.  Answer with the number of raw octets that follow it, if any: a frame
+   * may announce a run of bytes (a chunk of a stream), and the transport then hands those
+   * octets over instead of reading them as more lines.
+   */
+  onMessage(handler: (frame: string) => number | void): void;
+  /** The octets a line announced, whole, in the order they were sent. */
+  onBytes(handler: (bytes: Uint8Array) => void): void;
   removeHandler(): void;
+  /** Raw octets, written after whatever went before them. */
+  sendBytes(bytes: Uint8Array): void | Promise<void>;
   /** Fires when the peer disconnects (transport closes from the other side). */
   onClose(handler: () => void): void;
   close(): Promise<void>;
@@ -64,6 +73,34 @@ export function frameReaders(
       readers.delete(handler);
     };
   };
+}
+
+/**
+ * A channel that is `base`, with every incoming frame offered to `onFrame` first — and not handed
+ * on when it is claimed.
+ *
+ * Every wrapper above a protocol wants this one thing, and none of them may lose the octets: a
+ * connection that carries segments keeps carrying them through whatever wraps it, or a stream
+ * dies one layer above the wire it was written for.
+ */
+export function channelThrough(base: Channel, onFrame: (frame: Record<string, unknown>) => boolean): Channel {
+  const wrapped: Channel = {
+    send: (frame) => base.send(frame),
+    onMessage: (handler) =>
+      base.onMessage((frame) => {
+        if (onFrame(frame)) return;
+        handler(frame);
+      }),
+    onClose: (handler) => base.onClose(handler),
+    close: () => base.close(),
+  };
+  if (base.sendSegment) {
+    wrapped.sendSegment = (frame, bytes) => base.sendSegment?.(frame, bytes);
+  }
+  if (base.onSegment) {
+    wrapped.onSegment = (handler) => base.onSegment?.(handler) ?? (() => {});
+  }
+  return wrapped;
 }
 
 // ── the address on a frame ─────────────────────────────────────────────────

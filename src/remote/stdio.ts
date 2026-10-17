@@ -19,7 +19,7 @@
 // protocol's, since the far end's own print may come first.
 
 import { createReadStream, createWriteStream } from "node:fs";
-import { readLines } from "./lines.js";
+import { readParts } from "./lines.js";
 import type { Readable, Writable } from "node:stream";
 import {
   errorFrame as wireErrorFrame,
@@ -86,17 +86,19 @@ function errorText(err: unknown): string {
  */
 export class LineTransport implements StringTransport {
   private readonly streams: LineStreams;
-  private pvtOnMessage: ((line: string) => void) | null = null;
+  private pvtOnMessage: ((line: string) => number | void) | null = null;
+  private pvtOnBytes: ((bytes: Uint8Array) => void) | null = null;
   private pvtOnClose: (() => void) | null = null;
   private pvtClosed = false;
   private pvtClosing: Promise<void> | null = null;
 
   constructor(streams: LineStreams) {
     this.streams = streams;
-    readLines(
+    readParts(
       streams.read,
-      (line) => {
-        if (this.pvtOnMessage && !this.pvtClosed) this.pvtOnMessage(line);
+      (line) => (this.pvtClosed ? undefined : this.pvtOnMessage?.(line)),
+      (bytes) => {
+        if (!this.pvtClosed) this.pvtOnBytes?.(bytes);
       },
       () => {
         this.pvtOnClose?.();
@@ -121,7 +123,7 @@ export class LineTransport implements StringTransport {
     return this.pvtOnMessage !== null;
   }
 
-  onMessage(handler: (line: string) => void): void {
+  onMessage(handler: (line: string) => number | void): void {
     if (this.pvtClosed) throw new StdioWireError("stdio transport: closed");
     if (this.pvtOnMessage !== null) {
       throw new StdioWireError("stdio transport: handler already set — call removeHandler()");
@@ -129,7 +131,12 @@ export class LineTransport implements StringTransport {
     this.pvtOnMessage = handler;
   }
 
-  removeHandler(): ((line: string) => void) | null {
+  onBytes(handler: (bytes: Uint8Array) => void): void {
+    if (this.pvtClosed) throw new StdioWireError("stdio transport: closed");
+    this.pvtOnBytes = handler;
+  }
+
+  removeHandler(): ((line: string) => number | void) | null {
     const previous = this.pvtOnMessage;
     this.pvtOnMessage = null;
     return previous;
@@ -140,13 +147,21 @@ export class LineTransport implements StringTransport {
   }
 
   send(frame: string): Promise<void> {
+    const line = frame.endsWith("\n") ? frame : `${frame}\n`;
+    return this.pvtWrite(line);
+  }
+
+  sendBytes(bytes: Uint8Array): Promise<void> {
+    return this.pvtWrite(bytes);
+  }
+
+  private pvtWrite(data: string | Uint8Array): Promise<void> {
     if (this.pvtClosed) {
       return Promise.resolve();
     }
-    const line = frame.endsWith("\n") ? frame : `${frame}\n`;
     return new Promise<void>((resolve, reject) => {
       try {
-        this.streams.write.write(line, (err?: Error | null) => {
+        this.streams.write.write(data, (err?: Error | null) => {
           if (!err) return resolve();
           const code = (err as { code?: unknown }).code;
           // A peer that has hung up cannot be told anything; the write that
@@ -188,8 +203,8 @@ export class LineTransport implements StringTransport {
 
 /** Streams over two fds of *our own* process — the child side of an fd wire. */
 export function fdStreams(readFd: number, writeFd: number): LineStreams {
-  const read = createReadStream("", { fd: readFd, encoding: "utf-8", autoClose: false });
-  const write = createWriteStream("", { fd: writeFd, encoding: "utf-8", autoClose: false });
+  const read = createReadStream("", { fd: readFd, autoClose: false });
+  const write = createWriteStream("", { fd: writeFd, autoClose: false });
   return { read, write };
 }
 

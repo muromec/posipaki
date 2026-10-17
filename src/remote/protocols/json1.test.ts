@@ -2,18 +2,31 @@
 
 import { describe, it, expect } from "vitest";
 import { encode, decode, json1Channel, VERSION } from "./json1.js";
-import { BAD_PREFIX_LIMIT, badReason, isProto, isInit, isState, isMsg, isExit } from "../channel.js";
+import { BAD_PREFIX_LIMIT, badReason, channelThrough, isProto, isInit, isState, isMsg, isExit } from "../channel.js";
 import type { StringTransport } from "../channel.js";
 
 /** As much of a transport as reading a frame needs: the handler the codec installs, and a way to
  *  call it the way a socket's `message` event does — which is the call an unreadable frame used to
  *  escape through, as an uncaught exception with nobody to catch it. */
 function lineTransport() {
-  let handler: ((line: string) => void) | null = null;
+  let handler: ((line: string) => number | void) | null = null;
+  let octets: ((bytes: Uint8Array) => void) | null = null;
+  /** Everything this side wrote, lines and octets alike, in the order it was written. */
+  const writes: Array<string | Uint8Array> = [];
+  const linesWritten = (): string[] => writes.filter((w): w is string => typeof w === "string");
+  const octetsWritten = (): Uint8Array[] => writes.filter((w): w is Uint8Array => typeof w !== "string");
   const transport: StringTransport = {
-    send() {},
+    send(frame) {
+      writes.push(frame);
+    },
+    async sendBytes(bytes) {
+      writes.push(bytes);
+    },
     onMessage(h) {
       handler = h;
+    },
+    onBytes(h) {
+      octets = h;
     },
     removeHandler() {
       handler = null;
@@ -21,7 +34,16 @@ function lineTransport() {
     onClose() {},
     async close() {},
   };
-  return { transport, deliver: (line: string) => handler!(line) };
+  return {
+    transport,
+    writes,
+    linesWritten,
+    octetsWritten,
+    /** A line as the far side would send it; the answer is how many octets it announced. */
+    deliver: (line: string) => handler!(line),
+    /** The octets the far side sends after a line that announced them. */
+    deliverBytes: (bytes: Uint8Array) => octets!(bytes),
+  };
 }
 
 function readLines(lines: string[]): Record<string, unknown>[] {
@@ -90,6 +112,8 @@ describe("json1 channel readers", () => {
       removeHandler() {
         handler = null;
       },
+      onBytes() {},
+      sendBytes() {},
       onClose() {},
       async close() {},
     };
@@ -159,5 +183,82 @@ describe("json1 reading a line", () => {
     const kept = (frame.$bad as { prefix: string }).prefix;
     expect(kept.length).toBe(BAD_PREFIX_LIMIT + 1);
     expect(secret.startsWith(kept.slice(0, -1))).toBe(true);
+  });
+});
+
+describe("a frame that carries octets", () => {
+  const head = { $chunk: { id: 7, seq: 1, bytes: 4 } };
+
+  it("gives the octets to the reader that asked, and the head to no frame reader", () => {
+    const io = lineTransport();
+    const channel = json1Channel(io.transport);
+    const frames: Record<string, unknown>[] = [];
+    const segments: Array<{ frame: Record<string, unknown>; bytes: Uint8Array }> = [];
+    channel.onMessage((frame) => frames.push(frame));
+    channel.onSegment!((frame, bytes) => segments.push({ frame, bytes }));
+
+    // The answer to the line is the length the transport must then hand over.
+    expect(io.deliver(encode(head))).toBe(4);
+    io.deliverBytes(Buffer.from("abcd"));
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0]!.frame).toEqual(head);
+    expect(Buffer.from(segments[0]!.bytes).toString("utf8")).toBe("abcd");
+    expect(frames).toEqual([]);
+  });
+
+  it("writes a segment as its line and then its octets", async () => {
+    const io = lineTransport();
+    const channel = json1Channel(io.transport);
+    const bytes = Buffer.from([0x61, 0x0a, 0x62]);
+
+    await channel.sendSegment!(head, bytes);
+
+    expect(io.writes).toHaveLength(2);
+    expect(io.writes[0]).toBe(encode(head));
+    // Not a line, not encoded: the octets as they are, straight after the line that announced them.
+    expect(io.writes[1]).toBe(bytes);
+  });
+
+  it("carries a run of no octets", () => {
+    const io = lineTransport();
+    const channel = json1Channel(io.transport);
+    const segments: Uint8Array[] = [];
+    channel.onSegment!((_frame, bytes) => segments.push(bytes));
+
+    expect(io.deliver(encode({ $chunk: { id: 1, seq: 1, bytes: 0 } }))).toBe(0);
+    io.deliverBytes(new Uint8Array(0));
+
+    expect(segments).toHaveLength(1);
+    expect(segments[0]!.length).toBe(0);
+  });
+
+  it("says so when octets arrive that no frame announced", () => {
+    const io = lineTransport();
+    const channel = json1Channel(io.transport);
+    const frames: Record<string, unknown>[] = [];
+    channel.onMessage((frame) => frames.push(frame));
+
+    io.deliverBytes(Buffer.from("xy"));
+
+    expect(frames).toHaveLength(1);
+    expect(badReason(frames[0]!)).toContain("2 octets");
+  });
+
+  it("is a channel without segments when the transport is wrapped", async () => {
+    // Every wrapper above a protocol goes through `channelThrough`, and a wrapped connection keeps
+    // carrying what it carried: losing the octets there would kill a stream one layer above the wire.
+    const io = lineTransport();
+    const channel = json1Channel(io.transport);
+    const wrapped = channelThrough(channel, () => false);
+    const segments: number[] = [];
+    wrapped.onSegment!((_frame, bytes) => segments.push(bytes.length));
+
+    io.deliver(encode(head));
+    io.deliverBytes(Buffer.from("abcd"));
+    await wrapped.sendSegment!(head, Buffer.from("wxyz"));
+
+    expect(segments).toEqual([4]);
+    expect(io.octetsWritten()).toHaveLength(1);
   });
 });

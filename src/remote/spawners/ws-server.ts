@@ -23,7 +23,7 @@ export function wsServerSpawner(ws: WebSocketLike): Spawner {
  * properties on the socket, so the consumer routes them onto the adapter.
  */
 export interface BunServerWebSocketLike {
-  send(data: string): void;
+  send(data: string | Uint8Array): void;
   close(code?: number, reason?: string): void;
   readonly readyState: number;
   data?: unknown;

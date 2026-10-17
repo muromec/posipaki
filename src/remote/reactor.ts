@@ -6,7 +6,7 @@
 
 import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
-import type { Channel, StringTransport } from "./channel.js";
+import { channelThrough, type Channel, type StringTransport } from "./channel.js";
 import { json1Channel, VERSION } from "./protocols/json1.js";
 import { serveChannel, type AnyProcess, type Init, type Served, type ServedProcess, type Spawner } from "./server.js";
 import type { BlobStoreOptions } from "./blob.js";
@@ -280,17 +280,7 @@ function withFrameHook(
   hook: ReactorOptions<unknown>["onIncomingFrame"],
 ): Channel {
   if (!hook) return channel;
-
-  return {
-    send: (frame) => channel.send(frame),
-    onMessage: (handler) =>
-      channel.onMessage((frame) => {
-        if (hook(frame) === true) return;
-        handler(frame);
-      }),
-    onClose: (handler) => channel.onClose(handler),
-    close: () => channel.close(),
-  };
+  return channelThrough(channel, (frame) => hook(frame) === true);
 }
 
 /**

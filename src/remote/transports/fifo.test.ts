@@ -374,3 +374,28 @@ describe("FifoUtf8NlineTransport bidirectional connect", () => {
     await expect(t.send("x\n")).rejects.toThrow("closed");
   });
 });
+
+describe("FifoUtf8NlineTransport octets", () => {
+  it("carries the octets a line announced, whole, and reads lines again after them", async () => {
+    const [a, b] = await makePair();
+    const octets = makeWaiter<Uint8Array>();
+    const after = makeWaiter<string>();
+    const lines: string[] = [];
+    b.onMessage((line) => {
+      lines.push(line);
+      if (line.startsWith('{"$chunk"')) return 6;
+      after.resolve(line);
+    });
+    b.onBytes(octets.resolve);
+
+    await a.send('{"$chunk":{"bytes":6}}\n');
+    await a.sendBytes(Buffer.from([0x61, 0x0a, 0x62, 0x0d, 0x0a, 0x63]));
+    await a.send('{"tail":true}\n');
+
+    expect(Buffer.from(await octets.promise)).toEqual(Buffer.from([0x61, 0x0a, 0x62, 0x0d, 0x0a, 0x63]));
+    expect(await after.promise).toBe('{"tail":true}');
+    expect(lines).toEqual(['{"$chunk":{"bytes":6}}', '{"tail":true}']);
+    await a.close();
+    await b.close();
+  });
+});

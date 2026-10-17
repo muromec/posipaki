@@ -92,6 +92,15 @@ export type SenderOrigin = ProcessCtx<unknown, unknown, Message, Message> | "roo
 export interface FrameChannel {
   send(frame: Record<string, unknown>): void | Promise<void>;
   onMessage(handler: (frame: Record<string, unknown>) => void): () => void;
+  /**
+   * A frame with raw octets after it, written as octets rather than inside JSON.
+   *
+   * A channel over whole objects has no octets to give and does not offer these two; a
+   * connection that carries them is the one a stream can cross.
+   */
+  sendSegment?(frame: Record<string, unknown>, bytes: Uint8Array): void | Promise<void>;
+  /** Those octets, whole, in the order they were sent. */
+  onSegment?(handler: (frame: Record<string, unknown>, bytes: Uint8Array) => void): () => void;
   /** Fires when the peer disconnects (the connection closes from the other side). */
   onClose(handler: () => void): void;
   close(): Promise<void>;

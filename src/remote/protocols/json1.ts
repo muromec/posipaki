@@ -16,7 +16,7 @@
 // array or `null` is not a frame either, and reading one as a frame (`"$init" in 7`)
 // throws just as surely as a line that never parsed.
 
-import { badFrame, frameReaders, type Channel, type StringTransport } from "../channel.js";
+import { badFrame, type Channel, type StringTransport } from "../channel.js";
 
 export const VERSION = "json.v1";
 
@@ -55,14 +55,78 @@ function kindOf(value: unknown): string {
   return `a ${typeof value}`;
 }
 
+/**
+ * The octets a frame announces after it, or null when it announces none.
+ *
+ * One shape only: a chunk head carries the number of raw octets that follow, and that number
+ * is what keeps the reader's framing.  A head without one is not a segment — it goes on as a
+ * frame, and whoever reads it refuses it by name.
+ */
+export function announcedOctets(frame: Record<string, unknown>): number | null {
+  const head = frame.$chunk;
+  if (typeof head !== "object" || head === null) return null;
+  const bytes = (head as { bytes?: unknown }).bytes;
+  return typeof bytes === "number" && Number.isInteger(bytes) && bytes >= 0 ? bytes : null;
+}
+
 export function json1Channel(transport: StringTransport): Channel {
-  // One handler on the transport, however many readers on the channel: the fan-out is `frameReaders`.
-  const subscribe = frameReaders((deliver) => transport.onMessage((str) => deliver(readFrame(str))));
+  const frameReaders = new Set<(frame: Record<string, unknown>) => void>();
+  const segmentReaders = new Set<(frame: Record<string, unknown>, bytes: Uint8Array) => void>();
+  /** The head whose octets are on their way: set between the line and the run it announced. */
+  let expecting: Record<string, unknown> | null = null;
+
+  const deliver = (frame: Record<string, unknown>): void => {
+    // Over a copy: a reader that leaves as it is handed a frame must not cut the rest short.
+    for (const reader of [...frameReaders]) reader(frame);
+  };
+
+  // Both handlers go on at once: the octets have to be read even when nobody is listening for
+  // them, or the next line starts in the wrong place and the connection is lost.
+  transport.onMessage((str) => {
+    const frame = readFrame(str);
+    const octets = announcedOctets(frame);
+    if (octets === null) {
+      deliver(frame);
+      return;
+    }
+    expecting = frame;
+    return octets;
+  });
+  transport.onBytes((bytes) => {
+    const frame = expecting;
+    expecting = null;
+    // Octets nobody announced are a peer talking past the protocol: they are said out loud
+    // rather than attached to whatever frame happened to arrive last.
+    if (frame === null) {
+      deliver(badFrame(`${bytes.length} octets arrived that no frame announced`, ""));
+      return;
+    }
+    for (const reader of [...segmentReaders]) reader(frame, bytes);
+  });
+
   return {
     send(frame) {
       return transport.send(encode(frame));
     },
-    onMessage: subscribe,
+    onMessage(handler) {
+      frameReaders.add(handler);
+      return () => {
+        frameReaders.delete(handler);
+      };
+    },
+    async sendSegment(frame, bytes) {
+      // The line first, then its octets, each written before the next is asked for: a chunk
+      // that was queued behind a megabyte of earlier chunks is a chunk the writer ran ahead of
+      // its reader with.
+      await transport.send(encode(frame));
+      await transport.sendBytes(bytes);
+    },
+    onSegment(handler) {
+      segmentReaders.add(handler);
+      return () => {
+        segmentReaders.delete(handler);
+      };
+    },
     onClose(handler) {
       transport.onClose(handler);
     },

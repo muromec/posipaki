@@ -5,7 +5,7 @@
 
 import { open, type FileHandle } from "node:fs/promises";
 import type { ReadStream, WriteStream } from "node:fs";
-import { readLines, type LineReader } from "../lines.js";
+import { readParts, type LineReader } from "../lines.js";
 import type { StringTransport } from "../channel.js";
 
 export class FifoUtf8NlineTransport implements StringTransport {
@@ -14,7 +14,8 @@ export class FifoUtf8NlineTransport implements StringTransport {
   private reader: LineReader | null;
   private rs: ReadStream | null;
   private ws: WriteStream | null;
-  private pvtOnMessage: ((line: string) => void) | null = null;
+  private pvtOnMessage: ((line: string) => number | void) | null = null;
+  private pvtOnBytes: ((bytes: Uint8Array) => void) | null = null;
   private pvtOnClose: (() => void) | null = null;
   private closed = false;
   private closingPromise: Promise<void> | null = null;
@@ -26,10 +27,11 @@ export class FifoUtf8NlineTransport implements StringTransport {
 
     if (this.readFd) {
       this.rs = this.readFd.createReadStream();
-      this.reader = readLines(
+      this.reader = readParts(
         this.rs,
-        (line) => {
-          if (this.pvtOnMessage && !this.closed) this.pvtOnMessage(line);
+        (line) => (this.closed ? undefined : this.pvtOnMessage?.(line)),
+        (bytes) => {
+          if (!this.closed) this.pvtOnBytes?.(bytes);
         },
         () => {
           this.pvtOnClose?.();
@@ -47,7 +49,7 @@ export class FifoUtf8NlineTransport implements StringTransport {
     }
 
     if (this.writeFd) {
-      this.ws = this.writeFd.createWriteStream({ encoding: "utf-8" });
+      this.ws = this.writeFd.createWriteStream({});
       this.ws.on("error", (err: Error) => {
         this.pvtError = err;
         this.close();
@@ -121,7 +123,13 @@ export class FifoUtf8NlineTransport implements StringTransport {
     return this.writeFd !== null && !this.closed;
   }
 
-  onMessage(handler: (line: string) => void): void {
+  onBytes(handler: (bytes: Uint8Array) => void): void {
+    if (this.closed) throw new Error("FifoUtf8NlineTransport: closed");
+    if (this.readFd === null) throw new Error("FifoUtf8NlineTransport: not a reader");
+    this.pvtOnBytes = handler;
+  }
+
+  onMessage(handler: (line: string) => number | void): void {
     if (this.closed) throw new Error("FifoUtf8NlineTransport: closed");
     if (this.readFd === null) throw new Error("FifoUtf8NlineTransport: not a reader");
     if (this.pvtOnMessage !== null) {
@@ -130,7 +138,7 @@ export class FifoUtf8NlineTransport implements StringTransport {
     this.pvtOnMessage = handler;
   }
 
-  removeHandler(): ((line: string) => void) | null {
+  removeHandler(): ((line: string) => number | void) | null {
     const prev = this.pvtOnMessage;
     this.pvtOnMessage = null;
     return prev;
@@ -153,6 +161,12 @@ export class FifoUtf8NlineTransport implements StringTransport {
     if (this.writeFd === null) throw new Error("FifoUtf8NlineTransport: not a writer");
     if (!line.endsWith("\n")) line += "\n";
     await this.ws?.write(line);
+  }
+
+  async sendBytes(bytes: Uint8Array): Promise<void> {
+    if (this.closed) throw new Error("FifoUtf8NlineTransport: closed");
+    if (this.writeFd === null) throw new Error("FifoUtf8NlineTransport: not a writer");
+    await this.ws?.write(bytes);
   }
 
   async close(): Promise<void> {

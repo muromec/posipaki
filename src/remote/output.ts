@@ -7,7 +7,7 @@
 // they exist.  Where they go is the holder's business: `stderrSink` for a plain client, a
 // terminal for one that has an operator in front of it.
 
-import type { Channel } from "./channel.js";
+import { channelThrough, type Channel } from "./channel.js";
 import { outputOf, type OutputFd } from "./channel.js";
 
 /** Where the far end's own output goes. */
@@ -31,15 +31,10 @@ export function stderrSink(name = ""): OutputSink {
  * own print are not the protocol's, so they are taken off here rather than handed to the seam.
  */
 export function withOutput(channel: Channel, sink: OutputSink): Channel {
-  return {
-    send: (frame) => channel.send(frame),
-    onMessage: (handler) =>
-      channel.onMessage((frame) => {
-        const output = outputOf(frame);
-        if (output) sink(output.fd, output.data);
-        else handler(frame);
-      }),
-    onClose: (handler) => channel.onClose(handler),
-    close: () => channel.close(),
-  };
+  return channelThrough(channel, (frame) => {
+    const output = outputOf(frame);
+    if (!output) return false;
+    sink(output.fd, output.data);
+    return true;
+  });
 }
