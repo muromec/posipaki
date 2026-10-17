@@ -63,14 +63,14 @@ type ValueForm = "stream" | "blob" | "bytes";
  *  It says nothing about what the octets are — that belongs to the value that references it. */
 export type Stream = AsyncIterable<Uint8Array>;
 
-/** What a message carries in place of a stream: the id this side announced. */
+/** What a message carries in place of a stream: an id, or the name the far side announced it under. */
 export interface StreamRef {
-  $s: { id: number };
+  $s: { id: number } | { name: string };
 }
 
 export function isStreamRef(value: unknown): value is StreamRef {
-  const body = (value as { $s?: { id?: unknown } } | null)?.$s;
-  return typeof body?.id === "number";
+  const body = (value as { $s?: { id?: unknown; name?: unknown } } | null)?.$s;
+  return typeof body?.id === "number" || typeof body?.name === "string";
 }
 
 /** What a message carries in place of a typed array: its octets, and the length they add up to. */
@@ -494,6 +494,12 @@ export class StreamStore implements ValueCodec {
   private readonly ids: IdSpace;
   /** Why streams that are over failed, for a reference that arrives after the fact. */
   private readonly pvtRefused = new Map<number, { reason: string; form: ValueForm }>();
+  /** What this side announced under a name, and what the far side did.  A name is taken while it is
+   *  in either map, so the two directions never answer to one name at once. */
+  private readonly pvtNamesOut = new Map<string, number>();
+  private readonly pvtNamesIn = new Map<string, number>();
+  /** Told about every named stream the far side announces: the live ones replay, then each arrival. */
+  private readonly pvtNamedListeners = new Set<(name: string, stream: RemoteStream) => void>();
   private readonly pvtOff: () => void;
   private readonly pvtSegmentOff: (() => void) | null = null;
   private pvtClosed = false;
@@ -518,9 +524,12 @@ export class StreamStore implements ValueCodec {
   /**
    * Offer a stream to the connection: the announcement goes out now, and the bytes when the far
    * side asks for them.  What comes back is what a message carries in their place.
+   *
+   * A `name` makes the stream findable: the far side can reference it by that name instead of the
+   * id, and ask for it with `named()` without waiting for a message to carry a reference.
    */
-  offer(stream: Stream): StreamRef {
-    return { $s: { id: this.pvtAnnounce(stream[Symbol.asyncIterator]()) } };
+  offer(stream: Stream, name?: string): StreamRef {
+    return { $s: { id: this.pvtAnnounce(stream[Symbol.asyncIterator](), name) } };
   }
 
   /**
@@ -542,10 +551,11 @@ export class StreamStore implements ValueCodec {
     return { $bytes: { id: this.pvtAnnounce(this.pvtOnePiece(bytes)), size: bytes.length } };
   }
 
-  private pvtAnnounce(source: AsyncIterator<Uint8Array>): number {
+  private pvtAnnounce(source: AsyncIterator<Uint8Array>, name?: string): number {
     const id = this.ids.next();
     this.pvtOffers.set(id, { id, source, pending: null, credit: 0, seq: 0, pumping: false, dropped: false });
-    void this.channel.send({ $stream: { id } });
+    if (name !== undefined) this.pvtNamesOut.set(name, id);
+    void this.channel.send(name === undefined ? { $stream: { id } } : { $stream: { id, name } });
     return id;
   }
 
@@ -596,6 +606,32 @@ export class StreamStore implements ValueCodec {
   /** The ids this side is holding, in the order they were offered. */
   held(): number[] {
     return [...this.pvtOffers.keys()];
+  }
+
+  /**
+   * The stream the far side announced under `name`, if it is still live — the way a caller finds a
+   * stream nobody sent it a reference to.  A name that was never announced answers `undefined`, and a
+   * name whose stream is over does too: the sentence lives on the value the reference would give.
+   */
+  named(name: string): RemoteStream | undefined {
+    const id = this.pvtNamesIn.get(name);
+    if (id === undefined) return undefined;
+    return this.pvtValueFor(id, "stream") as RemoteStream;
+  }
+
+  /**
+   * Every named stream the far side announces, now and later.  The listener is called for the names
+   * already live when it is installed and for each new one as it arrives, so a caller that wires a
+   * sink to `stdout` does not have to know whether the far side has printed yet.
+   */
+  onNamed(listener: (name: string, stream: RemoteStream) => void): () => void {
+    this.pvtNamedListeners.add(listener);
+    for (const [name, id] of this.pvtNamesIn) {
+      if (this.pvtIncoming.has(id)) listener(name, this.pvtValueFor(id, "stream") as RemoteStream);
+    }
+    return () => {
+      this.pvtNamedListeners.delete(listener);
+    };
   }
 
   // ── writing ────────────────────────────────────────────────────────────
@@ -680,6 +716,7 @@ export class StreamStore implements ValueCodec {
     if (offered.dropped) return;
     offered.dropped = true;
     this.pvtOffers.delete(offered.id);
+    this.pvtRelease(offered.id);
   }
 
   /**
@@ -688,12 +725,19 @@ export class StreamStore implements ValueCodec {
    */
   private pvtRetire(id: number, reason: string, form: ValueForm = "stream"): void {
     this.pvtIncoming.delete(id);
+    this.pvtRelease(id);
     this.pvtRefused.set(id, { reason, form });
     // A connection lives a long time and a refusal is rare; past a bound the oldest reason goes.
     if (this.pvtRefused.size > 64) {
       const oldest = this.pvtRefused.keys().next();
       if (!oldest.done) this.pvtRefused.delete(oldest.value);
     }
+  }
+
+  /** A stream that is over gives its name back, so the next announcement of it is not a duplicate. */
+  private pvtRelease(id: number): void {
+    for (const [name, bound] of this.pvtNamesIn) if (bound === id) this.pvtNamesIn.delete(name);
+    for (const [name, bound] of this.pvtNamesOut) if (bound === id) this.pvtNamesOut.delete(name);
   }
 
   // ── reading ────────────────────────────────────────────────────────────
@@ -705,7 +749,10 @@ export class StreamStore implements ValueCodec {
       const { id, size, type, name } = value.$blob;
       return this.pvtValueFor(id, "blob", { size, type, name });
     }
-    if (isStreamRef(value)) return this.pvtValueFor(value.$s.id, "stream");
+    if (isStreamRef(value)) {
+      const ref = value.$s;
+      return "id" in ref ? this.pvtValueFor(ref.id, "stream") : this.pvtValueForNamed(ref.name);
+    }
     if (seen.has(value)) return value;
     seen.add(value);
     if (Array.isArray(value)) return value.map((item) => this.pvtDecode(item, seen));
@@ -745,6 +792,15 @@ export class StreamStore implements ValueCodec {
     return value;
   }
 
+  /** The value a name the far side announced stands for — or one that says it was never announced. */
+  private pvtValueForNamed(name: string): RemoteStream {
+    const id = this.pvtNamesIn.get(name);
+    if (id !== undefined && this.pvtIncoming.has(id)) return this.pvtValueFor(id, "stream") as RemoteStream;
+    const failed = new RemoteStream({ consumed() {}, cancelled() {}, wanted() {} });
+    failed.fail(`no stream was announced with the name ${name}`);
+    return failed;
+  }
+
   private pvtBuild(reader: RemoteStream, form: ValueForm, facts?: BlobFacts): RemoteStream | RemoteBlob | RemoteBytes {
     if (form === "blob" && facts !== undefined) return new RemoteBlob(reader, facts);
     if (form === "bytes" && facts !== undefined) return new RemoteBytes(reader, facts.size);
@@ -760,9 +816,21 @@ export class StreamStore implements ValueCodec {
     void this.channel.send({ $streamAsk: { id: incoming.id, credit } });
   }
 
-  private pvtAnnounced(id: number): void {
+  private pvtAnnounced(id: number, name?: string): void {
     const existing = this.pvtIncoming.get(id);
     existing?.reader.fail(`a stream was announced twice with id ${id}`);
+    if (name !== undefined) {
+      const taken = this.pvtNamesIn.get(name);
+      // A name already live is refused: a reference to it would otherwise resolve to whichever of the
+      // two arrived last, and neither side would be able to say which.
+      if (taken !== undefined) {
+        const reason = `a stream named ${name} is already live (id ${taken})`;
+        this.pvtRetire(id, reason, "stream");
+        void this.channel.send({ $streamFail: { id, reason } });
+        return;
+      }
+      this.pvtNamesIn.set(name, id);
+    }
     // The reader is built before the record it lives in: its callbacks close over that record and only run
     // once a chunk or a cancel arrives, which is after the assignment below.
     let incoming: Incoming;
@@ -777,11 +845,16 @@ export class StreamStore implements ValueCodec {
       cancelled: (reason) => {
         incoming.done = true;
         this.pvtIncoming.delete(id);
+        this.pvtRelease(id);
         void this.channel.send({ $streamCancel: { id, reason } });
       },
     });
     incoming = { id, reader, form: "stream", asked: 0, consumed: 0, received: 0, chunk: null, done: false };
     this.pvtIncoming.set(id, incoming);
+    if (name !== undefined) {
+      const stream = this.pvtValueFor(id, "stream") as RemoteStream;
+      for (const listener of this.pvtNamedListeners) listener(name, stream);
+    }
   }
 
   private onSegment(head: Record<string, unknown>, bytes: Uint8Array): void {
@@ -808,9 +881,9 @@ export class StreamStore implements ValueCodec {
   private onFrame(frame: Record<string, unknown>): void {
     if (this.pvtClosed) return;
     if ("$stream" in frame) {
-      const body = frame.$stream as { id?: unknown } | undefined;
+      const body = frame.$stream as { id?: unknown; name?: unknown } | undefined;
       if (typeof body?.id !== "number") return;
-      this.pvtAnnounced(body.id);
+      this.pvtAnnounced(body.id, typeof body.name === "string" ? body.name : undefined);
       return;
     }
     if ("$streamAsk" in frame) {
@@ -850,6 +923,7 @@ export class StreamStore implements ValueCodec {
       if (!incoming) return;
       incoming.done = true;
       this.pvtIncoming.delete(incoming.id);
+      this.pvtRelease(incoming.id);
       incoming.reader.end();
       return;
     }

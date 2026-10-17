@@ -525,3 +525,87 @@ describe("a typed array on the wire", () => {
     bStore.close();
   });
 });
+
+describe("named streams", () => {
+  it("finds a stream by the name the far side announced it under", async () => {
+    const { aStore, bStore } = wire({ a: { chunkBytes: 4 } });
+    aStore.offer(counted(2, 4), "stdout");
+    await settle();
+
+    const found = bStore.named("stdout");
+    expect(found).toBeInstanceOf(RemoteStream);
+    expect((await readAll(found!)).map((chunk) => chunk[0])).toEqual([1, 2]);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("resolves a reference that carries the name instead of the id", async () => {
+    const { aStore, bStore } = wire({ a: { chunkBytes: 4 } });
+    const ref = aStore.offer(counted(1, 4), "stderr");
+    await settle();
+    expect(ref).toEqual({ $s: { id: 3 } });
+
+    const decoded = bStore.decode({ log: { $s: { name: "stderr" } } }) as { log: RemoteStream };
+    expect(decoded.log).toBe(bStore.named("stderr"));
+    expect((await readAll(decoded.log)).map((chunk) => chunk[0])).toEqual([1]);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("tells a reference to a name nobody announced", async () => {
+    const { aStore, bStore } = wire();
+    const decoded = bStore.decode({ log: { $s: { name: "nope" } } }) as { log: RemoteStream };
+
+    await expect(readAll(decoded.log)).rejects.toThrow(/no stream was announced with the name nope/);
+    expect(bStore.named("nope")).toBeUndefined();
+    aStore.close();
+    bStore.close();
+  });
+
+  it("refuses a second stream under a name already live, and keeps the first", async () => {
+    const { b, aStore, bStore } = wire({ a: { chunkBytes: 4 } });
+    aStore.offer(counted(1, 4), "stdout");
+    await settle();
+    const first = bStore.named("stdout");
+
+    aStore.offer(counted(1, 4), "stdout");
+    await settle();
+
+    expect(b.frames.some((frame) => "$streamFail" in frame)).toBe(true);
+    expect(bStore.named("stdout")).toBe(first);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("gives the name back when the stream ends", async () => {
+    const { aStore, bStore } = wire({ a: { chunkBytes: 4 } });
+    aStore.offer(counted(1, 4), "stdout");
+    await settle();
+    await readAll(bStore.named("stdout")!);
+    await settle();
+    expect(bStore.named("stdout")).toBeUndefined();
+
+    // The name is announceable again, which is what makes a process's second run findable.
+    aStore.offer(counted(1, 4), "stdout");
+    await settle();
+    expect(bStore.named("stdout")).toBeInstanceOf(RemoteStream);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("hands a named stream to a listener installed after it arrived", async () => {
+    const { aStore, bStore } = wire({ a: { chunkBytes: 4 } });
+    aStore.offer(counted(1, 4), "stdout");
+    await settle();
+
+    const seen: string[] = [];
+    const off = bStore.onNamed((name) => seen.push(name));
+    aStore.offer(counted(1, 4), "stderr");
+    await settle();
+    off();
+
+    expect(seen).toEqual(["stdout", "stderr"]);
+    aStore.close();
+    bStore.close();
+  });
+});
