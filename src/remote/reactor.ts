@@ -9,6 +9,7 @@ import type { Message } from "../types.js";
 import type { Channel, StringTransport } from "./channel.js";
 import { json1Channel, VERSION } from "./protocols/json1.js";
 import { serveChannel, type AnyProcess, type Init, type Served, type ServedProcess, type Spawner } from "./server.js";
+import type { BlobStoreOptions } from "./blob.js";
 
 /** Any actor definition: the reactor serves it, and does not care which one it is. */
 export type AnyActorDefinition = ActorDefinition<any, any, any, any, any>;
@@ -96,6 +97,10 @@ export interface ReactorOptions<Meta = unknown> {
    * where a subprocess's own output frames (`$fd`) are captured instead of passed on.
    */
   onIncomingFrame?(frame: Record<string, unknown>): boolean | void;
+  /** The served side's blobs: its own bound on what it will read, and how it chunks what it
+   *  sends.  A connection's reader decides how much it is willing to hold, so the bound is
+   *  the server's to set — the default refuses anything over 64 MiB. */
+  blobs?: BlobStoreOptions;
 }
 
 export interface Reactor {
@@ -163,6 +168,7 @@ export function reactor<Meta = unknown>(
           held.session = session;
           held.release = options.onSession?.(session) ?? null;
         },
+        options.blobs,
       );
     } catch (error) {
       options.onError?.(error, connection);
@@ -303,6 +309,7 @@ export async function serveRemoteActor<
   actor: ActorDefinition<Args, State, InMsg, OutMsg, R>,
   spawner: Spawner,
   onSpawned?: (proc: ServedProcess<ActorDefinition<Args, State, InMsg, OutMsg, R>>) => void,
+  blobs?: BlobStoreOptions,
 ): Promise<void> {
   // A medium that cannot be reached fails the caller's await rather than the loop's: the loop reads an
   // accept that ends as nothing more coming.
@@ -312,6 +319,7 @@ export async function serveRemoteActor<
       onSession: ({ proc }) => onSpawned?.(proc),
       onClosed: () => resolve(),
       onError: (error) => reject(error),
+      blobs,
     });
   });
 }

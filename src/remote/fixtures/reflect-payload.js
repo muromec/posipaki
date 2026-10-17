@@ -3,6 +3,8 @@
 // Serves one actor that carries the inspect plugin and a few methods of its
 // own, so the client half can be asked for both a subtree and an answer.
 
+import { createHash } from "node:crypto";
+
 let defineActor;
 let inspect;
 let serveRemoteActor;
@@ -69,10 +71,12 @@ const reflector = defineActor({
     async "probe.add"(a, b) {
       return a + b;
     },
-    async "probe.echoBytes"(value) {
-      // Bytes are bytes on both sides of this line: what arrives is whatever it took the
-      // wire to carry, and what goes back is the same octets.
-      return new Uint8Array(await value);
+    async "probe.sha256"(value) {
+      // The bytes are read and hashed on this side of the wire, and the digest goes back as
+      // bytes of its own: the only proof that what arrived is what was sent is a number
+      // computed where it landed.
+      const bytes = new Uint8Array(await value);
+      return new Uint8Array(createHash("sha256").update(bytes).digest());
     },
     "probe.late"(ms) {
       return new Promise((resolve) => setTimeout(() => resolve(`late:${ms}`), ms));
@@ -177,4 +181,6 @@ const reflector = defineActor({
   },
 });
 
-serveRemoteActor(reflector, fifoArgvSpawner);
+// The bytes this side will read are the far side's to send: the bound is the reader's, and
+// a hundred megabytes is a test, not an accident.
+serveRemoteActor(reflector, fifoArgvSpawner, undefined, { maxBytes: 256 * 1024 * 1024 });

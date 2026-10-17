@@ -39,7 +39,7 @@ import {
   tuneFrame,
 } from "./channel.js";
 import { CallSide, answerCall } from "./call-side.js";
-import { BlobStore } from "./blob.js";
+import { BlobStore, type BlobStoreOptions } from "./blob.js";
 
 export type Spawner = () => Promise<Channel>;
 
@@ -90,6 +90,7 @@ export async function serveChannel<Meta = unknown>(
    * one function that ends this session.  Nothing about the serve changes because of it.
    */
   onSpawned?: (served: Served<Meta>, ended: () => Promise<void>) => void,
+  blobOptions?: BlobStoreOptions,
 ): Promise<void> {
   // The table takes the even ids: the odd ones are the far side's, so the same
   // number can never name a process on both ends at once.  A process that is
@@ -98,7 +99,7 @@ export async function serveChannel<Meta = unknown>(
   const table = new ProcessTable<ProcessHandle>("even", (proc, id) => streams.crossed(proc, id));
   // The connection's blobs, numbered on this side's parity: the bytes get an engine of
   // their own beside the process table, and neither has to know about the other.
-  const blobs = new BlobStore(channel, "even");
+  const blobs = new BlobStore(channel, "even", blobOptions);
 
   /** Put an encoded frame on the wire, and then say what it numbered.  A frame that
    *  carried a reference has to be out before anything about that process is. */
