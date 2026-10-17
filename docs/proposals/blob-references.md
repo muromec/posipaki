@@ -1,9 +1,10 @@
 # Blob References
 
-**Status:** draft, 2026-10-11, from a design conversation with the operator about carrying files.  Nothing is
-built.  Written here because the wire is posipaki's business; the first consumer is the harness, where a tool
-server may run in another process or on another host and has to get at a file that lives with the message
-archive.
+**Status:** draft, 2026-10-11, from a design conversation with the operator about carrying files; first slice
+built 2026-10-16 — the reference, the offer-and-read protocol over a line transport, and the tests that hold it
+("As built", at the foot).  Written here because the wire is posipaki's business; the first consumer is the
+harness, where a tool server may run in another process or on another host and has to get at a file that lives
+with the message archive.
 
 ## Motivation
 
@@ -120,3 +121,32 @@ environment asks its parent for one by attachment id.  The answer is a message c
 `{$b: {id: 7, size: 412345, mime: 'image/png', name: 'shot.png'}}` — that the tool server reads into its own scratch
 directory, or that the connector reads into an image part for the model.  The attachment id stays the harness's
 own fact; the connection's blob id is nobody else's business.
+
+## As built
+
+2026-10-16.  `src/remote/blob.ts` holds the reference, the store and the read; `blob.test.ts` drives one side of
+the seam at a time; `blob.integration.test.ts` moves 10 MB between two processes over a fifo pair, with a peer
+that speaks the frames by hand (`fixtures/blob-peer.js`) so the format is proven from outside the library.
+
+The words: `{$b: {id, size, mime?, name?, sha256?}}` is the value; `{$blobAsk: {id, seq}}` asks;
+`{$blobData: {seq, data}}` carries a chunk; `{$blobEnd: {seq, bytes}}` ends it; `{$blobFail: {seq, reason}}`
+refuses, in a sentence.  A `BlobStore` is one per connection per side, made with that side's parity, offering
+with `offer()` and reading with `handle(value)?.read()`.
+
+Where the build differs from the draft, and why:
+
+- **Nothing walks the frames yet.**  A consumer resolves a reference it was handed (`store.handle(body.file)`)
+  rather than the codec turning `$b` into a handle the way `$p` becomes a process.  That walker is the next
+  slice and it changes no application: the value form is what the tests pin.
+- **Base64 inside JSON.**  This wire is a line of JSON, so `data` is a string and the encoder belongs to the
+  protocol.  A transport that can carry bytes whole is another encoding of the same frames, not another
+  protocol.
+- **64 KiB chunks, and a read refused at 64 MB** unless the side raises its own bound (`chunkBytes`,
+  `maxBytes`).  Ten megabytes is 160 chunks and the whole test is ~2.8 s on this box, of which ~0.7 s is
+  generating the bytes; a 512 KB screenshot is one chunk.
+- **The reader checks the length twice** — against the end frame and against the reference — because the two
+  can disagree, and bytes that arrive short of what was promised are worth a sentence rather than a surprise.
+- **Chunking has no per-chunk acknowledgement.**  The ask is answered by a stream of frames on the same
+  connection; flow control is whatever the transport gives (a fifo's backpressure is the kernel's, and the
+  fifo transport does not currently stop writing when the reader is slow — a 10 MB offer lands in the write
+  stream's buffer).  That is the next thing to measure, not something to paper over here.
