@@ -72,14 +72,6 @@ export function announcedOctets(frame: Record<string, unknown>): number | null {
 export function json1Channel(transport: StringTransport): Channel {
   const frameReaders = new Set<(frame: Record<string, unknown>) => void>();
   const segmentReaders = new Set<(frame: Record<string, unknown>, bytes: Uint8Array) => void>();
-  const closeReaders = new Set<() => void>();
-  /** The wire goes once, whoever ends it: the peer hanging up, or this side closing it. */
-  let closed = false;
-  const sayClosed = (): void => {
-    if (closed) return;
-    closed = true;
-    for (const reader of [...closeReaders]) reader();
-  };
   /** The head whose octets are on their way: set between the line and the run it announced. */
   let expecting: Record<string, unknown> | null = null;
 
@@ -111,7 +103,6 @@ export function json1Channel(transport: StringTransport): Channel {
     }
     for (const reader of [...segmentReaders]) reader(frame, bytes);
   });
-  transport.onClose(sayClosed);
 
   return {
     send(frame) {
@@ -137,13 +128,10 @@ export function json1Channel(transport: StringTransport): Channel {
       };
     },
     onClose(handler) {
-      closeReaders.add(handler);
+      transport.onClose(handler);
     },
-    async close() {
-      // Closing here is news to everyone above as well: a spawner ends the wire when its child dies,
-      // and a client that was not told would wait for a peer that is already gone.
-      sayClosed();
-      await transport.close();
+    close() {
+      return transport.close();
     },
   };
 }

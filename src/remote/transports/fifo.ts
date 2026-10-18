@@ -20,6 +20,7 @@ export class FifoUtf8NlineTransport implements StringTransport {
   private closed = false;
   private closingPromise: Promise<void> | null = null;
   private pvtError: Error | null = null;
+  private pvtSaid = false;
 
   private constructor(opts: { readFd?: FileHandle; writeFd?: FileHandle }) {
     this.readFd = opts.readFd ?? null;
@@ -34,7 +35,7 @@ export class FifoUtf8NlineTransport implements StringTransport {
           if (!this.closed) this.pvtOnBytes?.(bytes);
         },
         () => {
-          this.pvtOnClose?.();
+          this.pvtSayClosed();
           void this.close();
         },
       );
@@ -175,6 +176,13 @@ export class FifoUtf8NlineTransport implements StringTransport {
     this.closed = true;
   }
 
+  /** Say the wire is over, once: the reader's end and a close here are one ending. */
+  private pvtSayClosed(): void {
+    if (this.pvtSaid) return;
+    this.pvtSaid = true;
+    this.pvtOnClose?.();
+  }
+
   private async pvtClose(): Promise<void> {
     // tranfser control back to caller
     // so they can capture the promise reference
@@ -212,5 +220,6 @@ export class FifoUtf8NlineTransport implements StringTransport {
       } catch {}
       this.writeFd = null;
     }
+    this.pvtSayClosed();
   }
 }

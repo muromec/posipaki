@@ -11,9 +11,6 @@ import type { StringTransport } from "../channel.js";
 function lineTransport() {
   let handler: ((line: string) => number | void) | null = null;
   let octets: ((bytes: Uint8Array) => void) | null = null;
-  /** What the transport says when the far side goes, and whether this side ended the wire itself. */
-  let closeHandler: (() => void) | null = null;
-  let closedHere = false;
   /** Everything this side wrote, lines and octets alike, in the order it was written. */
   const writes: Array<string | Uint8Array> = [];
   const linesWritten = (): string[] => writes.filter((w): w is string => typeof w === "string");
@@ -34,12 +31,8 @@ function lineTransport() {
     removeHandler() {
       handler = null;
     },
-    onClose(h) {
-      closeHandler = h;
-    },
-    async close() {
-      closedHere = true;
-    },
+    onClose() {},
+    async close() {},
   };
   return {
     transport,
@@ -50,9 +43,6 @@ function lineTransport() {
     deliver: (line: string) => handler!(line),
     /** The octets the far side sends after a line that announced them. */
     deliverBytes: (bytes: Uint8Array) => octets!(bytes),
-    /** The peer going, as the transport reports it, and whether this side closed the wire. */
-    gone: () => closeHandler?.(),
-    closedHere: () => closedHere,
   };
 }
 
@@ -270,35 +260,5 @@ describe("a frame that carries octets", () => {
 
     expect(segments).toEqual([4]);
     expect(io.octetsWritten()).toHaveLength(1);
-  });
-
-  it("closing the channel here tells its close handler, once", async () => {
-    // A spawner that ends the wire because its own child died is news the far side never hears by
-    // itself: without this a client waits for a peer that is already gone.  The client's own teardown
-    // closes the channel as well, and a wire that goes twice is said once.
-    const io = lineTransport();
-    const channel = json1Channel(io.transport);
-    let closes = 0;
-    channel.onClose(() => closes++);
-
-    await channel.close();
-
-    expect(closes).toBe(1);
-    expect(io.closedHere()).toBe(true);
-
-    io.gone();
-    expect(closes).toBe(1);
-  });
-
-  it("tells its close handler when the peer goes, once", () => {
-    const io = lineTransport();
-    const channel = json1Channel(io.transport);
-    let closes = 0;
-    channel.onClose(() => closes++);
-
-    io.gone();
-    io.gone();
-
-    expect(closes).toBe(1);
   });
 });

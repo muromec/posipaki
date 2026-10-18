@@ -89,6 +89,7 @@ export class LineTransport implements StringTransport {
   private pvtOnMessage: ((line: string) => number | void) | null = null;
   private pvtOnBytes: ((bytes: Uint8Array) => void) | null = null;
   private pvtOnClose: (() => void) | null = null;
+  private pvtSaid = false;
   private pvtClosed = false;
   private pvtClosing: Promise<void> | null = null;
 
@@ -101,7 +102,7 @@ export class LineTransport implements StringTransport {
         if (!this.pvtClosed) this.pvtOnBytes?.(bytes);
       },
       () => {
-        this.pvtOnClose?.();
+        this.pvtSayClosed();
         void this.close();
       },
     );
@@ -182,6 +183,13 @@ export class LineTransport implements StringTransport {
     await this.pvtClosing;
   }
 
+  /** Say the wire is over, once: the reader's end and a close here are one ending. */
+  private pvtSayClosed(): void {
+    if (this.pvtSaid) return;
+    this.pvtSaid = true;
+    this.pvtOnClose?.();
+  }
+
   private async pvtClose(): Promise<void> {
     await Promise.resolve();
 
@@ -198,6 +206,7 @@ export class LineTransport implements StringTransport {
     } catch {
       /* already gone */
     }
+    this.pvtSayClosed();
   }
 }
 
