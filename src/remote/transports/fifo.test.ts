@@ -399,3 +399,36 @@ describe("FifoUtf8NlineTransport octets", () => {
     await b.close();
   });
 });
+
+
+describe("FifoUtf8NlineTransport close", () => {
+  it("says closed when this side closes it", async () => {
+    // A spawner ends the wire when its child exits, and the client on the other end is told
+    // nothing if closing here is silent: it keeps its handles and waits for a peer that is gone.
+    const [readFd, writeFd] = await makePipe();
+    const transport = FifoUtf8NlineTransport.fromFds(readFd, writeFd);
+    let closes = 0;
+    transport.onClose(() => closes++);
+
+    await transport.close();
+
+    expect(closes).toBe(1);
+  });
+
+  it("says closed once, whether the peer went first or the close did", async () => {
+    const [a, b] = await makePair();
+    const heard = makeWaiter<void>();
+    let closes = 0;
+    b.onClose(() => {
+      closes++;
+      heard.resolve();
+    });
+
+    await a.close();
+    // The peer's end, delivered — then this side's own close, which must not say it again.
+    await heard.promise;
+    await b.close();
+
+    expect(closes).toBe(1);
+  });
+});

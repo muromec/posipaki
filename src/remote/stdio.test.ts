@@ -75,6 +75,20 @@ describe("LineTransport", () => {
 
     await expect(transport.send("into the void")).resolves.toBeUndefined();
   });
+
+  it("says closed when this side closes it, once", async () => {
+    // The same rule as the fifo transport's: a wire ended here is over, and what is above it has to
+    // hear that — a client told nothing waits for a peer that is gone.
+    const [left] = wirePair();
+    const transport = new LineTransport(left);
+    let closes = 0;
+    transport.onClose(() => closes++);
+
+    await transport.close();
+    await transport.close();
+
+    expect(closes).toBe(1);
+  });
 });
 
 describe("error frames", () => {
