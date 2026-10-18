@@ -150,13 +150,20 @@ export function readChunks(stream: Readable, onChunk: (chunk: Uint8Array) => voi
   };
 
   stream.on("data", onData);
+  // A pipe finishes in more than one way.  `end` is a peer that closes politely; one that vanishes —
+  // a socket destroyed, a write that fails, a process killed — reports `close` or `error` and never
+  // an end at all, and a reader that waits for the end alone hangs on a connection that is gone.
   stream.once("end", finish);
+  stream.once("close", finish);
+  stream.once("error", finish);
 
   return {
     stop(): void {
       stopped = true;
       stream.off("data", onData);
       stream.off("end", finish);
+      stream.off("close", finish);
+      stream.off("error", finish);
     },
   };
 }

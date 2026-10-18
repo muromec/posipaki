@@ -136,3 +136,25 @@ describe("readParts", () => {
     expect(octets.map(asText)).toEqual(["ab", "cd"]);
   });
 });
+
+describe("a stream that vanishes", () => {
+  it("ends the reader when the pipe is destroyed rather than closed", async () => {
+    const stream = new PassThrough();
+    let ended = false;
+    readLines(
+      stream,
+      () => {},
+      () => {
+        ended = true;
+      },
+    );
+    stream.write("half a frame, no newline");
+
+    // A socket the far side destroys reports `close` and an error, never `end`: a reader that waits
+    // for the polite one waits forever, and the connection it belonged to is never seen to go.
+    stream.destroy();
+
+    await new Promise((done) => setImmediate(done));
+    expect(ended).toBe(true);
+  });
+});

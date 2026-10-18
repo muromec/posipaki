@@ -603,6 +603,9 @@ export class StreamStore implements ValueCodec {
     this.pvtSegmentOff?.();
     for (const offered of this.pvtOffers.values()) {
       offered.dropped = true;
+      // A reader still waiting is told the stream is over rather than left on a connection that is
+      // about to end: the frames may still go out, and a send that cannot is nobody's to hear.
+      void Promise.resolve(this.channel.send({ $streamDone: { id: offered.id } })).catch(() => {});
       void offered.source.return?.();
     }
     this.pvtOffers.clear();
