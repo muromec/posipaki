@@ -73,9 +73,45 @@ export function isStreamRef(value: unknown): value is StreamRef {
   return typeof body?.id === "number" || typeof body?.name === "string";
 }
 
-/** What a message carries in place of a typed array: its octets, and the length they add up to. */
+/** The element kinds that keep their identity on the wire.  A `DataView` and an `ArrayBuffer` have no
+ *  element kind to keep, so they cross as octets and arrive as a `Uint8Array`. */
+export type TypedArrayName =
+  | "Int8Array"
+  | "Uint8Array"
+  | "Uint8ClampedArray"
+  | "Int16Array"
+  | "Uint16Array"
+  | "Int32Array"
+  | "Uint32Array"
+  | "Float32Array"
+  | "Float64Array"
+  | "BigInt64Array"
+  | "BigUint64Array";
+
+/** A typed array as it arrived: the sender's own kind, whole. */
+export type RemoteArray =
+  | Int8Array
+  | Uint8Array
+  | Uint8ClampedArray
+  | Int16Array
+  | Uint16Array
+  | Int32Array
+  | Uint32Array
+  | Float32Array
+  | Float64Array
+  | BigInt64Array
+  | BigUint64Array;
+
+/** What a typed array's reference says about it: its octets, its element kind and its element count. */
+export interface BytesFacts {
+  readonly size: number;
+  readonly type?: TypedArrayName;
+  readonly length?: number;
+}
+
+/** What a message carries in place of a typed array: where its octets are, and what they add up to. */
 export interface BytesRef {
-  $bytes: { id: number; size: number };
+  $bytes: { id: number } & BytesFacts;
 }
 
 export function isBytesRef(value: unknown): value is BytesRef {
@@ -383,58 +419,6 @@ export class RemoteBlob implements Blob {
   }
 }
 
-/**
- * Bytes that crossed a connection: the sender's array, taken apart into a stream and put back
- * together here as the chunks arrive.  Not lazy — the sender was asked the moment the reference
- * arrived — so awaiting this is waiting for the last chunk, not for a read to start.
- */
-export class RemoteBytes implements PromiseLike<Uint8Array> {
-  /** The length the sender stated, which the octets must add up to. */
-  readonly size: number;
-  private readonly body: RemoteStream;
-  private filling: Promise<Uint8Array> | null = null;
-
-  constructor(body: RemoteStream, size: number) {
-    this.body = body;
-    this.size = size;
-  }
-
-  /** Start re-assembling.  Called by the store once its record for this stream is in place. */
-  start(): void {
-    void this.bytes().catch(() => {});
-  }
-
-  /** The octets, once they are all here. */
-  bytes(): Promise<Uint8Array> {
-    this.filling ??= this.pvtFill();
-    return this.filling;
-  }
-
-  /** The same octets as an array's buffer, for a caller that wants the platform's shape. */
-  async arrayBuffer(): Promise<ArrayBuffer> {
-    return (await this.bytes()).buffer as ArrayBuffer;
-  }
-
-  then<TResult1 = Uint8Array, TResult2 = never>(
-    onfulfilled?: ((value: Uint8Array) => TResult1 | PromiseLike<TResult1>) | null,
-    onrejected?: ((reason: unknown) => TResult2 | PromiseLike<TResult2>) | null,
-  ): Promise<TResult1 | TResult2> {
-    return this.bytes().then(onfulfilled, onrejected);
-  }
-
-  private async pvtFill(): Promise<Uint8Array> {
-    const all = new Uint8Array(this.size);
-    let at = 0;
-    for await (const chunk of this.body) {
-      if (at + chunk.length > all.length) throw new Error(`the array is longer than the ${this.size} bytes it stated`);
-      all.set(chunk, at);
-      at += chunk.length;
-    }
-    if (at !== all.length) throw new Error(`the array is short: ${at} of ${this.size} octets arrived`);
-    return all;
-  }
-}
-
 // ── the store ──────────────────────────────────────────────────────────────
 
 /** What this side is sending: the source, the credit it has been given, and what is left of a chunk. */
@@ -456,8 +440,8 @@ interface Incoming {
   reader: RemoteStream;
   /** What the far side made of it: a stream until a reference says otherwise. */
   form: ValueForm;
-  /** The value a reference asked for, built once: a stream, a blob over it, or bytes. */
-  value?: RemoteStream | RemoteBlob | RemoteBytes;
+  /** The value a reference asked for, built once: a stream, a blob over it, or the array itself. */
+  value?: RemoteStream | RemoteBlob | RemoteArray;
   /** Octets asked for, and octets the consumer has taken: what may still be in flight. */
   asked: number;
   consumed: number;
@@ -502,6 +486,8 @@ export class StreamStore implements ValueCodec {
    *  in either map, so the two directions never answer to one name at once. */
   private readonly pvtNamesOut = new Map<string, number>();
   private readonly pvtNamesIn = new Map<string, number>();
+  /** The arrays a value that was just decoded is still waiting for: a message is handed on after them. */
+  private pvtPending: Promise<void>[] = [];
   /** Told about every named stream the far side announces: the live ones replay, then each arrival. */
   private readonly pvtNamedListeners = new Set<(name: string, stream: RemoteStream) => void>();
   private readonly pvtOff: () => void;
@@ -550,12 +536,21 @@ export class StreamStore implements ValueCodec {
   }
 
   /**
-   * Offer bytes this side already holds.  The reference states the length, so the far side can
-   * check it against its bound and size the array before the first chunk arrives — a typed array
-   * is one piece, so the wire carries it as a stream of one.
+   * Offer bytes this side already holds.  The reference states the length, so the far side can check
+   * it against its bound and make room before the first chunk arrives — and, when the value is a typed
+   * array, the element kind and count too, so the same kind of array is made on the other side.  The
+   * octets are one piece, and the wire carries them as a stream of one.
    */
-  offerBytes(bytes: Uint8Array): BytesRef {
-    return { $bytes: { id: this.pvtAnnounce(this.pvtOnePiece(bytes)), size: bytes.length } };
+  offerBytes(value: ArrayBuffer | ArrayBufferView): BytesRef {
+    const { bytes, type, length } = octetsOf(value);
+    return {
+      $bytes: {
+        id: this.pvtAnnounce(this.pvtOnePiece(bytes)),
+        size: bytes.length,
+        ...(type === undefined ? {} : { type }),
+        ...(length === undefined ? {} : { length }),
+      },
+    };
   }
 
   private pvtAnnounce(source: AsyncIterator<Uint8Array>, name?: string): number {
@@ -592,7 +587,23 @@ export class StreamStore implements ValueCodec {
 
   /** A value just read: every reference in it becomes something this side can read. */
   decode(value: unknown): unknown {
+    this.pvtPending = [];
     return this.pvtDecode(value, new Set());
+  }
+
+  /**
+   * What the octets of a just-decoded value still owe.  A message is handed to its process only once
+   * this has settled, so a typed array in a body is whole when the handler reads it; a stream, a blob
+   * and a plain value carry no octets of their own and settle at once.
+   */
+  owed(): Promise<void> | null {
+    if (this.pvtPending.length === 0) return null;
+    return Promise.all(this.pvtPending).then(() => undefined);
+  }
+
+  /** The same question as a promise, for a caller that would rather always await. */
+  settled(): Promise<void> {
+    return this.owed() ?? Promise.resolve();
   }
 
   /** Drop every stream of this connection, in both directions.  Called when it ends. */
@@ -676,7 +687,7 @@ export class StreamStore implements ValueCodec {
     if (seen.has(value)) return value;
     seen.add(value);
     if (Array.isArray(value)) return value.map((item) => this.pvtEncode(item, seen));
-    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return this.offerBytes(asOctets(value));
+    if (ArrayBuffer.isView(value) || value instanceof ArrayBuffer) return this.offerBytes(value);
     // Only a plain object is walked into: a handle, a logger, anything with its own prototype is
     // the application's and is left as it is.  Copying one would take its methods away.
     if (!isPlainObject(value)) return value;
@@ -769,7 +780,7 @@ export class StreamStore implements ValueCodec {
 
   private pvtDecode(value: unknown, seen: Set<unknown>): unknown {
     if (typeof value !== "object" || value === null) return value;
-    if (isBytesRef(value)) return this.pvtValueFor(value.$bytes.id, "bytes", { size: value.$bytes.size });
+    if (isBytesRef(value)) return this.pvtValueFor(value.$bytes.id, "bytes", value.$bytes);
     if (isBlobRef(value)) {
       const { id, size, type, name } = value.$blob;
       return this.pvtValueFor(id, "blob", { size, type, name });
@@ -790,7 +801,7 @@ export class StreamStore implements ValueCodec {
     return copy;
   }
 
-  private pvtValueFor(id: number, form: ValueForm, facts?: BlobFacts): RemoteStream | RemoteBlob | RemoteBytes {
+  private pvtValueFor(id: number, form: ValueForm, facts?: BlobFacts | BytesFacts): RemoteStream | RemoteBlob | RemoteArray {
     const incoming = this.pvtIncoming.get(id);
     if (!incoming) {
       // A reference to a stream that is over, or one this side was never told about.  The value says
@@ -803,7 +814,6 @@ export class StreamStore implements ValueCodec {
     }
     if (incoming.value) return incoming.value;
     incoming.form = form;
-    const value = (incoming.value = this.pvtBuild(incoming.reader, form, facts));
     // The size is on the reference now, so a value this side will not read is refused before a
     // chunk is asked for.  A plain stream has no size to check: its bound is counted as it arrives.
     if (facts !== undefined && facts.size > this.maxBytes) {
@@ -813,8 +823,7 @@ export class StreamStore implements ValueCodec {
       this.pvtRetire(id, reason, form);
       void this.channel.send({ $streamFail: { id, reason: "over the reader's bound" } });
     }
-    if (value instanceof RemoteBytes) value.start();
-    return value;
+    return (incoming.value = this.pvtBuild(incoming.reader, form, facts));
   }
 
   /** The value a name the far side announced stands for — or one that says it was never announced. */
@@ -826,10 +835,30 @@ export class StreamStore implements ValueCodec {
     return failed;
   }
 
-  private pvtBuild(reader: RemoteStream, form: ValueForm, facts?: BlobFacts): RemoteStream | RemoteBlob | RemoteBytes {
-    if (form === "blob" && facts !== undefined) return new RemoteBlob(reader, facts);
-    if (form === "bytes" && facts !== undefined) return new RemoteBytes(reader, facts.size);
+  private pvtBuild(reader: RemoteStream, form: ValueForm, facts?: BlobFacts | BytesFacts): RemoteStream | RemoteBlob | RemoteArray {
+    if (facts === undefined) return reader;
+    if (form === "blob") return new RemoteBlob(reader, { size: facts.size, type: facts.type, name: "name" in facts ? facts.name : undefined });
+    if (form === "bytes") return this.pvtArray(reader, facts);
     return reader;
+  }
+
+  /**
+   * The array the far side is sending: the kind it was, made here at the size its reference stated,
+   * and filled as the octets land.  The fill loop is the stream's one consumer, so the credit
+   * machinery asks for exactly what can be stored and the array is complete before `settled` resolves.
+   */
+  private pvtArray(reader: RemoteStream, facts: BytesFacts | BlobFacts): RemoteArray {
+    // Nothing is made for a value this side has refused or never heard of: the size it states is not
+    // an allocation this side has to honour.
+    const value =
+      facts.size > this.maxBytes
+        ? new Uint8Array(0)
+        : allocateBytes(facts.size, facts.type, "length" in facts ? facts.length : undefined);
+    const filling = fillArray(value, reader, facts.size);
+    // Reported through `settled`; a decode nobody waits on must not raise an unhandled rejection.
+    void filling.catch(() => {});
+    this.pvtPending.push(filling);
+    return value;
   }
 
   private pvtAsk(incoming: Incoming): void {
@@ -973,9 +1002,88 @@ export class StreamStore implements ValueCodec {
 }
 
 /** A typed array or an `ArrayBuffer` as the octets the wire carries. */
-function asOctets(value: ArrayBuffer | ArrayBufferView): Uint8Array {
-  if (ArrayBuffer.isView(value)) return new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
-  return new Uint8Array(value);
+/** How many octets an element of each kind takes.  A name that came off the wire is looked up here
+ *  rather than handed to `globalThis`, so a peer cannot name a constructor this side would run. */
+const TYPED_ARRAY_STRIDE: ReadonlyMap<string, number> = new Map([
+  ["Int8Array", 1],
+  ["Uint8Array", 1],
+  ["Uint8ClampedArray", 1],
+  ["Int16Array", 2],
+  ["Uint16Array", 2],
+  ["Int32Array", 4],
+  ["Uint32Array", 4],
+  ["Float32Array", 4],
+  ["Float64Array", 8],
+  ["BigInt64Array", 8],
+  ["BigUint64Array", 8],
+]);
+
+function isTypedArrayName(name: string): name is TypedArrayName {
+  return TYPED_ARRAY_STRIDE.has(name);
+}
+
+interface Octets {
+  bytes: Uint8Array;
+  type?: TypedArrayName;
+  length?: number;
+}
+
+/** The octets of a value about to cross — and, for a typed array, what they are made of. */
+function octetsOf(value: ArrayBuffer | ArrayBufferView): Octets {
+  if (!ArrayBuffer.isView(value)) return { bytes: new Uint8Array(value) };
+  const bytes = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  if (value instanceof DataView) return { bytes };
+  // The tag is the same in every realm, where `instanceof` is only true in this one.
+  const name = Object.prototype.toString.call(value).slice(8, -1);
+  if (!isTypedArrayName(name)) return { bytes };
+  const stride = TYPED_ARRAY_STRIDE.get(name) ?? 1;
+  if (bytes.length % stride !== 0) return { bytes };
+  return { bytes, type: name, length: bytes.length / stride };
+}
+
+/** The sender's kind of array, made at the element count its reference stated. */
+function allocateBytes(size: number, type: string | undefined, length: number | undefined): RemoteArray {
+  if (type === undefined || !isTypedArrayName(type)) return new Uint8Array(size);
+  const stride = TYPED_ARRAY_STRIDE.get(type) ?? 1;
+  if (size % stride !== 0) return new Uint8Array(size);
+  const count = length !== undefined && length * stride === size ? length : size / stride;
+  switch (type) {
+    case "Int8Array":
+      return new Int8Array(count);
+    case "Uint8Array":
+      return new Uint8Array(count);
+    case "Uint8ClampedArray":
+      return new Uint8ClampedArray(count);
+    case "Int16Array":
+      return new Int16Array(count);
+    case "Uint16Array":
+      return new Uint16Array(count);
+    case "Int32Array":
+      return new Int32Array(count);
+    case "Uint32Array":
+      return new Uint32Array(count);
+    case "Float32Array":
+      return new Float32Array(count);
+    case "Float64Array":
+      return new Float64Array(count);
+    case "BigInt64Array":
+      return new BigInt64Array(count);
+    case "BigUint64Array":
+      return new BigUint64Array(count);
+  }
+}
+
+/** Fill the array as its octets arrive.  A view of the same memory is how every element kind is
+ *  written the same way, and how a `BigInt64Array` is filled without mixing element types. */
+async function fillArray(value: RemoteArray, body: Stream, size: number): Promise<void> {
+  const octets = new Uint8Array(value.buffer, value.byteOffset, value.byteLength);
+  let at = 0;
+  for await (const chunk of body) {
+    if (at + chunk.length > octets.length) throw new Error(`the array is longer than the ${size} bytes it stated`);
+    octets.set(chunk, at);
+    at += chunk.length;
+  }
+  if (at !== octets.length) throw new Error(`the array is short: ${at} of ${size} octets arrived`);
 }
 
 function reasonOf(error: unknown): string {

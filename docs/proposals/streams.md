@@ -26,8 +26,9 @@ can take them.
 stream — and the value that references it says which of the three it was.**
 
 - **A typed array** — `Uint8Array` and friends.  Materialised **at the boundary**: the sender's bytes become a
-  stream as the frame is written, and the far side gets a **`RemoteBytes`** sized from the reference and filled as
-  the chunks land.  It is the one value that is not lazy: the reference arriving is the demand.
+  stream as the frame is written, and the far side gets **the same kind of array**, allocated at the size and
+  element count the reference states and filled as the chunks land.  It is the one value that is not lazy: the
+  reference arriving is the demand, and the frame that carried it is held until the array is whole (2026-10-18).
 - **A blob** — a lazy array.  Crosses as a stream over its bytes; the far side gets a **`RemoteBlob`**, whose
   `size`, `type` and `name` come from the reference and whose `arrayBuffer()` and `stream()` are backed by that
   stream.  Nothing is read until it is asked for.
@@ -137,10 +138,12 @@ and one subprocess case found it in its first run.
    facts; a blob announced and never read (no octet on the wire, no read of the source); a blob handed on without
    being read here; a blob over the reader's bound, refused before a chunk is asked for.
 3. **Typed arrays.**  Built, and the one value that is not lazy: the bytes are already here, so the reference
-   arriving *is* the demand.  The far side asks at once, sizes a buffer from the stated length and fills it as the
-   chunks land, so awaiting the `RemoteBytes` waits for the last chunk rather than for a read to start.  It is a
-   thenable rather than an array because an array answers `length` and `[i]` synchronously and bytes in flight
-   cannot; `arrayBuffer()` gives the platform's shape.
+   arriving *is* the demand.  The far side asks at once, makes an array of the same kind at the stated size and
+   fills it as the chunks land — and the frame itself is held until the last chunk is in, so a message is never
+   handed to a process with an array that is still filling.  The first cut of this (2026-10-17) handed back a
+   thenable `RemoteBytes` and lost the element kind; both were corners, and both are gone (2026-10-18).  Carrying
+   the kind costs a name and a count on the reference, and waiting costs the frames behind that one on the same
+   connection, which is why the dispatch queue grew a hold: `StreamStore.owed()` is the question it asks.
 
 4. **Performance, per primitive.**  Measured 2026-10-17, 10 MiB over one fifo between two processes, 64 KiB
    chunks, this box (riscv64, bun 1.4.2): **stream 13.0 MB/s, typed array 9.4, blob 8.5**, against **185 MB/s**

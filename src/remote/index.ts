@@ -50,14 +50,25 @@ export { pumpOutput, stderrSink } from "./output.js";
 export type { OutputSink } from "./output.js";
 export {
   RemoteBlob,
-  RemoteBytes,
   RemoteStream,
   StreamStore,
   isBlobRef,
   isBytesRef,
   isStreamRef,
 } from "./stream.js";
-export type { Blob, BlobFacts, BlobRef, BlobSource, BytesRef, Stream, StreamRef, StreamStoreOptions } from "./stream.js";
+export type {
+  Blob,
+  BlobFacts,
+  BlobRef,
+  BlobSource,
+  BytesFacts,
+  BytesRef,
+  RemoteArray,
+  Stream,
+  StreamRef,
+  StreamStoreOptions,
+  TypedArrayName,
+} from "./stream.js";
 export { VERSION, encode, decode, readFrame, json1Channel } from "./protocols/json1.js";
 
 // transports

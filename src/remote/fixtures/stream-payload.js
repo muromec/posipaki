@@ -47,6 +47,12 @@ const reader = defineActor({
       }
       await this.emit({ type: "HASHED", digest: new Uint8Array(hash.digest()), bytes, chunks });
     },
+    async TAKE(msg) {
+      // Nothing is awaited here on purpose: the handler reads the array the message carried, and the
+      // values it reports prove every octet was here before the message was handed over.
+      const values = [...msg.data];
+      await this.emit({ type: "TOOK", kind: msg.data.constructor.name, values });
+    },
     async SERVE(msg) {
       // A stream this side makes itself: the caller reads it at its own pace, and the bytes are
       // produced one chunk at a time as they are asked for.

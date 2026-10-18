@@ -297,7 +297,12 @@ export function remoteClient<
         this.exit(CHANNEL_LOST);
       };
 
-      channel.onMessage((raw) => {
+      /**
+       * Take one frame as far as it goes now.  A frame that carries nothing to wait for is handled
+       * before this returns, as it always was; one that carries a typed array answers with the
+       * promise its octets owe, and the queue below keeps whatever came after it behind it.
+       */
+      const process = (raw: Record<string, unknown>): Promise<void> | null => {
         // A frame about the wire ends the wire: what the far side says it could not read, and what
         // it says when the connection is over, are the same news here.  A frame that could not be
         // *read* leaves nothing after it trustworthy — a wire that has lost its framing can still
@@ -308,9 +313,23 @@ export function remoteClient<
         if (wireProblem !== null) {
           void channel.close();
           wireGone();
-          return;
+          return null;
         }
         const frame = decodeFrame(raw, handleFor, byteStreams);
+        // A typed array in the frame is whole before the frame means anything here: a state, a
+        // message or an answer carrying one arrives with the octets it announced.
+        const owed = byteStreams.owed();
+        if (owed === null) {
+          deliver(frame);
+          return null;
+        }
+        return owed.then(() => {
+          deliver(frame);
+        });
+      };
+
+      /** What a frame means, and the octets it carried are already there when this runs. */
+      const deliver = (frame: Record<string, unknown>): void => {
         // An answer is about the call waiting for it and not about a process: it names
         // the seq, and is settled before anything is looked up.
         if (calls.settle(frame)) return;
@@ -398,6 +417,45 @@ export function remoteClient<
         // this side's to run, and the answer goes back by name and seq.
         const call = asReflectionCall(frame);
         if (call) void answerCall(call, mine, write, table, byteStreams);
+      };
+      // Frames are taken in the order they arrive.  Most are handled before `schedule` returns; one
+      // that carries octets holds the frames behind it until the octets are in.
+      const later: Record<string, unknown>[] = [];
+      let busy = false;
+      const report = (error: unknown): void => {
+        if (pvtWindDown) return;
+        const message = error instanceof Error ? error.message : String(error);
+        console.warn(`a frame from the far side could not be handled: ${message}`);
+      };
+      const pump = (): void => {
+        if (busy) return;
+        busy = true;
+        for (;;) {
+          const next = later.shift();
+          if (next === undefined) {
+            busy = false;
+            return;
+          }
+          const outcome = process(next);
+          if (outcome !== null) {
+            outcome.then(
+              () => {
+                busy = false;
+                pump();
+              },
+              (error: unknown) => {
+                busy = false;
+                report(error);
+                pump();
+              },
+            );
+            return;
+          }
+        }
+      };
+      channel.onMessage((raw) => {
+        later.push(raw);
+        pump();
       });
       // A wire that goes before the far root does leaves nothing to wait for: the handles are gone,
       // and the far root's end is the connection's end, which is what `wait()` on it rejects about.

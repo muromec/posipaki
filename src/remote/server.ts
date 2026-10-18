@@ -176,6 +176,9 @@ export async function serveChannel<Meta = unknown>(
     throw new Error(`serveRemoteActor: expected $init (${initProblem})`);
   }
   const initFrame = decodeFrame(firstFrame, handleFor, byteStreams);
+  // What the far side sent as arguments is whole before it is a spawn: an array in `$init` is filled
+  // the same way one in a message is.
+  await byteStreams.settled();
   if (!isInit(initFrame)) {
     throw new Error("serveRemoteActor: expected $init");
   }
@@ -262,7 +265,12 @@ export async function serveChannel<Meta = unknown>(
   };
 
   // bridge channel input → actor
-  function dispatch(raw: Record<string, unknown>): void {
+  /**
+   * Take one frame as far as it goes now.  A frame that carries nothing to wait for is handled
+   * before this returns, as it always was; one that carries a typed array answers with the promise
+   * its octets owe, and the queue below keeps whatever came after it behind it.
+   */
+  function process(raw: Record<string, unknown>): Promise<void> | null {
     // A frame about the wire is settled before anything else is looked up: what a codec could not
     // read, and a far side saying the connection is over, are one piece of news here — this
     // connection cannot be spoken over any more, and nothing said after it could be trusted.  The
@@ -270,9 +278,23 @@ export async function serveChannel<Meta = unknown>(
     const wireProblem = badReason(raw) ?? errorReason(raw);
     if (wireProblem !== null) {
       void endUnreadable(wireProblem);
-      return;
+      return null;
     }
     const frame = decodeFrame(raw, handleFor, byteStreams);
+    // A typed array in the frame is whole before anything is done with the frame: the process is
+    // handed the value the far side sent, not the shape of a transfer that is still running.
+    const owed = byteStreams.owed();
+    if (owed === null) {
+      deliver(frame);
+      return null;
+    }
+    return owed.then(() => {
+      deliver(frame);
+    });
+  }
+
+  /** What a frame means, and the octets it carried are already there when this runs. */
+  function deliver(frame: Record<string, unknown>): void {
     // An answer is about the call waiting for it and not about a process: it names
     // the seq, and is settled before anything is looked up.
     if (calls.settle(frame)) return;
@@ -357,8 +379,47 @@ export async function serveChannel<Meta = unknown>(
   // The collecting reader stops here, and the dispatch is what hears the frames from now on: the two are
   // not the same reader, and leaving the first one on would buffer every frame for nobody.
   stopCollecting();
-  channel.onMessage(dispatch);
-  for (const frame of waiting.splice(0)) dispatch(frame);
+  // Frames are taken in the order they arrive.  Most are handled before `schedule` returns; one that
+  // carries octets holds the frames behind it until the octets are in, and nothing overtakes it.
+  const later: Record<string, unknown>[] = [];
+  let busy = false;
+  const report = (error: unknown): void => {
+    if (pvtWindDown) return;
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(`a frame from the far side could not be handled: ${message}`);
+  };
+  const pump = (): void => {
+    if (busy) return;
+    busy = true;
+    for (;;) {
+      const next = later.shift();
+      if (next === undefined) {
+        busy = false;
+        return;
+      }
+      const outcome = process(next);
+      if (outcome !== null) {
+        outcome.then(
+          () => {
+            busy = false;
+            pump();
+          },
+          (error: unknown) => {
+            busy = false;
+            report(error);
+            pump();
+          },
+        );
+        return;
+      }
+    }
+  };
+  const schedule = (raw: Record<string, unknown>): void => {
+    later.push(raw);
+    pump();
+  };
+  channel.onMessage(schedule);
+  for (const frame of waiting.splice(0)) schedule(frame);
 
   // The session is awaited here: the process's end, or the connection going, whichever is first.
   let code = 0;

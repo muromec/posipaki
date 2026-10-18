@@ -11,7 +11,7 @@ import type { Channel } from "./channel.js";
 import {
   RemoteBlob,
   RemoteStream,
-  RemoteBytes,
+  type RemoteArray,
   StreamStore,
   crc32,
   isStreamRef,
@@ -450,15 +450,13 @@ describe("a blob on the wire", () => {
   });
 });
 
-/** The same hand-over, for a value that comes back as bytes. */
-async function handOverBytes(from: StreamStore, to: StreamStore, value: unknown): Promise<{ carried: RemoteBytes }> {
+/** The same hand-over, for a value that comes back as an array: decoded, and waited for. */
+async function handOverBytes(from: StreamStore, to: StreamStore, value: unknown): Promise<{ carried: RemoteArray }> {
   const reference = from.encode({ data: value }) as { data: unknown };
   await settle();
-  const decoded = to.decode({ data: reference.data }) as { data: unknown };
-  expect(decoded.data).toBeInstanceOf(RemoteBytes);
-  // Wrapped: a `RemoteBytes` is a thenable, and a promise resolving to one adopts it — the helper
-  // would hand back the array instead of the handle.  The object keeps the value intact.
-  return { carried: decoded.data as RemoteBytes };
+  const decoded = to.decode({ data: reference.data }) as { data: RemoteArray };
+  await to.settled();
+  return { carried: decoded.data };
 }
 
 describe("a typed array on the wire", () => {
@@ -472,21 +470,77 @@ describe("a typed array on the wire", () => {
     await settle();
     expect(a.sentOctets()).toBe(6);
 
-    expect(carried.size).toBe(6);
-    expect([...(await carried)]).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(carried).toBeInstanceOf(Uint8Array);
+    expect(carried.byteLength).toBe(6);
+    expect([...carried]).toEqual([1, 2, 3, 4, 5, 6]);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("arrives as the kind of array that was sent", async () => {
+    const { aStore, bStore } = wire();
+    const reference = aStore.encode({ data: new Int32Array([7, 8, 9]) }) as {
+      data: { $bytes: { type?: string; length?: number } };
+    };
+    expect(reference.data.$bytes.type).toBe("Int32Array");
+    expect(reference.data.$bytes.length).toBe(3);
+    await settle();
+
+    const decoded = bStore.decode(reference) as { data: RemoteArray };
+    await bStore.settled();
+
+    expect(decoded.data).toBeInstanceOf(Int32Array);
+    expect([...decoded.data]).toEqual([7, 8, 9]);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("a value with no element kind arrives as octets", async () => {
+    const { aStore, bStore } = wire();
+    const view = new DataView(new Uint8Array([1, 2]).buffer);
+
+    const { carried } = await handOverBytes(aStore, bStore, view);
+
+    expect(carried).toBeInstanceOf(Uint8Array);
+    expect([...carried]).toEqual([1, 2]);
+    aStore.close();
+    bStore.close();
+  });
+
+  it("is not whole until every octet of it has arrived", async () => {
+    const { b, aStore, bStore } = wire();
+    const four = new Uint8Array([1, 2, 3, 4]);
+    b.deliver({ $stream: { id: 7 } });
+    b.deliverSegment({ $chunk: { id: 7, seq: 0, bytes: 4 } }, four);
+    b.deliver({ $chunkEnd: { id: 7, seq: 0, crc32: crc32(four) } });
+    await settle();
+
+    const decoded = bStore.decode({ data: { $bytes: { id: 7, size: 4 } } }) as { data: RemoteArray };
+    let whole = false;
+    const waiting = bStore.settled().then(() => {
+      whole = true;
+    });
+    await settle();
+    expect(whole).toBe(false);
+
+    b.deliver({ $streamDone: { id: 7 } });
+    await waiting;
+    expect([...decoded.data]).toEqual([1, 2, 3, 4]);
     aStore.close();
     bStore.close();
   });
 
   it("is refused before a chunk is asked for when it is over the reader's bound", async () => {
     const { a, b, aStore, bStore } = wire({ b: { maxBytes: 4 } });
-    const { carried } = await handOverBytes(aStore, bStore, new Uint8Array([1, 2, 3, 4, 5]));
+    const reference = aStore.encode({ data: new Uint8Array([1, 2, 3, 4, 5]) }) as { data: unknown };
+    await settle();
+    bStore.decode(reference);
+    await expect(bStore.settled()).rejects.toThrow(/over this side's bound of 4/);
     await settle();
 
     expect(b.frames.some((frame) => "$streamFail" in frame)).toBe(true);
     expect(b.frames.some((frame) => "$streamAsk" in frame)).toBe(false);
     expect(a.sentOctets()).toBe(0);
-    await expect(carried.bytes()).rejects.toThrow(/over this side's bound of 4/);
     aStore.close();
     bStore.close();
   });
@@ -499,9 +553,11 @@ describe("a typed array on the wire", () => {
     b.deliver({ $chunkEnd: { id: 3, seq: 0, crc32: crc32(four) } });
     await settle();
 
-    const carried = bStore.decode({ data: { $bytes: { id: 3, size: 8 } } }) as { data: RemoteBytes };
+    const carried = bStore.decode({ data: { $bytes: { id: 3, size: 8 } } }) as { data: RemoteArray };
     b.deliver({ $streamDone: { id: 3 } });
-    await expect(carried.data.bytes()).rejects.toThrow(/the array is short: 4 of 8 octets/);
+    await expect(bStore.settled()).rejects.toThrow(/the array is short: 4 of 8 octets/);
+    // What arrived was written where it belonged; the value is only short of the rest.
+    expect(carried.data.byteLength).toBe(8);
     aStore.close();
     bStore.close();
   });
@@ -516,8 +572,8 @@ describe("a typed array on the wire", () => {
     b.deliver({ $chunkEnd: { id: 5, seq: 1, crc32: crc32(four) } });
     await settle();
 
-    const carried = bStore.decode({ data: { $bytes: { id: 5, size: 4 } } }) as { data: RemoteBytes };
-    await expect(carried.data.bytes()).rejects.toThrow(/longer than the 4 bytes it stated/);
+    bStore.decode({ data: { $bytes: { id: 5, size: 4 } } });
+    await expect(bStore.settled()).rejects.toThrow(/longer than the 4 bytes it stated/);
     // The far side is told to stop: the value is over, whatever it was going to send.
     await settle();
     expect(b.frames.some((frame) => "$streamCancel" in frame)).toBe(true);

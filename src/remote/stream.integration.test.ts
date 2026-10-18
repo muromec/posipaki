@@ -23,8 +23,10 @@ type File = AsyncIterable<Uint8Array>;
 type Blobish = { size: number; type?: string; arrayBuffer(): Promise<ArrayBuffer> };
 type Hash = { type: "HASH"; file: File | Blobish } & Message;
 type Serve = { type: "SERVE"; chunks: number; size: number } & Message;
-type Hashed = { type: "HASHED"; digest: Uint8Array | PromiseLike<Uint8Array>; bytes: number; chunks: number } & Message;
+type Hashed = { type: "HASHED"; digest: Uint8Array; bytes: number; chunks: number } & Message;
 type Served = { type: "SERVED"; file: File | PromiseLike<File> } & Message;
+type Take = { type: "TAKE"; data: Uint32Array } & Message;
+type Took = { type: "TOOK"; kind: string; values: number[] } & Message;
 
 const fixture = join(dirname(import.meta.url.slice(7)), "./fixtures/stream-payload.js");
 
@@ -82,7 +84,10 @@ describe("streams across a process boundary", () => {
         const heard = await answer;
         const elapsed = Date.now() - started;
 
-        expect(Buffer.from(new Uint8Array(await heard.digest)).toString("hex")).toBe(digestOf(chunks, size));
+        // The array is whole when the message is: nothing here awaits it, and the shape proves it,
+        // because a message that still had octets to come would not have arrived yet.
+        expect(heard.digest).toBeInstanceOf(Uint8Array);
+        expect(Buffer.from(heard.digest).toString("hex")).toBe(digestOf(chunks, size));
         expect(heard.bytes).toBe(chunks * size);
         expect(heard.chunks).toBeGreaterThanOrEqual(chunks);
         // The source was read, not buffered: every piece it had was pulled.
@@ -94,6 +99,21 @@ describe("streams across a process boundary", () => {
       guard + 5_000,
     );
   }
+
+  it("hands the served side the kind of array that was sent, whole", async () => {
+    const proc = await spawnStreamer<Take, Took>();
+
+    const answer = nextMessage(proc);
+    proc.send({ type: "TAKE", data: new Uint32Array([1, 2, 3]) });
+    const heard = await answer;
+
+    // The handler did not await anything: the kind and the values are what the message carried, and
+    // the values are there only because the message waited for the octets.
+    expect(heard.kind).toBe("Uint32Array");
+    expect(heard.values).toEqual([1, 2, 3]);
+
+    await proc.stop();
+  });
 
   it(
     "hands a stream back, which this side reads at its own pace",
