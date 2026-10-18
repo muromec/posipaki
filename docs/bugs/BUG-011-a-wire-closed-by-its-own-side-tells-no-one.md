@@ -8,21 +8,23 @@ The op in flight is answered only by its own 5 s command timeout (`LISTCALLS: no
 ms`), `wait()` on the far root never settles, and the peer reports itself connected to a process
 that is gone. In the other runs the same case rejects in ~300 ms with "the daemon ended".
 
-**Root cause:** `StringTransport.onClose` fired only from the reader's end-of-stream. A
-transport — and so a channel — closed by the side that owns it told nobody. Every spawner built
-on the pattern closes the channel when its child exits (`src/remote/spawners/fifo-command.ts:44`,
-and the harness's own spawner): the client's `channel.onClose(() => wireGone())`
-(`src/remote/client.ts:404`) never ran, so its handles stayed connected and nothing failed.
+**Root cause:** neither built-in transport told its close handler that it had closed.  `onClose` fired
+only from the reader's end-of-stream, so a wire ended by the side that holds it was silent: every
+spawner closes the channel or the transport when its child exits (`src/remote/spawners/fifo-command.ts:44`,
+and the harness's own spawner closes the transport), and the client's `channel.onClose(() => wireGone())`
+(`src/remote/client.ts:404`) never ran.  Its handles stayed connected, its in-flight call was left to
+its own command timeout, and nothing failed.
 
-That made death detection a race: the peer's fds closing gives our reader an EOF (which does
-notify), but our own `close()` destroys the reader first whenever it wins. Measured on the
-harness's stand-in daemon: 3 of 8 kills lost the news; with the fix, 10 of 10 runs green.
+That made death detection a race: the peer's fds closing gives our reader an EOF (which does notify),
+but our own close destroys the reader first whenever it wins.  First fix attempt (`537a763`) put the
+notifier in `json1Channel`, which covers a caller that closes the *channel* — the harness's spawner
+closes the *transport*, so it kept failing: 3 of 5 parallel gate runs, each failing at the op's 20 s
+command timeout.
 
-**Fix:** `json1Channel` keeps its close readers, says closed exactly once, and says it from
-either ending — the transport reporting the peer gone, or a `close()` here. The transport keeps
-its narrower contract (it reports the *peer* going); "this channel is finished" is the channel's
-to say. Commit `537a763`.
+**Fix:** each transport says closed once, from either ending — the reader's end, or a close here
+(`ae2529f`).  The channel delegates again, as it did before; the ending is one fact and it belongs
+where the wire stops carrying.
 
-**Tests:** `src/remote/protocols/json1.test.ts` — closing the channel tells its close handler
-once, and a peer reported gone twice says it once; both red in `e62d210` (`closes` 0 after a
-close, 2 after two reports).
+**Tests:** `src/remote/transports/fifo.test.ts` — this side's close says closed, and a peer end
+followed by a close here is still one; `src/remote/stdio.test.ts` — the same for `LineTransport`.
+Red in `ddd7be7`.
