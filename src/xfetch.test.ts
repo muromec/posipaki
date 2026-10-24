@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
+import { describe, it, expect, vi, beforeEach } from "vitest";
 import { spawn } from "./index";
 import { xfetch } from "./xfetch";
 import { makeWaiter } from "./util";
-import type { FetchArgs, FetchState, FetchMessage } from "./xfetch";
+import type { FetchArgs, FetchMessage } from "./xfetch";
 import { nextState, nextMessage } from "./testing/tick-utils.js";
 
 // bun shim
@@ -24,8 +24,7 @@ function mockResponse(
     ok: true,
     status: init.status ?? 200,
     headers: new Headers(init.headers ?? {}),
-    json: () => Promise.resolve(body),
-    text: () => Promise.resolve(JSON.stringify(body)),
+    text: () => Promise.resolve(typeof body === "string" ? body : JSON.stringify(body)),
   } as Response;
 }
 
@@ -61,331 +60,137 @@ describe("xfetch", () => {
   beforeEach(() => {
     vi.restoreAllMocks();
   });
-  // -- GET -------------------------------------------------------------------
 
-  it("performs a GET and returns OK with data", async () => {
-    const data = { items: [1, 2, 3] };
-    withResponse(mockResponse(data, { headers: { "content-type": "application/json" } }));
+  it("hands the caller's init to fetch and says nothing of its own", async () => {
+    withResponse(mockResponse("{}", { headers: { "content-type": "application/json" } }));
 
     const proc = spawn(
-      xfetch<typeof data>,
-      "xfetch-get",
+      xfetch,
+      "xfetch-init",
     )({
       url: new URL("https://example.com/api/items"),
-      method: "GET",
-    } as FetchArgs<typeof data>);
-
-    await proc.ready();
-    expect(proc.state).toMatchObject({ code: "pending", data: null });
-
-    expect(mockedFetch).toHaveBeenCalledWith(
-      "https://example.com/api/items",
-      expect.objectContaining({ method: "GET" }),
-    );
-
-    expect(await nextMessage(proc)).toMatchObject({
-      type: "OK",
-      data,
-      status: 200,
-    });
-    expect(proc.state).toMatchObject({ code: "ok", data });
-    expect(await nextMessage(proc)).toMatchObject({
-      type: "EXIT",
-    });
-  });
-
-  it("returns OK with text for non-JSON content-type", async () => {
-    const text = "plain text response";
-    withResponse(mockResponse(text, { headers: { "content-type": "text/plain" } }));
-    const proc = spawn(
-      xfetch<string>,
-      "xfetch-text",
-    )({
-      url: new URL("https://example.com/api/notes"),
-      method: "GET",
-    } as FetchArgs<string>);
+      init: {
+        method: "POST",
+        body: '{"name":"test"}',
+        headers: { Authorization: "Bearer t" },
+        timeout: 3_600_000,
+      },
+    } as FetchArgs);
 
     await proc.ready();
 
-    // FIXME: protocol makes no sense
-    expect(await nextMessage(proc)).toMatchObject({
-      type: "OK",
-      text: JSON.stringify(text),
-      status: 200,
-    });
-    expect(proc.state).toMatchObject({
-      code: "ok",
-      text: JSON.stringify(text),
-    });
-  });
-
-  // -- POST ------------------------------------------------------------------
-
-  it("performs a POST with JSON body and Content-Type header", async () => {
-    const body = { name: "test" };
-    const responseData = { id: 1, name: "test" };
-    withResponse(
-      mockResponse(responseData, {
-        headers: { "content-type": "application/json" },
-      }),
-    );
-
-    const proc = spawn(
-      xfetch<typeof responseData>,
-      "xfetch-post",
-    )({
-      url: new URL("https://example.com/api/items"),
-      method: "POST",
-      body,
-    } as FetchArgs<typeof responseData>);
-
-    await proc.ready();
-
+    // Everything the caller said, exactly as said: the body is not re-serialized, no header is added,
+    // and the deadline it chose is the deadline fetch gets.
     expect(mockedFetch).toHaveBeenCalledWith(
       "https://example.com/api/items",
       expect.objectContaining({
         method: "POST",
-        body: JSON.stringify(body),
-        headers: new Headers({
-          "content-type": "application/json",
-        }),
-      }),
-    );
-
-    expect(await nextMessage(proc)).toMatchObject({ type: "OK", data: responseData });
-    expect(proc.state).toMatchObject({ code: "ok", data: responseData });
-  });
-
-  // -- status code & response headers ---------------------------------------
-
-  it("exposes response status code and headers in OK message", async () => {
-    const responseData = { ok: true };
-    withResponse(
-      mockResponse(responseData, {
-        status: 201,
-        headers: {
-          "content-type": "application/json",
-          "x-ratelimit-remaining": "42",
-        },
-      }),
-    );
-
-    const proc = spawn(
-      xfetch<typeof responseData>,
-      "xfetch-status-headers",
-    )({
-      url: new URL("https://example.com/api/created"),
-      method: "POST",
-      body: responseData,
-    } as FetchArgs<typeof responseData>);
-
-    await proc.ready();
-
-    expect(await nextMessage(proc)).toMatchObject({
-      type: "OK",
-      data: responseData,
-      status: 201,
-      responseHeaders: expect.objectContaining({
-        "x-ratelimit-remaining": "42",
-      }),
-    });
-  });
-
-  it("exposes status and responseHeaders in FetchState", async () => {
-    const responseData = { done: true };
-    withResponse(
-      mockResponse(responseData, {
-        status: 200,
-        headers: {
-          "content-type": "application/json",
-          "x-request-id": "abc-123",
-        },
-      }),
-    );
-
-    const proc = spawn(
-      xfetch<typeof responseData>,
-      "xfetch-state-headers",
-    )({
-      url: new URL("https://example.com/api/item"),
-      method: "GET",
-    } as FetchArgs<typeof responseData>);
-
-    await proc.ready();
-
-    expect(await nextState(proc)).toMatchObject({
-      code: "ok",
-      status: 200,
-      responseHeaders: expect.objectContaining({
-        "x-request-id": "abc-123",
-      }),
-    });
-  });
-
-  it("exposes status and headers for non-JSON responses too", async () => {
-    withResponse(
-      mockResponse("Not Found", {
-        status: 404,
-        headers: { "content-type": "text/plain" },
-      }),
-    );
-
-    const proc = spawn(
-      xfetch<string>,
-      "xfetch-nonjson-headers",
-    )({
-      url: new URL("https://example.com/api/missing"),
-      method: "GET",
-    } as FetchArgs<string>);
-
-    await proc.ready();
-
-    expect(await nextMessage(proc)).toMatchObject({
-      type: "OK",
-      text: JSON.stringify("Not Found"),
-      status: 404,
-      responseHeaders: expect.any(Object),
-    });
-    expect(proc.state).toMatchObject({ code: "ok", status: 404 });
-  });
-
-  // -- custom headers --------------------------------------------------------
-
-  it("passes custom headers through to fetch (POST)", async () => {
-    const body = { name: "authed" };
-    const responseData = { ok: true };
-    withResponse(
-      mockResponse(responseData, {
-        headers: { "content-type": "application/json" },
-      }),
-    );
-
-    const proc = spawn(
-      xfetch<typeof body>,
-      "xfetch-headers-post",
-    )({
-      url: new URL("https://example.com/api/protected"),
-      method: "POST",
-      body,
-      headers: {
-        Authorization: "Bearer secret-token",
-        "User-Agent": "my-app/1.0",
-      },
-    } as FetchArgs<typeof body>);
-
-    await proc.ready();
-
-    expect(mockedFetch).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        headers: new Headers({
-          "content-type": "application/json",
-          Authorization: "Bearer secret-token",
-          "User-Agent": "my-app/1.0",
-        }),
+        body: '{"name":"test"}',
+        headers: new Headers({ Authorization: "Bearer t" }),
+        timeout: 3_600_000,
+        signal: expect.any(AbortSignal),
       }),
     );
   });
 
-  it("passes custom headers through to fetch (GET)", async () => {
-    withResponse(
-      mockResponse(null, {
-        headers: { "content-type": "application/json" },
-      }),
-    );
+  it("adds no content-type of its own", async () => {
+    withResponse(mockResponse("ok"));
 
     const proc = spawn(
-      xfetch<null>,
-      "xfetch-headers-get",
+      xfetch,
+      "xfetch-no-content-type",
     )({
       url: new URL("https://example.com/api/items"),
-      method: "GET",
-      headers: {
-        Accept: "application/vnd.github+json",
-        Authorization: "Bearer gh-token",
-      },
-    } as FetchArgs<null>);
-
+      init: { method: "POST", body: "a=1&b=2" },
+    } as FetchArgs);
     await proc.ready();
 
-    expect(mockedFetch).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        headers: new Headers({
-          Accept: "application/vnd.github+json",
-          Authorization: "Bearer gh-token",
-        }),
-      }),
-    );
+    const sent = mockedFetch.mock.calls[0]?.[1] as RequestInit;
+    expect(new Headers(sent.headers).get("content-type")).toBeNull();
   });
 
-  it("xfetch caller can override content-type", async () => {
-    const body = { value: 42 };
+  it("returns the answer as text, whatever the content-type says", async () => {
     withResponse(
-      mockResponse(
-        { ok: true },
-        {
-          headers: { "content-type": "application/json" },
-        },
-      ),
+      mockResponse({ items: [1, 2, 3] }, { headers: { "content-type": "application/json" } }),
     );
 
     const proc = spawn(
-      xfetch<typeof body>,
-      "xfetch-ct-override",
-    )({
-      url: new URL("https://example.com/api/thing"),
-      method: "POST",
-      body,
-      headers: {
-        "content-type": "text/html", // caller override
-      },
-    } as FetchArgs<typeof body>);
-
+      xfetch,
+      "xfetch-text",
+    )({ url: new URL("https://example.com/api/items") } as FetchArgs);
     await proc.ready();
 
-    expect(mockedFetch).toHaveBeenCalledWith(
-      expect.any(String),
-      expect.objectContaining({
-        headers: new Headers({
-          "content-type": "text/html", // caller override
-        }),
-      }),
-    );
+    expect(await nextMessage(proc)).toMatchObject({
+      type: "OK",
+      text: '{"items":[1,2,3]}',
+      status: 200,
+    });
+    // No parse, so no second copy of the answer in the state either.
+    expect(proc.state).toMatchObject({ code: "ok", status: 200, text: '{"items":[1,2,3]}' });
   });
 
-  // -- ERROR -----------------------------------------------------------------
-
-  it("handles network errors and transitions to failed", async () => {
-    withError(new Error("Network failure"));
+  it("exposes the status and the response headers", async () => {
+    withResponse(
+      mockResponse("created", {
+        status: 201,
+        headers: { "x-ratelimit-remaining": "42", "content-type": "text/plain" },
+      }),
+    );
 
     const proc = spawn(
-      xfetch<null>,
-      "xfetch-error",
-    )({
-      url: new URL("https://example.com/api/fail"),
-      method: "GET",
-    } as FetchArgs<null>);
-
+      xfetch,
+      "xfetch-headers",
+    )({ url: new URL("https://example.com/api/created") } as FetchArgs);
     await proc.ready();
 
-    expect(await nextMessage(proc)).toMatchObject({ type: "ERROR" });
+    expect(await nextMessage(proc)).toMatchObject({
+      type: "OK",
+      status: 201,
+      text: "created",
+      responseHeaders: expect.objectContaining({ "x-ratelimit-remaining": "42" }),
+    });
+  });
+
+  it("carries the cause of a failure in words", async () => {
+    withError(new TypeError("socket hang up"));
+
+    const proc = spawn(
+      xfetch,
+      "xfetch-error",
+    )({ url: new URL("https://example.com/api/fail") } as FetchArgs);
+    await proc.ready();
+
+    expect(await nextMessage(proc)).toMatchObject({
+      type: "ERROR",
+      reason: "socket hang up",
+    });
     expect(proc.state).toMatchObject({ code: "failed" });
     await proc.wait();
   });
 
-  it("handles AbortError and transitions to aborted", async () => {
-    const abortError = new DOMException("Aborted", "AbortError");
-    withError(abortError);
+  it("names a timeout for what it is", async () => {
+    withError(new Error("The operation timed out."));
 
     const proc = spawn(
-      xfetch<null>,
-      "xfetch-abort",
-    )({
-      url: new URL("https://example.com/api/slow"),
-      method: "GET",
-    } as FetchArgs<null>);
+      xfetch,
+      "xfetch-timeout",
+    )({ url: new URL("https://example.com/api/slow") } as FetchArgs);
+    await proc.ready();
 
+    expect(await nextMessage(proc)).toMatchObject({
+      type: "ERROR",
+      reason: "The operation timed out.",
+    });
+    await proc.wait();
+  });
+
+  it("treats an abort as an abort, not a failure", async () => {
+    withError(new DOMException("Aborted", "AbortError"));
+
+    const proc = spawn(
+      xfetch,
+      "xfetch-aborted",
+    )({ url: new URL("https://example.com/api/slow") } as FetchArgs);
     await proc.ready();
 
     expect(await nextMessage(proc)).toMatchObject({ type: "ABORTED" });
@@ -393,83 +198,21 @@ describe("xfetch", () => {
     await proc.wait();
   });
 
-  // -- ABORT via STOP --------------------------------------------------------
-
   it("aborts the request when STOP is received", async () => {
-    // Make fetch hang so we can send STOP before it settles
-    const hang = withHangResponse(
-      mockResponse({ done: true }, { headers: { "content-type": "application/json" } }),
-    );
+    withHangResponse(mockResponse("done"));
 
     const proc = spawn(
-      xfetch<null>,
+      xfetch,
       "xfetch-stop",
-    )({
-      url: new URL("https://example.com/api/slow"),
-      method: "GET",
-    } as FetchArgs<null>);
+    )({ url: new URL("https://example.com/api/slow") } as FetchArgs);
 
     expect(await nextState(proc)).toMatchObject({ code: "loading" });
     expect(mockedFetch).toHaveBeenCalledTimes(1);
 
-    // Send STOP — should trigger AbortController.abort()
-    proc.send({ type: "STOP" });
+    proc.send({ type: "STOP" } as unknown as FetchMessage);
 
     expect(await nextMessage(proc)).toMatchObject({ type: "ABORTED" });
     expect(await nextState(proc)).toMatchObject({ code: "aborted" });
     await proc.wait();
-  });
-
-  // -- state transitions -----------------------------------------------------
-
-  it("transitions pending → loading → ok", async () => {
-    const hang = withHangResponse(
-      mockResponse({ done: true }, { headers: { "content-type": "application/json" } }),
-    );
-
-    const proc = spawn(
-      xfetch<{ done: boolean }>,
-      "xfetch-lifecycle",
-    )({
-      url: new URL("https://example.com/api/item"),
-      method: "GET",
-    } as FetchArgs<{ done: boolean }>);
-
-    await proc.ready();
-    expect(proc.state).toMatchObject({ code: "pending" });
-    expect(await nextState(proc)).toMatchObject({ code: "loading" });
-
-    // Resolve the fetch
-    hang.resume();
-    expect(mockedFetch).toHaveBeenCalledWith(
-      "https://example.com/api/item",
-      expect.objectContaining({
-        method: "GET",
-      }),
-    );
-
-    expect(await nextMessage(proc)).toMatchObject({
-      type: "OK",
-      data: { done: true },
-    });
-    expect(await nextState(proc)).toMatchObject({ code: "ok", data: { done: true } });
-  });
-
-  // -- wait() ----------------------------------------------------------------
-
-  it("wait() resolves when the fetch completes", async () => {
-    withResponse(mockResponse({ ok: true }, { headers: { "content-type": "application/json" } }));
-
-    const proc = spawn(
-      xfetch<{ ok: boolean }>,
-      "xfetch-wait",
-    )({
-      url: new URL("https://example.com/api/item"),
-      method: "GET",
-    } as FetchArgs<{ ok: boolean }>);
-
-    await proc.ready();
-    const waiting = proc.wait();
-    await expect(waiting).resolves.toBeUndefined();
   });
 });
