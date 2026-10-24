@@ -4,56 +4,52 @@ import type { Process } from "./process.js";
 
 // ---- types ------------------------------------------------------------------
 
+/**
+ * A fetch init, plus the deadline that is not in the standard.
+ *
+ * `timeout` is Bun's socket idle deadline: the request fails if the connection stays idle that long.
+ * Bun's default is five minutes, which a slow generation outlives; this is the only place a caller can
+ * say otherwise. On a runtime that does not know the field, `fetch` ignores it.
+ */
+export type FetchInit = RequestInit & {
+  timeout?: number | boolean;
+};
+
+/** Arguments for a fetch process: a URL, and the init the caller wants sent with it. */
+export type FetchArgs = {
+  url: URL;
+  init?: FetchInit;
+};
+
 /** State of an in-flight or completed fetch. */
-export type FetchState<T> = {
+export type FetchState = {
   code: "pending" | "loading" | "aborted" | "failed" | "ok";
-  data: T | null;
+  /** The answer's body as text, whatever its content-type said. */
   text: string | null;
   status: number;
   responseHeaders: Record<string, string>;
 };
 
-/** Arguments for a fetch process. */
-export type FetchArgs<T> =
-  | {
-      url: URL;
-      method?: "GET";
-      body?: undefined;
-      headers?: Record<string, string>;
-    }
-  | {
-      url: URL;
-      method?: "POST" | "PUT" | "PATCH";
-      body: T;
-      headers?: Record<string, string>;
-    };
-
 /** Messages emitted by a fetch process during its lifecycle. */
-export type FetchMessage<T> =
+export type FetchMessage =
   | {
       type: "OK";
-      data?: T | null;
-      text?: string | null;
+      text: string;
       status: number;
       responseHeaders: Record<string, string>;
     }
-  | { type: "ERROR" | "LOADING" | "ABORTED" | "STOP" }
+  | {
+      type: "ERROR";
+      /** What went wrong, in the words of whatever threw: `socket hang up`, `The operation timed out.` */
+      reason: string;
+    }
+  | { type: "LOADING" | "ABORTED" | "STOP" }
   | ExitMessage;
 
 /** A process that performs an HTTP fetch. */
-export type FetchProcess<D> = Process<
-  FetchArgs<D>,
-  FetchState<D>,
-  FetchMessage<D>,
-  FetchMessage<D>
->;
+export type FetchProcess = Process<FetchArgs, FetchState, FetchMessage, FetchMessage>;
 
 // ---- helpers ----------------------------------------------------------------
-
-function isJsonHelper(res: Response): boolean {
-  const ct = res.headers.get("content-type");
-  return ct === "application/json";
-}
 
 /** Convert a Headers object to a plain Record. */
 function headersToRecord(h: Headers): Record<string, string> {
@@ -64,24 +60,34 @@ function headersToRecord(h: Headers): Record<string, string> {
   return out;
 }
 
+/** The cause of a failure, in words.  A bare word is what made a 300 s deadline look like a network fault. */
+function reasonOf(e: unknown): string {
+  if (e instanceof Error) return e.message || e.name;
+  return String(e);
+}
+
 // ---- xfetch -----------------------------------------------------------------
 
 /**
- * A fetch wrapper implemented as a process. Supports GET/POST/PUT/PATCH,
- * JSON detection, abort via AbortController, and yields a
- * {@link FetchState} with the current status.
+ * Fetch, as a process.
+ *
+ * A pipe and nothing more: the init is handed to `fetch` untouched, the answer's body comes back as
+ * text with its status and headers, and a failure carries its cause.  It parses nothing, shapes no
+ * request, and imposes no deadline of its own.
+ *
+ * It is a process because a request may run for minutes: the caller's loop must stay able to hear
+ * HEARTBEAT and STOP while it waits, and `STOP` aborts the request through the signal below.
  */
-function* xfetch<Type>(
+function* xfetch(
   {
     pname,
     toParent,
     sendSelf,
-  }: ProcessCtx<FetchArgs<Type>, FetchState<Type>, FetchMessage<Type>, FetchMessage<Type>>,
-  { method = "GET", url, body, headers: callerHeaders }: FetchArgs<Type>,
-): Generator<FetchState<Type> | null, void, WithSender<FetchMessage<Type>>> {
-  const state: FetchState<Type> = {
+  }: ProcessCtx<FetchArgs, FetchState, FetchMessage, FetchMessage>,
+  { url, init }: FetchArgs,
+): Generator<FetchState | null, void, WithSender<FetchMessage>> {
+  const state: FetchState = {
     code: "pending",
-    data: null,
     text: null,
     status: 0,
     responseHeaders: {},
@@ -89,47 +95,35 @@ function* xfetch<Type>(
   yield state;
 
   const controller = new AbortController();
-  const signal = controller.signal;
   const toSelf = sendSelf;
 
   (async function doRequest() {
     try {
       toSelf({ type: "LOADING" });
-      const serializedBody = method === "GET" ? undefined : JSON.stringify(body);
-      const headers = new Headers(callerHeaders ?? {});
-      if (serializedBody && !headers.get("content-type")) {
-        headers.set("content-type", "application/json");
-      }
-      const res: Response = await fetch(url.href, {
-        method,
-        signal,
-        body: serializedBody,
-        headers,
+      // Our signal wins: the caller's STOP has to be able to abort whatever was sent.
+      const requestInit: FetchInit = { ...init, signal: controller.signal };
+      const res: Response = await fetch(url.href, requestInit);
+      const text = await res.text();
+      toSelf({
+        type: "OK",
+        text,
+        status: res.status,
+        responseHeaders: headersToRecord(res.headers),
       });
-      const status = res.status;
-      const responseHeaders = headersToRecord(res.headers);
-      if (isJsonHelper(res)) {
-        const data = (await res.json()) as Type;
-        toSelf({ type: "OK", data, status, responseHeaders });
-      } else {
-        const text = await res.text();
-        toSelf({ type: "OK", text, status, responseHeaders });
-      }
     } catch (e) {
-      const isAborted = e instanceof DOMException && e.name === "AbortError";
-      if (isAborted) {
+      if (e instanceof DOMException && e.name === "AbortError") {
         toSelf({ type: "ABORTED" });
       } else {
-        toSelf({ type: "ERROR" });
+        toSelf({ type: "ERROR", reason: reasonOf(e) });
       }
     }
   })();
 
   const isDone = (): boolean => !(state.code === "pending" || state.code === "loading");
 
-  yield* runDispatch<WithSender<FetchMessage<Type>>>(
+  yield* runDispatch<WithSender<FetchMessage>>(
     pname,
-    (maybe: WithSender<FetchMessage<Type>>) => {
+    (maybe: WithSender<FetchMessage>) => {
       const [msg, _sender] = maybe;
       if (msg.type === "STOP") {
         controller.abort();
@@ -148,8 +142,7 @@ function* xfetch<Type>(
       if (msg.type === "OK") {
         toParent(msg);
         state.code = "ok";
-        state.data = msg.data || null;
-        state.text = msg.text || null;
+        state.text = msg.text;
         state.status = msg.status;
         state.responseHeaders = msg.responseHeaders;
       }

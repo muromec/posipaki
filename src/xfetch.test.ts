@@ -81,16 +81,12 @@ describe("xfetch", () => {
 
     // Everything the caller said, exactly as said: the body is not re-serialized, no header is added,
     // and the deadline it chose is the deadline fetch gets.
-    expect(mockedFetch).toHaveBeenCalledWith(
-      "https://example.com/api/items",
-      expect.objectContaining({
-        method: "POST",
-        body: '{"name":"test"}',
-        headers: new Headers({ Authorization: "Bearer t" }),
-        timeout: 3_600_000,
-        signal: expect.any(AbortSignal),
-      }),
-    );
+    const sent = mockedFetch.mock.calls[0]?.[1] as RequestInit & { timeout?: number };
+    expect(sent.method).toBe("POST");
+    expect(sent.body).toBe('{"name":"test"}');
+    expect(new Headers(sent.headers).get("authorization")).toBe("Bearer t");
+    expect(sent.timeout).toBe(3_600_000);
+    expect(sent.signal).toBeInstanceOf(AbortSignal);
   });
 
   it("adds no content-type of its own", async () => {
