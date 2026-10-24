@@ -77,3 +77,16 @@ proposal.
 Breaking for `FetchArgs`: a caller moves from `{ url, method, body, headers }` to `{ url, init }`. Today
 that is one call site in the harness (the OpenAI connector) plus the tests here. The harness stays on
 0.46.1 until the publish and its own bump, so nothing breaks in place.
+
+## As built (0.47.0)
+
+`2f8b93f`.  `FetchArgs` is `{ url, init }`, the init is spread into `fetch` with our abort `signal` on
+top (ours wins: STOP has to be able to abort whatever was sent), the body is read as text, the status and
+headers are passed through, and `ERROR` carries `reason`.  The state keeps `code`, `text`, `status` and
+`responseHeaders` — no parsed copy, so nothing can disagree with the message.
+
+Tests: eight, and the four that state the new contract were red first (`d317196`).  The old suite's
+expectations about serialized bodies and parsed answers were deleted with the behaviour they described.
+
+Not done, deliberately: streaming (a stream cannot cross a message boundary; that is a channel), retries,
+and a caller-supplied `signal` (ours is the one that is honoured).
