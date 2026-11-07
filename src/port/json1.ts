@@ -9,6 +9,12 @@
 //
 // One frame is one JSON *object*: a line that parses to a number, a string, an array or `null` is not a frame
 // either, and reading one as a frame throws just as surely as a line that never parsed.
+//
+// A line may announce octets after it, and the splitter pairs them with their line before this adapter sees
+// either.  So a decoded message is a frame and the octets it came with — one value, not a frame plus a
+// callback.  That is what lets a chunk of a stream be a single thing on a channel whose frame type says so.
+
+import type { Channel, Part } from "./channel.js";
 
 const BAD_KEY = "$bad";
 
@@ -73,3 +79,55 @@ function kindOf(value: unknown): string {
   return `a ${typeof value}`;
 }
 
+/** One message off the wire: the frame a line decoded to, and the octets that line announced. */
+export interface Delivered {
+  frame: Record<string, unknown>;
+  bytes: Uint8Array | null;
+}
+
+/**
+ * Text into frames, and frames back into text.
+ *
+ * A part is one line and its octets, so a message is decoded into a frame and the octets it arrived with —
+ * nothing is remembered between reads and no second callback is needed to pair them.  What the frame means,
+ * and whether the octets follow from it, is above this in the protocol that wrote them.
+ */
+export function json1(parts: Channel<Part>): Channel<Delivered> {
+  const readers = new Set<(value: Delivered) => void>();
+  const closers = new Set<(reason: string) => void>();
+  const failers = new Set<(error: unknown) => void>();
+
+  parts.onFrame((part) => {
+    const value: Delivered = { frame: readFrame(part.line), bytes: part.bytes };
+    for (const reader of [...readers]) reader(value);
+  });
+  parts.onError((error) => {
+    for (const failer of [...failers]) failer(error);
+  });
+  parts.onClose((reason) => {
+    for (const closer of [...closers]) closer(reason);
+  });
+
+  return {
+    send: (value: Delivered) => parts.send({ line: encode(value.frame), bytes: value.bytes }),
+    onFrame: (handler) => {
+      readers.add(handler);
+      return () => {
+        readers.delete(handler);
+      };
+    },
+    onClose: (handler) => {
+      closers.add(handler);
+      return () => {
+        closers.delete(handler);
+      };
+    },
+    onError: (handler) => {
+      failers.add(handler);
+      return () => {
+        failers.delete(handler);
+      };
+    },
+    close: (reason?: string) => parts.close(reason),
+  };
+}

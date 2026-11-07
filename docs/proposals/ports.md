@@ -349,3 +349,10 @@ Slices 1 and 2 of the list above, 2026-11-07:
   in as a question.
 
 The spawners still run the whole stack themselves, so nothing in `posipaki/remote` is on this yet.
+
+The encoding, 2026-11-07:
+
+- `src/port/json1.ts` — `json1(parts)`, a `Channel<Part>` as a `Channel<Delivered>`, where `Delivered` is the
+  frame a line decoded to and the octets that line announced. One value, so a chunk of a stream is one thing
+  on the wire rather than a frame plus a callback, and `sendBytes`/`onBytes` have no counterpart above the
+  splitter. The `$bad` answer to a line nobody could read lives here too, and `posipaki/remote` re-exports it.
