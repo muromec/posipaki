@@ -12,8 +12,8 @@
 // own output shares the wire that is its stdout, which `onEarly` may claim.  Unclaimed, it refuses the
 // handshake: the first thing a peer says has to be its protocol.
 
-import type { Channel } from "./channel.js";
-import type { Delivered } from "./json1.js";
+import type { Channel } from "../port/index.js";
+import type { Delivered } from "./protocols/json1.js";
 
 /** The key that says which protocol a side speaks. */
 export const PROTO_KEY = "$proto";

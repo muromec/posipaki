@@ -7,8 +7,8 @@
 import { describe, expect, it } from "vitest";
 
 import { handshake, HandshakeError, PROTO_KEY, protoFrame } from "./handshake.js";
-import type { Delivered } from "./json1.js";
-import { memoryChannelPair } from "./memory.js";
+import type { Delivered } from "./protocols/json1.js";
+import { memoryChannelPair } from "../port/index.js";
 
 const VERSION = "json.v1";
 

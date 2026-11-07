@@ -6,7 +6,7 @@
 // in Channels and these guards — they never see a specific protocol or
 // transport.
 
-import type { BadFrame } from "../port/json1.js";
+import type { BadFrame } from "./protocols/json1.js";
 import type { FrameChannel, Message } from "../types.js";
 import {
   decodeProcessRefs,
@@ -244,10 +244,10 @@ export function isExit(msg: Record<string, unknown>): msg is ExitFrame {
 // `$r.result.<name>` (see below).  This one is about the wire the calls travel on.
 
 // The `$bad` frame is built and read by the encoding, which is the only place a line that nobody could read
-// is answered for (`../port/json1.ts`).  It is re-exported here because a reader of the wire wants both of
+// is answered for (`protocols/json1.ts`).  It is re-exported here because a reader of the wire wants both of
 // its frames in one place.
 
-export { BAD_PREFIX_LIMIT, badFrame, badReason, isBad } from "../port/json1.js";
+export { BAD_PREFIX_LIMIT, badFrame, badReason, isBad } from "./protocols/json1.js";
 
 const ERROR_KEY = "$error";
 

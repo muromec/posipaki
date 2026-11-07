@@ -9,12 +9,13 @@
 // `onMessage` only, says nothing on `onClose`, and has no error, so a failed wire reaches its reader as the
 // close that follows it.
 
-import type { Announcement, Channel, Delivered, Part } from "../port/index.js";
-import { handshake, json1, readFrame, splitChannel } from "../port/index.js";
+import type { Announcement, Channel, Part } from "../port/index.js";
+import { splitChannel } from "../port/index.js";
 import type { StringTransport } from "./channel.js";
-import type { FrameChannel } from "../types.js";
+import { handshake } from "./handshake.js";
 import type { ClientSpawner } from "./client.js";
-import { announcedOctets, VERSION } from "./protocols/json1.js";
+import { announcedOctets, json1, readFrame, VERSION, type Delivered } from "./protocols/json1.js";
+import type { FrameChannel } from "../types.js";
 
 /** How many octets follow this line on the seam: a `$chunk` head says, and nothing else does. */
 export function seamAnnounced(line: string): number | null {

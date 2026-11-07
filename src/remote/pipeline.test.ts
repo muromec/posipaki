@@ -7,13 +7,11 @@ import { PassThrough, Writable } from "node:stream";
 
 import { describe, expect, it } from "vitest";
 
-import type { Channel } from "./channel.js";
+import type { Channel } from "../port/index.js";
+import { splitChannel } from "../port/index.js";
+import { streamChannel } from "../port/index.js";
 import { handshake } from "./handshake.js";
-import type { Delivered } from "./json1.js";
-import { json1, readFrame } from "./json1.js";
-import { announcedOctets } from "../remote/protocols/json1.js";
-import { splitChannel } from "./split.js";
-import { streamChannel } from "./stream.js";
+import { announcedOctets, json1, readFrame, type Delivered } from "./protocols/json1.js";
 
 const VERSION = "json.v1";
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text);

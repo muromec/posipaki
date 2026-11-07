@@ -2,12 +2,13 @@
 
 > **Status:** proposal, 2026-11-07; built in part, same day, shipping as **0.48.0**.
 >
-> **Built:** `posipaki/port` — `Channel<F>` and its three endings, the memory pair, the splitter, the byte
-> channel over a stream pair, `json1`, the handshake, and `handshake(json1(split(port)))` under a test. The
-> remote is composed on it: the payload's fifo pair is a byte channel, and the serving half and every client
-> spawner reach the protocol through the same `partsOf` → `json1` → `handshake` chain. Both ends announce,
-> which is a **behaviour change**: a peer that used to only listen now has to say what it speaks, or the
-> handshake it is part of never finishes.
+> **Built:** `posipaki/port` — `Channel<F>` and its three endings, the memory pair, the splitter, and the byte
+> channel over a stream pair. Nothing in it knows a protocol. json.v1 and the handshake are adapters only this
+> library's remote uses, so they live with it: `src/remote/protocols/json1.ts` and `src/remote/handshake.ts`,
+> composed in `src/remote/seam.ts` as `handshake(json1(split(port, announced)))`. The remote is on it: the
+> payload's fifo pair is a byte channel, and the serving half and every client spawner reach the protocol through
+> the same chain. Both ends announce, which is a **behaviour change**: a peer that used to only listen now has to
+> say what it speaks, or the handshake it is part of never finishes.
 >
 > **Not built, named as the next slice:** `Spawner` and `ClientSpawner` still name the frame channel — a
 > spawner is a port internally, but its type says `Promise<Channel>`. So `StringTransport` and `json1Channel`
@@ -385,23 +386,24 @@ Slices 1 and 2 of the list above, 2026-11-07:
 - `src/port/split.ts` — `splitChannel(inner, announced?)`, bytes into parts, with the announcement travelling
   in as a question.
 
-The spawners still run the whole stack themselves, so nothing in `posipaki/remote` is on this yet.
+The spawners still run the whole stack themselves at this point; the commit that changes that is further down.
 
-The encoding, 2026-11-07:
+The encoding, 2026-11-07 (moved to `src/remote/protocols/json1.ts` when the remote came to use it):
 
-- `src/port/json1.ts` — `json1(parts)`, a `Channel<Part>` as a `Channel<Delivered>`, where `Delivered` is the
-  frame a line decoded to and the octets that line announced. One value, so a chunk of a stream is one thing
-  on the wire rather than a frame plus a callback, and `sendBytes`/`onBytes` have no counterpart above the
-  splitter. The `$bad` answer to a line nobody could read lives here too, and `posipaki/remote` re-exports it.
+- `src/remote/protocols/json1.ts` — the whole of json.v1 in one file: `json1(parts)`, a `Channel<Part>` as a
+  `Channel<Delivered>`, where `Delivered` is the frame a line decoded to and the octets that line announced; the
+  encoding both ways; and the `$bad` answer to a line nobody could read. One value rather than a frame plus a
+  callback, so a chunk of a stream is one thing on the wire and `sendBytes`/`onBytes` have no counterpart above
+  the splitter. `json1Channel` keeps the `StringTransport` path the stdio and gateway wires still use.
 
 The handshake and the composition, 2026-11-07:
 
-- `src/port/handshake.ts` — `handshake(inner, {version, timeoutMs, onEarly})`, the one adapter that is
+- `src/remote/handshake.ts` — `handshake(inner, {version, timeoutMs, onEarly, ready})`, the one adapter that is
   asynchronous: it resolves to the channel rather than returning one, because "the peer speaks what we speak"
   is what the caller needs before it talks. Silence, a wrong version, a peer that talks out of turn and a peer
   that leaves are rejections with a sentence each. Frames that arrive after the agreement and before anyone
   reads are held and handed to the first reader.
-- `src/port/pipeline.test.ts` — `handshake(json1(split(bytes, announced)))` on both ends of one pair of
+- `src/remote/pipeline.test.ts` — `handshake(json1(split(bytes, announced)))` on both ends of one pair of
   streams, over a medium that delivers on a later turn: a frame each way, octets through and back out
   unchanged, and the frame after a segment still in order. The announcement argument is the seam's
   (`announcedOctets`), which is why the composition names it.

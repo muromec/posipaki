@@ -71,6 +71,18 @@ export type {
 } from "./stream.js";
 export { VERSION, encode, decode, readFrame, json1Channel } from "./protocols/json1.js";
 
+// the composition: a channel of parts as a channel of frames, and the agreement over it
+export { json1, type BadFrame, type Delivered } from "./protocols/json1.js";
+export {
+  handshake,
+  HandshakeError,
+  HANDSHAKE_TIMEOUT_MS,
+  PROTO_KEY,
+  protoFrame,
+  protoVersion,
+} from "./handshake.js";
+export type { HandshakeOptions } from "./handshake.js";
+
 // the seam over a port, for a spawner that hands up a raw channel
 export { frameChannel, jsonSeam, jsonSeamParts, seamAnnounced } from "./seam.js";
 export type { JsonSeamOptions } from "./seam.js";
