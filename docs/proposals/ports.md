@@ -165,6 +165,45 @@ channel.
 This is also where the harness's process port belongs: it is a spawner over a child's stdio plus an owner,
 which is `spawners/command.ts` beside the `stdio.ts` and `process-streams.ts` already here.
 
+## Way in: what a package exports
+
+A medium is not a place. `ssh` is an argv prefix over the same child-process medium, `podman exec` is the
+same with a container's lifetime around it, and `bwrap` the same inside a namespace. So the crossing is one
+implementation in the core — `RemoteWayIn { name, entry, run?, spawn? }` is already that interface — and a
+companion package is only what it alone can say: the argv, the spec, and the lifetime it owns.
+
+Each way-in package answers four things, and the last two are one composition over the first two:
+
+| Entry | Returns | What it does |
+| --- | --- | --- |
+| `sshPort(host, command)` | `Spawner<Args, Uint8Array>` | runs a command there and gives its stdio, unwrapped |
+| `stageKit(spec)` | the way in | puts the kit and the gateway there; can fail on its own |
+| `sshGateway(spec)` | `Spawner<Args, Uint8Array>` | `stageKit`, boot the gateway, wrap stdio and `$fd`, stop |
+| `sshRemote(spec)` | `Spawner<Args, Frame>` | `seamOf(sshGateway(spec))` — one line |
+
+If the last two are more than one line apart, something above the port is still fused.
+
+**A wrapped port is not a raw one, and that is the reason to have both.** A command's stdout carries whatever
+the command prints; the gateway's wrapping is what keeps a worker's own output out of the channel, so a port
+through it carries protocol bytes only. A foreign program — an MCP server, a database shell — has no such
+guarantee, and a stray print then arrives as a frame that fails to parse: a visible failure, which is the
+right kind, and the reason a protocol that cannot tolerate one takes the wrapped path.
+
+**A foreign command's failure is only known at the close.** `ssh host -- nope` connects and then exits 127,
+so the spawner cannot refuse it the way it refuses a connection that never opened. The sentence belongs to
+whichever spawner started the child, and it travels as the channel's close reason: `exit 127: bunx: command
+not found`, with the last lines of what it said on stderr.
+
+**Which layer a piece goes into** is a rule the tree already follows, made explicit:
+
+- a companion package is for an external runtime you may not have — the `ssh` binary, podman's daemon,
+  bwrap's namespaces. It earns its keep with its own fixtures, its own integration tests and a lockstep
+  version;
+- everything with no such dependency is an *entry* of the core package — `/port` and `/port/node`, beside
+  `/remote`, `/remote/node` and `/xfetch`;
+- a 0.x breaking change moves every companion pin in the same commit, because `^0.47.0` does not admit
+  `0.48.0`; the three are published with the core or not at all.
+
 ## What it does not do
 
 - **No backpressure.** The library has none today; a channel accepts frames as fast as the adapter decodes
@@ -198,6 +237,10 @@ which is `spawners/command.ts` beside the `stdio.ts` and `process-streams.ts` al
   their return type; `onBytes`/`sendBytes` are gone. Compatibility helpers (`jsonSeam`, `fromSpawner`) keep
   `serveRemoteActor`, `remoteClient` and `defineSubprocessActor` callable as they are today, so the harness
   can stay on 0.47.0 through the whole change and move one consumer at a time afterwards.
+- **A close carries a sentence, not a code.** A process that fails after connecting has its failure in the
+  close reason (`exit 127: …`, with the tail of what it printed), because the exit is a fact about the child
+  and only the spawner that started it knows one. A channel that understood process exits would stop being a
+  channel.
 
 ## Cost
 
@@ -235,14 +278,15 @@ Each one is a red test first, and the suite stays green between them.
    [The connection both ends hold](connection-both-ends.md) loses the octet announcement, because it is now
    a framing adapter; [environment remote spawner packages](environment-remote-spawner-packages.md) says a
    spawner's product is a raw channel.
+9. **The three way-in packages** export their four entries and shrink to argv, a spec and a lifetime; their
+   integration tests then prove the seam over ssh, podman and bwrap on the new carrier, and a cheaper new
+   test covers a command run there for its own sake.
 
 ## Open
 
 - **The name of the unit above a byte channel.** `Part` is short and says nothing on its own. `Line` is
   false when it carries octets; `Message` is taken by the actor. A reader who has to open this document to
   learn what a frame is has not been helped.
-- **Does `close()` need a code as well as a reason?** The seam's `$exit` carries a code; a socket close
-  carries one too. A single string keeps the channel small and forces the protocol to say what it means.
 - **Does the owner belong here or beside it?** It is one actor over a channel, with no knowledge of any
   medium, which argues for this library. It is also the only place a kill policy lives, which argues for
   whoever knows what is being killed.

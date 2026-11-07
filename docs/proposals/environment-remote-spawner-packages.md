@@ -97,6 +97,22 @@ everything below the entry; what a package keeps is its command shape and, for p
 container's life. A new way in is one `entry` function and one package: `posipaki-remote-host`
 (the same machine) is `hostRemote` in the core for that reason.
 
+**What a package exports, after [the port split](ports.md).** Four things, and the last two are one line each
+over the first two:
+
+| Entry | Returns | What it does |
+| --- | --- | --- |
+| `sshPort(host, command)` | `Spawner<Args, Uint8Array>` | a command there, its stdio, nothing wrapped |
+| `stageKit(spec)` | the way in | the kit and the gateway put there, which can fail on its own |
+| `sshGateway(spec)` | `Spawner<Args, Uint8Array>` | staging, the gateway, the wrap — a port into our own payload |
+| `sshRemote(spec)` | `Spawner<Args, Frame>` | `seamOf(sshGateway(spec))`: what exists today |
+
+`sshRemote` keeps its name and its callers. The core's `gatewayClient` splits into the second and the third:
+what it does today minus the two adapters at its top, which the fourth puts back for a caller who wants
+frames. A package that ends up with more than an argv, a spec and a lifetime has taken work the core should
+be doing — and the two ports are not the same thing: a raw command's own prints arrive in its channel, while
+the wrapped one carries nothing but the worker's protocol bytes.
+
 **Tests** assert the commands and what travels on stdin, against an injected host runner —
 the pattern the consumer already uses (`HostRun`). No ssh or podman needs to be present to
 run the suite. A real host is an opt-in integration test behind an env var.
