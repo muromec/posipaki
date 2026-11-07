@@ -431,4 +431,20 @@ describe("FifoUtf8NlineTransport close", () => {
 
     expect(closes).toBe(1);
   });
+
+  it("says closed without waiting for a write nobody will read", async () => {
+    // The shape of a dead peer: the pipe has no reader left.  Closing writes an end-of-stream into it,
+    // and a close that queues its news behind that write tells nobody anything, for ever.
+    const [readFd, writeFd] = await makePipe();
+    const transport = FifoUtf8NlineTransport.fromFds(readFd, writeFd);
+    let closes = 0;
+    transport.onClose(() => closes++);
+    await readFd.close();
+
+    const deadline = new Promise<"deadline">((resolve) => setTimeout(() => resolve("deadline"), 2000));
+    const closing = transport.close().then(() => "closed" as const);
+
+    expect(await Promise.race([closing, deadline])).toBe("closed");
+    expect(closes).toBe(1);
+  });
 });
