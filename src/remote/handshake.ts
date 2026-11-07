@@ -12,7 +12,7 @@
 // own output shares the wire that is its stdout, which `onEarly` may claim.  Unclaimed, it refuses the
 // handshake: the first thing a peer says has to be its protocol.
 
-import type { Channel } from "../port/index.js";
+import { held, type Channel } from "../port/index.js";
 import type { Delivered } from "./protocols/json1.js";
 
 /** The key that says which protocol a side speaks. */
@@ -72,8 +72,6 @@ export function handshake<C = string>(
   const readers = new Set<(value: Delivered) => void>();
   const closers = new Set<(reason: C) => void>();
   const failers = new Set<(error: unknown) => void>();
-  /** Frames that arrived with no reader to take them yet. */
-  let held: Delivered[] = [];
   let agreed = false;
   let reported: C | null = null;
   let refused: string | null = null;
@@ -107,12 +105,6 @@ export function handshake<C = string>(
     send: (value) => inner.send(value),
     onFrame: (handler) => {
       readers.add(handler);
-      // Held frames go to the first subscriber and are then gone: one conversation runs on this channel.
-      if (held.length > 0) {
-        const queued = held;
-        held = [];
-        for (const value of queued) handler(value);
-      }
       return () => {
         readers.delete(handler);
       };
@@ -135,6 +127,9 @@ export function handshake<C = string>(
     },
     close: (reason) => inner.close(reason),
   };
+  // What arrives between the agreement and the first reader is kept here rather than in this file: the wrapper
+  // subscribes now, so no frame can find nobody listening.
+  const opened = held(channel);
 
   inner.onFrame((value) => {
     if (refused !== null) return;
@@ -154,11 +149,7 @@ export function handshake<C = string>(
       }
       agreed = true;
       clearTimeout(timer);
-      resolveHandshake(channel);
-      return;
-    }
-    if (readers.size === 0) {
-      held.push(value);
+      resolveHandshake(opened);
       return;
     }
     for (const reader of [...readers]) reader(value);

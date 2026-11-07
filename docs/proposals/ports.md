@@ -511,3 +511,13 @@ The process port, and the two combinators, 2026-11-07:
 - The harness's `src/port/port.ts` (BinaryPort/Utf8Port) is what this replaces: `Utf8Port` becomes
   `splitChannel(spawnPort(...))`, since the splitter already decodes. That move waits for this release to be
   published and pinned.
+
+`held`, the one place that keeps frames, 2026-11-07:
+
+- `src/port/held.ts` — `held(inner)`: frames that arrive while nobody is subscribed are kept, and every
+  subscriber that arrives before the first delivery is given them. After the first delivery the channel is live
+  and a later subscriber gets only what follows. Three copies of that rule lived in `handshake`, the process
+  port and `frameChannel`; the first two now compose the adapter. `frameChannel` keeps its own because it holds
+  two kinds of value apart — a frame and the octets it announced — which this adapter cannot express.
+- The kept frames are not bounded: a bound depends on what the far end may say before anyone listens, which the
+  adapter cannot know.

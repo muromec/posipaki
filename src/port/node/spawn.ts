@@ -11,6 +11,7 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import type { Readable } from "node:stream";
 
+import { held } from "../held.js";
 import type { Channel } from "../channel.js";
 
 /** How a process ended: what the shell reports. */
@@ -52,8 +53,8 @@ export async function spawnPorts(
   const child = spawn(file, args, { cwd: options.cwd, env: options.env });
   await started(child, file);
 
-  const out = bytesOf(child.stdout);
-  const err = bytesOf(child.stderr);
+  const out = bytesOf(child.stdout, "stdout");
+  const err = bytesOf(child.stderr, "stderr");
 
   let exit: ProcessExit | null = null;
   let ended = false;
@@ -118,29 +119,27 @@ function started(child: ChildProcess, file: string): Promise<void> {
   });
 }
 
-/** One output stream as frames, with its own readers.  A frame that arrives before the first reader is held. */
-function bytesOf(stream: Readable | null): {
-  onFrame: (handler: (frame: Uint8Array) => void) => () => void;
-} {
+/** One output stream as the frames of a channel, kept until somebody reads them. */
+function bytesOf(stream: Readable | null, label: string): Channel<Uint8Array, ProcessExit> {
   const readers = new Set<(frame: Uint8Array) => void>();
-  const held: Uint8Array[] = [];
-  stream?.on("data", (chunk: Buffer) => {
-    const bytes = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
-    if (readers.size === 0) {
-      held.push(bytes);
-      return;
-    }
-    for (const reader of [...readers]) reader(bytes);
-  });
-  return {
+  const frames: Channel<Uint8Array, ProcessExit> = {
+    send: () => Promise.reject(new Error(`${label} carries the process's output; it has no input`)),
     onFrame(handler) {
       readers.add(handler);
-      for (let next = held.shift(); next !== undefined; next = held.shift()) handler(next);
       return () => {
         readers.delete(handler);
       };
     },
+    // The stream ending is not the process ending: the port reports that, from the process's own exit.
+    onClose: () => () => {},
+    onError: () => () => {},
+    close: () => Promise.resolve(),
   };
+  stream?.on("data", (chunk: Buffer) => {
+    const bytes = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);
+    for (const reader of [...readers]) reader(bytes);
+  });
+  return held(frames);
 }
 
 /** Writes to the child's stdin, and settles when the write is out. */
