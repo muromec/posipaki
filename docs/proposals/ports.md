@@ -550,3 +550,47 @@ The ending is state, 2026-11-07:
   Measured: `kill -9` on a child gives `code: null, signal: "SIGKILL"`, `exit 7` gives `code: 7, signal: null`,
   and a kill we send after the grace is indistinguishable from a stranger's — so "we stopped it" could only
   come from our own bookkeeping, and was dropped.
+
+The reactor at the port level, agreed 2026-11-07:
+
+The connection reactor is a loop parameterised by a listener. The same loop belongs one level down, where the
+medium is not a protocol but a pair of ports:
+
+```ts
+interface PortPair<In, Out, Meta> {
+  readonly inbound: Channel<In, void>;    // what the far side sends
+  readonly outbound: Channel<Out, void>;  // what we send back
+  readonly meta: Meta;
+}
+
+interface PortListener<In, Out, Meta> {
+  accept(): Promise<PortPair<In, Out, Meta>>;
+  close(): Promise<void>;
+}
+
+portReactor(listener, handle, { onSession, onClosed, onError }): { live, stop() }
+```
+
+A pair is the general form, and every medium fits it: a WebSocket's inbound is its `onmessage` and its outbound is
+`send`; an HTTP request's inbound is the request body and its outbound is the response body; a fifo is the same
+pair over bytes. What differs is what a frame is, which is the adapter's business:
+
+| Medium | inbound/outbound frame | Adapter above it |
+| --- | --- | --- |
+| WebSocket | `string`, already a line | `json1` (no splitter) |
+| fifo, socket, HTTP body | `Uint8Array` | `splitChannel`, then `json1` |
+| no protocol at all | whatever the handler wants | none |
+
+Three levels, and each owns one thing:
+
+1. the **listener**: admission before anything is created, refusal in the medium's words, one accept at a time;
+2. the **port reactor**: the loop, one handler per pair, the live set, `stop()`;
+3. the **actor reactor**: one actor per accept, reported as a session, stopped with the pair — and it takes the
+   adapter as a parameter rather than building one, so `serveRemoteActor` is this reactor with `jsonSeam` and an
+   HTTP handler is the same reactor with nothing.
+
+The client side is the same sentence the other way round: a spawner gives a channel and `remoteClient` puts an
+actor on it; a listener gives a pair and the actor reactor puts an actor on it.
+
+Built after this section was written: `httpListener` hands `{request, meta, response}` today, which is the pair
+minus the request body; the refit gives it an inbound port and moves the loop into `portReactor`.
