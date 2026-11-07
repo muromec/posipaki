@@ -31,6 +31,7 @@ ENTRY=(
   src/plugins/debug-logger.ts
   src/plugins/tree-introspection.ts
   src/port/index.ts
+  src/port/node.ts
   src/remote/index.ts
   src/remote/node.ts
   src/remote/gateway-cli.ts

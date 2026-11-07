@@ -65,17 +65,17 @@ function head(frame: Record<string, unknown>): string {
  * than its protocol first, or goes away.  A frame that arrives after the agreement and before anyone subscribes
  * is held for the first reader.
  */
-export function handshake(
-  inner: Channel<Delivered>,
+export function handshake<C = string>(
+  inner: Channel<Delivered, C>,
   options: HandshakeOptions,
-): Promise<Channel<Delivered>> {
+): Promise<Channel<Delivered, C>> {
   const readers = new Set<(value: Delivered) => void>();
-  const closers = new Set<(reason: string) => void>();
+  const closers = new Set<(reason: C) => void>();
   const failers = new Set<(error: unknown) => void>();
   /** Frames that arrived with no reader to take them yet. */
   let held: Delivered[] = [];
   let agreed = false;
-  let reported: string | null = null;
+  let reported: C | null = null;
   let refused: string | null = null;
 
   const announce = (): void => {
@@ -83,9 +83,9 @@ export function handshake(
       refuse(`could not announce ${options.version}: ${error instanceof Error ? error.message : String(error)}`);
     });
   };
-  let resolveHandshake!: (channel: Channel<Delivered>) => void;
+  let resolveHandshake!: (channel: Channel<Delivered, C>) => void;
   let rejectHandshake!: (error: unknown) => void;
-  const settling = new Promise<Channel<Delivered>>((resolve, reject) => {
+  const settling = new Promise<Channel<Delivered, C>>((resolve, reject) => {
     resolveHandshake = resolve;
     rejectHandshake = reject;
   });
@@ -103,7 +103,7 @@ export function handshake(
     rejectHandshake(new HandshakeError(reason));
   }
 
-  const channel: Channel<Delivered> = {
+  const channel: Channel<Delivered, C> = {
     send: (value) => inner.send(value),
     onFrame: (handler) => {
       readers.add(handler);

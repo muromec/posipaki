@@ -89,9 +89,9 @@ export interface Delivered {
  * remembered between reads, and no second callback pairs them.  What a frame means, and how many octets follow
  * it, belongs to the protocol above.
  */
-export function json1(parts: Channel<Part>): Channel<Delivered> {
+export function json1<C = string>(parts: Channel<Part, C>): Channel<Delivered, C> {
   const readers = new Set<(value: Delivered) => void>();
-  const closers = new Set<(reason: string) => void>();
+  const closers = new Set<(reason: C) => void>();
   const failers = new Set<(error: unknown) => void>();
 
   parts.onFrame((part) => {

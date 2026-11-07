@@ -39,6 +39,10 @@
       "types": "./dist/port/index.d.ts",
       "default": "./dist/port/index.js"
     },
+    "./port/node": {
+      "types": "./dist/port/node.d.ts",
+      "default": "./dist/port/node.js"
+    },
     "./remote": {
       "types": "./dist/remote/index.d.ts",
       "default": "./dist/remote/index.js"

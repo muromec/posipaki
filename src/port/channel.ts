@@ -25,8 +25,14 @@ export interface Part {
   bytes: Uint8Array | null;
 }
 
-/** Values of one type, between two ends. */
-export interface Channel<F> {
+/**
+ * Values of one type, between two ends.
+ *
+ * `C` is what the far end says when it closes — a sentence for a medium, or whatever the medium has to say for
+ * itself: a spawned process ends with an exit status, and that is the fact worth having.  `close()` takes a
+ * sentence from this side, because the close we ask for is ours.
+ */
+export interface Channel<F, C = string> {
   /**
    * Put a frame on it.
    *
@@ -36,8 +42,8 @@ export interface Channel<F> {
   send(frame: F): Promise<void>;
   /** A frame arrived.  The returned function stops this reader and no other. */
   onFrame(handler: (frame: F) => void): () => void;
-  /** The far end closed, and said why.  Once, after any frames already read. */
-  onClose(handler: (reason: string) => void): () => void;
+  /** The far end closed, and this is what it said.  Once, after any frames already read. */
+  onClose(handler: (reason: C) => void): () => void;
   /** The wire failed.  Once, and always followed by a close. */
   onError(handler: (error: unknown) => void): () => void;
   /**

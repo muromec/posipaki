@@ -2,13 +2,20 @@
 
 > **Status:** proposal, 2026-11-07; built in part, same day, shipping as **0.48.0**.
 >
-> **Built:** `posipaki/port` — `Channel<F>` and its three endings, the memory pair, the splitter, and the byte
-> channel over a stream pair. Nothing in it knows a protocol. json.v1 and the handshake are adapters only this
-> library's remote uses, so they live with it: `src/remote/protocols/json1.ts` and `src/remote/handshake.ts`,
-> composed in `src/remote/seam.ts` as `handshake(json1(split(port, announced)))`. The remote is on it: the
-> payload's fifo pair is a byte channel, and the serving half and every client spawner reach the protocol through
-> the same chain. Both ends announce, which is a **behaviour change**: a peer that used to only listen now has to
-> say what it speaks, or the handshake it is part of never finishes.
+> **Built:** `posipaki/port` — `Channel<F, C>` with its three endings, the memory pair, the splitter, the byte
+> channel over a stream pair, and the two combinators `all` and `settled`. `C` is what the far end says when it
+> closes: a sentence for a medium, an exit status for a process. Nothing in this entry knows a protocol.
+>
+> `posipaki/port/node` — `spawnPort(command)` and `spawnPorts(command)`: a spawned command as a channel of bytes,
+> stdin out and its exit on close; the second gives its stderr as a channel of its own. The child's stderr is
+> discarded by default, because it is a stream the child writes while running and not a fact about how it ended.
+>
+> json.v1 and the handshake are adapters only this library's remote uses, so they live with it:
+> `src/remote/protocols/json1.ts` and `src/remote/handshake.ts`, composed in `src/remote/seam.ts` as
+> `handshake(json1(split(port, announced)))`. The remote is on it: the payload's fifo pair is a byte channel, and
+> the serving half and every client spawner reach the protocol through the same chain. Both ends announce, which
+> is a **behaviour change**: a peer that used to only listen now has to say what it speaks, or the handshake it is
+> part of never finishes.
 >
 > **Not built, named as the next slice:** `Spawner` and `ClientSpawner` still name the frame channel — a
 > spawner is a port internally, but its type says `Promise<Channel>`. So `StringTransport` and `json1Channel`
@@ -485,3 +492,22 @@ reader being installed.
 What it cost the tests: a hand-driven peer must announce.  `fifo-argv.test.ts`, `server.integration.test.ts`,
 `websocket.test.ts`, `ws.integration.test.ts` and the reactor's fake transport all send `$proto` now.  The two ws
 fakes deliver on a later turn, which is when a socket delivers.
+
+The process port, and the two combinators, 2026-11-07:
+
+- `src/port/channel.ts` — `Channel<F, C = string>`. `C` is what the far end says when it closes; `close()`
+  still takes a sentence from this side, because the close we ask for is ours. The default keeps every existing
+  channel as it was, and the adapters pass `C` through untouched: `splitChannel`, `json1`, `handshake`.
+- `src/port/combine.ts` — `all(sources)` and `settled(sources)`, named after the promise pair because the choice
+  is the same one. `all` tags every frame with the channel it came from and ends with the first ending; `settled`
+  delivers every ending as a frame of its own and closes once all have. Neither sends: a frame put on a
+  combination has no destination, so `send` rejects and says so.
+- `src/port/node/spawn.ts` — `spawnPort(command, options)` and `spawnPorts(command, options)`, in the node entry.
+  stdout is the channel's frames, stdin is what `send` writes, and `close()` ends stdin first and kills what is
+  still there after `killAfterMs` (5 s by default). The close reason is `ProcessExit` — code and signal — and
+  stderr is discarded unless `spawnPorts` was asked for, where it is a channel of its own that ends with the same
+  exit. Erlang's ports are the model: data is a stream, the exit is a separate fact, and a child's stderr belongs
+  to the child unless you ask for it.
+- The harness's `src/port/port.ts` (BinaryPort/Utf8Port) is what this replaces: `Utf8Port` becomes
+  `splitChannel(spawnPort(...))`, since the splitter already decodes. That move waits for this release to be
+  published and pinned.

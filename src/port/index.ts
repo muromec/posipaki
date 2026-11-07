@@ -13,3 +13,4 @@ export { ChannelClosed, type Channel, type Part } from "./channel.js";
 export { memoryChannelPair, type ChannelPair, type MemoryEnd } from "./memory.js";
 export { splitChannel, type Announcement } from "./split.js";
 export { streamChannel, type StreamPair } from "./stream.js";
+export { all, settled, type Ended, type Sourced } from "./combine.js";

@@ -30,12 +30,12 @@ const NOTHING: Announcement = () => null;
  * The returned channel's `send` is the same rule backwards: a part becomes its line, a terminator, and the
  * octets it carried.
  */
-export function splitChannel(
-  inner: Channel<Uint8Array>,
+export function splitChannel<C = string>(
+  inner: Channel<Uint8Array, C>,
   announced: Announcement = NOTHING,
-): Channel<Part> {
+): Channel<Part, C> {
   const readers = new Set<(part: Part) => void>();
-  const closers = new Set<(reason: string) => void>();
+  const closers = new Set<(reason: C) => void>();
   const failers = new Set<(error: unknown) => void>();
   const decoder = new StringDecoder("utf8");
   /** Bytes that are not yet a frame: a line, or the octets a line announced. */
@@ -43,25 +43,27 @@ export function splitChannel(
   /** The line whose announced octets are still arriving. */
   let pending: { line: string; bytes: number } | null = null;
   let ended = false;
-  let reason: string | null = null;
+  let reason: C | null = null;
 
   const emit = (part: Part): void => {
     for (const reader of [...readers]) reader(part);
   };
 
   /** The far end is gone: our own readers hear it. */
-  const close = (why: string): void => {
+  const close = (why: C): void => {
     if (ended) return;
     ended = true;
     reason = why;
     for (const closer of [...closers]) closer(why);
   };
 
-  /** End it here: the far end hears a close, our own readers do not — we are the ones who asked. */
-  const shut = (why: string): void => {
+  /**
+   * End it here: the far end hears a close, our own readers do not, because we are the one who asked.  The
+   * reason stays null: a sentence from this side is not `C`, which is what the other end had to say.
+   */
+  const shut = (): void => {
     if (ended) return;
     ended = true;
-    reason = why;
   };
 
   /** Hand over what the buffer holds, as far as the framing allows. */
@@ -146,7 +148,7 @@ export function splitChannel(
       };
     },
     close: async (why = "closed here") => {
-      shut(why);
+      shut();
       await inner.close(why);
     },
   };
