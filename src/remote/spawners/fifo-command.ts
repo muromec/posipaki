@@ -10,7 +10,9 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { unlink } from "node:fs/promises";
 import type { Channel } from "../channel.js";
-import { fifoClientSpawner, makeFifoPair } from "../fifo.js";
+import { makeFifoPair } from "../fifo.js";
+import { jsonSeam } from "../seam.js";
+import { fifoByteChannel } from "./fifo-port.js";
 
 export function commandSpawner(command: string[]): () => Promise<Channel> {
   return async () => {
@@ -28,10 +30,11 @@ export function commandSpawner(command: string[]): () => Promise<Channel> {
       },
     );
 
-    const channel = await fifoClientSpawner<unknown>({
-      read: `${basePath}.out`,
-      write: `${basePath}.in`,
-    })(undefined);
+    // This side reads what the payload writes and writes what it reads; the seam composes the frames over
+    // the octets, so the medium hands up bytes and nothing else.
+    const channel = await jsonSeam(async () => fifoByteChannel(`${basePath}.in`, `${basePath}.out`, "client"))(
+      undefined,
+    );
 
     let cleaned = false;
     const cleanup = (): void => {

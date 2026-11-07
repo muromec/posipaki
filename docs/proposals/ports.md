@@ -385,7 +385,8 @@ The wrappers, and what the flip found, 2026-11-07:
   on its own would have its `$proto` arrive where the serve expects `$init`, and be refused. So the spawners
   and `protocolStep` move in one commit, and slice 2 is one slice rather than two.
 
-Flipping the fifo medium, 2026-11-07 — attempted, and taken back out. What it found is worth keeping:
+Flipping the fifo medium, first attempt, 2026-11-07 — attempted, and taken back out. Superseded by the
+second attempt below; what it found is worth keeping:
 
 - **The bridge has to fan out itself.** A subscription per kind is handed whatever the handshake held, and
   the filter that does not want it throws it away: a connection's `$init` went missing that way, and the
@@ -402,3 +403,26 @@ With those fixed, eight of the twenty reflection-integration cases still failed 
 announcements, one 20 s stall — which is the seam's reader timing rather than the medium. The flip was
 taken back to the bridge commit instead of being patched to green at the end of a session; the next
 attempt starts from `4a415b6`, with the reader order settled first.
+
+The fifo flip, second attempt, 2026-11-07 — done for the payload path:
+
+- **The medium hands up bytes.** `src/remote/spawners/fifo-port.ts` opens the pair and gives a
+  `Channel<Uint8Array>`: `fifoByteChannel(readPath, writePath, "served" | "client")`. Its only knowledge is
+  which end is opened first — the served side blocks on its write, the client on its read — which is the open
+  order the line transport already had, moved down to where the medium is.
+- `src/remote/spawners/fifo-argv.ts` and `fifo-command.ts` now compose `jsonSeam(...)` over that channel and
+  build no frame themselves: no `json1Channel`, no `$proto` written by hand.
+- **The reader order was the blocker** (`d828b7b`): what arrived before any reader existed was handed to
+  whichever reader was there when the handshake let go, so the store got `$init` and `$r.methods` and dropped
+  them. With it fixed, all nineteen reflection-integration cases pass over the flipped fifo and the gate is
+  684 pass / 2 skip / 0 fail.
+- Two tests spoke with one end only: `fifo-argv.test.ts` read the payload's `$proto` and answered nothing, and
+  `server.integration.test.ts` sent `$init` without announcing. Both now announce, which is what a symmetric
+  handshake costs a hand-driven peer.
+
+What it leaves: `fifoListener` and `fifoClientSpawner` are still the first shape — the served side says
+`$proto` and reads none, the client waits and speaks none. Each pair is consistent within itself (listener
+with `fifoClientSpawner`; `fifoArgvSpawner` with `commandSpawner`) and the two must not be crossed. The
+listener side cannot handshake yet because it hands up a `StringTransport` and `protocolStep` has no port to
+compose over; that is the next piece, and it is also what removes the line transports from the socket and
+websocket listeners.

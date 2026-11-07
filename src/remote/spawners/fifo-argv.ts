@@ -8,8 +8,8 @@
 // asked for has no business on a wire, and saying so before it connects is the only moment
 // where the reason is still readable to the caller.
 
-import { FifoUtf8NlineTransport } from "../transports/fifo.js";
-import { json1Channel, VERSION } from "../protocols/json1.js";
+import { jsonSeam } from "../seam.js";
+import { fifoByteChannel } from "./fifo-port.js";
 import type { Channel } from "../channel.js";
 import { PAYLOAD_REFUSED, hostVersionAccepts } from "../kit.js";
 
@@ -41,8 +41,7 @@ export async function fifoArgvSpawner(own?: string): Promise<Channel> {
     process.exit(1);
   }
 
-  const transport = await FifoUtf8NlineTransport.connect(fifoOut, fifoIn);
-  const channel = json1Channel(transport);
-  await channel.send({ $proto: VERSION });
-  return channel;
+  // The medium carries octets, and the seam above says what a frame in them is: this side reads
+  // `--fifo-out` and writes `--fifo-in`, opening its write end first.
+  return jsonSeam(async () => fifoByteChannel(fifoOut, fifoIn, "served"))(undefined);
 }

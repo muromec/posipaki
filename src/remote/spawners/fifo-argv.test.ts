@@ -107,25 +107,26 @@ describe("the payload's door", () => {
     const fifoIn = join(dir, "in");
     const fifoOut = join(dir, "out");
     try {
-      // The peer is the gateway: it reads what the payload writes and writes what it reads.
+      // The peer is the gateway, and it speaks: both ends announce, so the payload finishes its handshake
+      // only once this side has said what it speaks.
       for (const path of [fifoIn, fifoOut]) execSync(`mkfifo "${path}"`);
       const gateway = FifoUtf8NlineTransport.beginConnect(fifoIn, fifoOut).transport;
-
-      const ending = await serve(OWN, [
+      const serving = serve(OWN, [
         `--host-version=${OWN}`,
         `--fifo-in=${fifoIn}`,
         `--fifo-out=${fifoOut}`,
       ]);
+
+      const peer = await gateway;
+      const line = await new Promise<string>((resolve) => peer.onMessage(resolve));
+      expect(decode(line)).toEqual({ $proto: VERSION });
+      await peer.send(`${JSON.stringify({ $proto: VERSION })}\n`);
+
+      const ending = await serving;
       const { channel } = ending;
       expect(ending.message).toBe("served");
       expect(typeof channel?.send).toBe("function");
       expect(codes).toEqual([]);
-
-      // Past the door and connected: what arrives first is the payload's own handshake.
-      const line = await new Promise<string>((resolve) => {
-        void gateway.then((peer) => peer.onMessage(resolve));
-      });
-      expect(decode(line)).toEqual({ $proto: VERSION });
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

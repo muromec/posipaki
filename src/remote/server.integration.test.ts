@@ -63,6 +63,9 @@ describe("serveRemoteActor — FIFO integration", () => {
     expect(isProto(decode(protoLine))).toBe(true);
     expect(decode(protoLine).$proto).toBe(VERSION);
     client.removeHandler();
+    // Both ends announce: the payload says what it speaks, and waits for this side to say the same before
+    // it serves anything.  A hand-driven client that stayed silent would sit there until its own timeout.
+    await client.send(encode({ $proto: VERSION }));
 
     await client.send(
       encode({ $init: {
