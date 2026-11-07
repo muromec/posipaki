@@ -90,6 +90,26 @@ describe("the seam over a port", () => {
     expect(segments).toEqual([[{ $chunk: { bytes: 2 } }, Uint8Array.of(4, 5)]]);
     expect(frames).toEqual([]);
   });
+
+  it("gives what arrived before there was a reader to each reader that comes for it", async () => {
+    const { far, spawner } = medium();
+    const wire = await jsonSeam(spawner)(undefined);
+
+    // The far end answers the announcement and gets on with its work in one breath, so both of these
+    // land while the seam has no reader at all.
+    await far.send(line({ $init: { args: {} } }));
+    await far.send(line({ $r: { methods: ["getTree"] } }));
+
+    // Two readers on one connection, subscribing one after the other, the way a store and the serve
+    // that waits for `$init` do.  The second is not late to the connection: nothing has been served yet.
+    const store: Record<string, unknown>[] = [];
+    const serve: Record<string, unknown>[] = [];
+    wire.onMessage((frame) => store.push(frame));
+    wire.onMessage((frame) => serve.push(frame));
+
+    expect(store).toEqual([{ $init: { args: {} } }, { $r: { methods: ["getTree"] } }]);
+    expect(serve).toEqual([{ $init: { args: {} } }, { $r: { methods: ["getTree"] } }]);
+  });
   it("refuses a peer that speaks another protocol, and names both", async () => {
     const { spawner } = medium("frames.v2");
 

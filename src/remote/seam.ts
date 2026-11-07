@@ -36,10 +36,12 @@ export interface JsonSeamOptions {
  * channel does that separating: a subscription per kind would each be handed a share of what the handshake
  * held, and whichever filter did not want it would throw it away.
  *
- * A value nobody is reading yet is kept, one list per kind, and handed over when a reader of that kind
- * arrives.  A connection's readers do not all subscribe at the same instant — the store that follows a chunk
- * is built before the serve that waits for `$init` — so the seam subscribes as it starts a connection rather
- * than when its first frame is wanted.
+ * A value nobody is reading yet is kept, one list per kind.  What arrived before there was anybody to take it
+ * goes to every reader that comes for it, not to the first alone: a connection's readers do not all subscribe
+ * at the same instant — the store that follows a chunk is built before the serve that waits for `$init` — and a
+ * frame that crossed the wire before either existed belongs to neither of them in particular.  The lists end
+ * when a frame is delivered to a reader: from then on the connection is being served, and a reader that comes
+ * later has missed what went before it, the way it would on any live wire.
  */
 export function frameChannel(opened: Channel<Delivered>): FrameChannel {
   const frameReaders = new Set<(frame: Record<string, unknown>) => void>();
@@ -52,24 +54,23 @@ export function frameChannel(opened: Channel<Delivered>): FrameChannel {
 
   const deliver = (value: Delivered): void => {
     if (value.bytes === null) {
-      if (frameReaders.size === 0) heldFrames.push(value.frame);
-      else for (const reader of [...frameReaders]) reader(value.frame);
+      // Nobody is reading yet: the frame waits for whoever comes.  Once somebody is, the connection is being
+      // served, and what predates every reader is finished — a reader arriving after this missed it by
+      // construction, which is what a live connection means.
+      if (frameReaders.size === 0) {
+        heldFrames.push(value.frame);
+        return;
+      }
+      heldFrames.length = 0;
+      for (const reader of [...frameReaders]) reader(value.frame);
       return;
     }
-    if (segmentReaders.size === 0) heldSegments.push([value.frame, value.bytes]);
-    else for (const reader of [...segmentReaders]) reader(value.frame, value.bytes);
-  };
-
-  /** Hand over what arrived before there was anybody to take it. */
-  const drain = (): void => {
-    while (frameReaders.size > 0 && heldFrames.length > 0) {
-      const frame = heldFrames.shift() as Record<string, unknown>;
-      for (const reader of [...frameReaders]) reader(frame);
+    if (segmentReaders.size === 0) {
+      heldSegments.push([value.frame, value.bytes]);
+      return;
     }
-    while (segmentReaders.size > 0 && heldSegments.length > 0) {
-      const [frame, bytes] = heldSegments.shift() as [Record<string, unknown>, Uint8Array];
-      for (const reader of [...segmentReaders]) reader(frame, bytes);
-    }
+    heldSegments.length = 0;
+    for (const reader of [...segmentReaders]) reader(value.frame, value.bytes);
   };
 
   const subscribe = (): void => {
@@ -85,18 +86,20 @@ export function frameChannel(opened: Channel<Delivered>): FrameChannel {
   return {
     send: (frame) => opened.send({ frame, bytes: null }),
     onMessage(handler) {
-      frameReaders.add(handler);
+      // Subscribed before the reader is listed, so what the handshake hands over on the way in is held for
+      // every reader rather than served to whichever of them happened to be first.
       subscribe();
-      drain();
+      frameReaders.add(handler);
+      for (const frame of heldFrames) handler(frame);
       return () => {
         frameReaders.delete(handler);
       };
     },
     sendSegment: (frame, bytes) => opened.send({ frame, bytes }),
     onSegment(handler) {
-      segmentReaders.add(handler);
       subscribe();
-      drain();
+      segmentReaders.add(handler);
+      for (const [frame, bytes] of heldSegments) handler(frame, bytes);
       return () => {
         segmentReaders.delete(handler);
       };
