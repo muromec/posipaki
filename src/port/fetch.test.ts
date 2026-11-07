@@ -67,4 +67,54 @@ describe("fetchPort", () => {
   it("refuses when nothing answers at all", async () => {
     await expect(fetchPort("http://127.0.0.1:1/x")).rejects.toThrow(/fetchPort: .*: /);
   });
+
+  it("takes the caller's method and headers to the request", async () => {
+    const port = await fetchPort(
+      `http://127.0.0.1:${serve({
+        "/echo": (request) => new Response(`${request.method} ${request.headers.get("x-probe")}`),
+      })}/echo`,
+      { init: { method: "POST", headers: { "x-probe": "yes" } } },
+    );
+    const said: string[] = [];
+    port.onFrame((bytes) => said.push(Buffer.from(bytes).toString("utf8")));
+    await new Promise((resolve) => port.onClose(resolve));
+    expect(said.join("")).toBe("POST yes");
+  });
+
+  it("aborts the request when the port is closed, and the far side hears it", async () => {
+    let cancelled: (() => void) | null = null;
+    const heardCancel = new Promise<void>((resolve) => {
+      cancelled = resolve;
+    });
+    const port = await fetchPort(
+      `http://127.0.0.1:${serve({
+        "/forever": () =>
+          new Response(
+            new ReadableStream({
+              start(controller) {
+                controller.enqueue(new TextEncoder().encode("first\n"));
+              },
+              cancel() {
+                cancelled?.();
+              },
+            }),
+          ),
+      })}/forever`,
+    );
+    port.onFrame(() => undefined);
+    await port.close();
+
+    const bounded = await Promise.race([
+      heardCancel.then(() => "cancelled" as const),
+      new Promise<"silent">((resolve) => setTimeout(() => resolve("silent"), 2000)),
+    ]);
+    expect(bounded).toBe("cancelled");
+  });
+
+  it("refuses a head that never arrives, within the bound it was given", async () => {
+    const url = `http://127.0.0.1:${serve({
+      "/slow": () => new Promise<Response>(() => undefined),
+    })}/slow`;
+    await expect(fetchPort(url, { connectMs: 50 })).rejects.toThrow(/answered nothing within 50ms/);
+  });
 });
