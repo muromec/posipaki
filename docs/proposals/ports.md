@@ -521,3 +521,16 @@ The process port, and the two combinators, 2026-11-07:
   two kinds of value apart — a frame and the octets it announced — which this adapter cannot express.
 - The kept frames are not bounded: a bound depends on what the far end may say before anyone listens, which the
   adapter cannot know.
+
+The port actor, 2026-11-07:
+
+- `src/port/actor.ts` — `portActor({name, open, exit, signal?})`: one actor over one channel. In `SEND {data}`
+  writes to the channel and `SIGNAL` reaches the medium through the spec; out `DATA {data}` per frame, and the
+  spec's `exit(reason)` message once, after which the actor ends. The channel is opened in `afterStart` and closed
+  in `beforeEnd`, so one life covers the other.
+- `src/port/node/process.ts` — `BinaryPort` and `Utf8Port`, both `portActor` over `spawnPort`; the second puts
+  `splitChannel` underneath so its frames are lines. Their exit message is `ENDED {code, signal}`, not `EXIT`:
+  posipaki's own `EXIT` is the runtime's message about the actor ending, and two messages of one name on one
+  stream is a trap the harness already paid for.
+- `signal` is not wired in the two process ports yet: `spawnPort`'s channel has no way to reach the process, and
+  stopping them is `close()` — stdin's end, then SIGKILL after the grace.

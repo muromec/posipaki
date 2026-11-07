@@ -8,7 +8,7 @@ import { spawn } from "node:child_process";
 import type { ChildProcess } from "node:child_process";
 import { dirname, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it as vitestIt } from "vitest";
 import { GATEWAY_FAILED, gatewayArgs, gatewayBoot } from "./gateway.js";
 import type { GatewayBoot } from "./gateway.js";
 import { hostVersion } from "./kit.js";
@@ -23,6 +23,15 @@ const HERE = dirname(fileURLToPath(import.meta.url));
 /** The program under test: this file's sibling, under our own extension. */
 const GATEWAY = join(HERE, `gateway-cli${extname(fileURLToPath(import.meta.url)) || ".js"}`);
 const PAYLOAD = join(HERE, "fixtures", "echo-payload.js");
+
+/**
+ * Every test here starts at least one child process.  The bound is the spawn's, not the assertion's: what each
+ * test waits for is one named frame or one exit, and this only decides how long a start may take on a busy box.
+ */
+const STARTS_A_PROCESS = 30_000;
+const it = (name: string, body: () => void | Promise<void>): void => {
+  vitestIt(name, body, STARTS_A_PROCESS);
+};
 const GIVES_UP = join(HERE, "fixtures", "give-up.js");
 const SAYS_ARGV = join(HERE, "fixtures", "argv-payload.js");
 const APP = { name: "test-app", version: "1.2.3" };

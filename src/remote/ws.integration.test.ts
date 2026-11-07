@@ -6,10 +6,10 @@ import { serveRemoteActor } from "./reactor.js";
 import { remoteClient } from "./client.js";
 import { wsServerSpawner, bunServerWebSocket, type BunServerWebSocketLike } from "./spawners/ws-server.js";
 import { wsClientSpawner } from "./spawners/ws-client.js";
-import { errorReason, isError } from "./channel.js";
+import { errorReason, isError, isProto } from "./channel.js";
 import { rootIdFor } from "./process-ref.js";
 import type { WebSocketLike } from "./transports/websocket.js";
-import { makeWaiter, sleep } from "../util.js";
+import { makeWaiter } from "../util.js";
 
 type EchoIn = { type: "PING"; count: number };
 type ProxyIn = EchoIn | { type: "STOP" };
@@ -102,6 +102,7 @@ describe("WebSocket remote actors", () => {
     // it is still serving.
     const echo = makeEcho();
     const serveFailures: unknown[] = [];
+    const served = makeWaiter<void>();
     const server = BunRt.serve({
       port: 0,
       fetch(req, srv) {
@@ -112,9 +113,9 @@ describe("WebSocket remote actors", () => {
         open(ws) {
           const adapter = bunServerWebSocket(ws);
           ws.data = adapter;
-          // A failure to serve at all is the caller's, the way a real listener takes it: what must
-          // not happen is that the same garbage is both a failed start and an unhandled rejection.
-          void serveRemoteActor(echo, wsServerSpawner(adapter)).catch((error: unknown) => {
+          // The serving half reports the process it spawned; that is the trigger this test waits on, rather
+          // than a sleep guessing that `$init` has been handled.
+          void serveRemoteActor(echo, wsServerSpawner(adapter), () => served.resolve()).catch((error: unknown) => {
             serveFailures.push(error);
           });
         },
@@ -143,23 +144,12 @@ describe("WebSocket remote actors", () => {
     });
     await opened.promise;
 
-    // The connection is made in three hops — the protocol, the spawn, and the handler that serves it — and
-    // both ends announce before anything else.  So the line is said until the wire answers it: what this
-    // peer speaks, then `$init` the way any peer makes a connection, and then the line that is not a frame.
-    // It is the line swat sends, in substance: not JSON, ASCII, nothing of anyone's in it.
-    const deadline = Date.now() + 5000;
-    let sent = 0;
-    while (!closed && Date.now() < deadline) {
-      if (sent === 0) {
-        raw.send(JSON.stringify({ $proto: "json.v1" }));
-      } else if (sent === 1) {
-        raw.send(JSON.stringify({ $init: { parentName: "raw", parentIdName: "root" } }));
-      } else {
-        raw.send("not-json-1759080000");
-      }
-      sent += 1;
-      await sleep(5);
-    }
+    // Both ends announce, and each step waits for its own trigger: the `$proto` that answers ours, then the
+    // process the serving half reports.  The line that is not a frame goes once, not in a loop.
+    raw.send(JSON.stringify({ $proto: "json.v1" }));
+    raw.send(JSON.stringify({ $init: { parentName: "raw", parentIdName: "root" } }));
+    await served.promise;
+    raw.send("not-json-1759080000");
     await ended.promise;
 
     // Told before the wire went, on the wire it can still read: a `$proto` first, as every

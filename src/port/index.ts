@@ -15,3 +15,13 @@ export { splitChannel, type Announcement } from "./split.js";
 export { streamChannel, type StreamPair } from "./stream.js";
 export { all, settled, type Ended, type Sourced } from "./combine.js";
 export { held } from "./held.js";
+export {
+  portActor,
+  type DataMessage,
+  type PortActorSpec,
+  type PortIn,
+  type PortOut,
+  type PortPublic,
+  type SendMessage,
+  type SignalMessage,
+} from "./actor.js";

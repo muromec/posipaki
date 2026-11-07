@@ -3,15 +3,29 @@
 // A real `/bin/sh` on the other end: the frames are what it wrote, the exit is what it exited with, and a kill
 // is a signal rather than a code.  Nothing here fakes a process.
 
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
 import type { ProcessExit } from "./spawn.js";
-import { spawnPort, spawnPorts } from "./spawn.js";
+import { spawnPort, spawnPorts, type SpawnPortOptions } from "./spawn.js";
 
 const sh = (script: string): string[] => ["/bin/sh", "-c", script];
 
+/** Every port this file opened, so the floor can close what a case forgot. */
+const opened: Array<{ close(reason?: string): Promise<void> }> = [];
+
+afterEach(async () => {
+  for (const port of opened.splice(0)) await port.close().catch(() => undefined);
+});
+
+/** `spawnPort`, recorded: each test cleans up after itself, and this is the floor under it. */
+async function port(command: string[], options?: SpawnPortOptions) {
+  const spawned = await spawnPort(command, options);
+  opened.push(spawned);
+  return spawned;
+}
 /** Everything a port said, and how it ended. */
 async function drain(port: {
+
   onFrame(handler: (bytes: Uint8Array) => void): unknown;
   onClose(handler: (exit: ProcessExit) => void): unknown;
 }): Promise<{ said: string; exit: ProcessExit }> {
@@ -23,27 +37,27 @@ async function drain(port: {
 
 describe("spawnPort", () => {
   it("carries what the child wrote, and how it ended", async () => {
-    const port = await spawnPort(sh("printf hello; exit 3"));
-    expect(await drain(port)).toEqual({ said: "hello", exit: { code: 3, signal: null } });
+    const used = await port(sh("printf hello; exit 3"));
+    expect(await drain(used)).toEqual({ said: "hello", exit: { code: 3, signal: null } });
   });
 
   it("writes to the child's stdin, and closes its end of it", async () => {
-    const port = await spawnPort(sh("cat"));
-    const said = drain(port);
-    await port.send(Buffer.from("ping\n"));
-    await port.close();
+    const used = await port(sh("cat"));
+    const said = drain(used);
+    await used.send(Buffer.from("ping\n"));
+    await used.close();
     expect(await said).toEqual({ said: "ping\n", exit: { code: 0, signal: null } });
   });
 
   it("discards the child's stderr", async () => {
-    const port = await spawnPort(sh("printf quiet; printf loud 1>&2"));
-    expect((await drain(port)).said).toBe("quiet");
+    const used = await port(sh("printf quiet; printf loud 1>&2"));
+    expect((await drain(used)).said).toBe("quiet");
   });
 
   it("kills a child that outlives its stdin", async () => {
-    const port = await spawnPort(sh("sleep 60"), { killAfterMs: 50 });
-    const ending = drain(port);
-    await port.close();
+    const used = await port(sh("sleep 60"), { killAfterMs: 50 });
+    const ending = drain(used);
+    await used.close();
     expect((await ending).exit.signal).toBe("SIGKILL");
   });
 
