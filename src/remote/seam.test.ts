@@ -56,6 +56,40 @@ describe("the seam over a port", () => {
     expect(heard[heard.length - 1]).toBe(JSON.stringify({ $msg: { body: "hello" } }));
   });
 
+
+  it("hands a frame to every reader, and one leaving is not the others' business", async () => {
+    const { far, spawner } = medium();
+    const wire = await jsonSeam(spawner)(undefined);
+
+    const first: Record<string, unknown>[] = [];
+    const second: Record<string, unknown>[] = [];
+    const stop = wire.onMessage((frame) => first.push(frame));
+    wire.onMessage((frame) => second.push(frame));
+
+    await far.send(line({ $state: { pings: 1 } }));
+    expect(first).toEqual([{ $state: { pings: 1 } }]);
+    expect(second).toEqual([{ $state: { pings: 1 } }]);
+
+    stop();
+    await far.send(line({ $state: { pings: 2 } }));
+    expect(first).toEqual([{ $state: { pings: 1 } }]);
+    expect(second).toEqual([{ $state: { pings: 1 } }, { $state: { pings: 2 } }]);
+  });
+
+  it("keeps a segment for the reader that wants one, however late it subscribes", async () => {
+    const { far, spawner } = medium();
+    const wire = await jsonSeam(spawner)(undefined);
+
+    const frames: Record<string, unknown>[] = [];
+    wire.onMessage((frame) => frames.push(frame));
+    await far.send(line({ $chunk: { bytes: 2 } }));
+    await far.send(Uint8Array.of(4, 5));
+
+    const segments: Array<[Record<string, unknown>, Uint8Array]> = [];
+    wire.onSegment?.((frame, bytes) => segments.push([frame, bytes]));
+    expect(segments).toEqual([[{ $chunk: { bytes: 2 } }, Uint8Array.of(4, 5)]]);
+    expect(frames).toEqual([]);
+  });
   it("refuses a peer that speaks another protocol, and names both", async () => {
     const { spawner } = medium("frames.v2");
 
