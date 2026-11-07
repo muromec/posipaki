@@ -80,11 +80,12 @@ entry point: [Ports](ports.md), `posipaki/port`.
 
 Each rung is a stable interface, usable on its own. You don't climb to the top if you don't want to, and
 the seam never sees a specific medium, protocol or spawner: it sees a `Channel<Frame>` and nothing below it.
-
-**As built at 0.47.0, before the split.** The tree fuses the bottom three rungs: `StringTransport` carries
-lines *and* announced octets, each transport splits its own lines, and every spawner applies `json1Channel`
-and the `$proto` handshake inside itself. So the table above is the target and the *Transport* and
-*Spawners* sections below are the state; [Ports](ports.md) is the proposal that separates them.
+**As built at 0.48.0, after the first half of the split.** The remote composes its connection: `partsOf`
+turns the line transport a listener hands up into the port's parts, and `seamOf`/`jsonSeam` run
+`handshake(json1(...))` over them, so both ends reach the protocol the same way round. `StringTransport` and
+`json1Channel` survive inside the transports, and `Spawner`/`ClientSpawner` still name the frame channel: the
+type change, the listeners returning a channel and `oneConnection` going away are the rest of
+[Ports](ports.md).
 
 ## Protocol
 
@@ -201,10 +202,10 @@ type Spawner = () => Promise<Channel>;          // server side
 type ClientSpawner<Args> = (args: Args) => Promise<Channel>;  // client side
 ```
 
-The spawner owns the `$proto` handshake: the server spawner **sends** `$proto`
-and returns the channel; the client spawner **awaits and validates** `$proto`
-and returns the channel. The seam starts at `$init` and never sees the version
-string.
+The spawner owns the `$proto` handshake, and at 0.48.0 it is symmetric: both ends announce
+and both await the other's word. A spawner composes it from `seamOf(transport)` — a medium
+that frames its own lines — or `jsonSeam(channel)` — raw bytes — and the seam above starts
+at `$init` and never sees the version string.
 
 > **Target, from [Ports](ports.md).** A spawner narrows to its medium: it returns the channel that medium
 > gives — parts or bytes — and stops doing the handshake and the encoding. What the seam receives becomes

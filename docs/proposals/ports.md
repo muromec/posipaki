@@ -1,11 +1,23 @@
 # Ports: a channel, a spawner, an adapter
 
-> **Status:** proposal, 2026-11-07. **Breaking:** `StringTransport` goes, `Spawner` and `Listener` return
-> the channel a medium actually gives, and the seam's framing moves above the spawner. Lands as **0.48.0**
-> on a 0.x line, as a second entry point — `posipaki/port` — beside `posipaki/remote`, and with no
-> dependency between the two beyond the remote's use of it. This document supersedes the *Layers*,
-> *Transport* and *Spawners* sections of [Remote Actors](actor-remote.md); the sixteen frames, the reactor
-> and both wire versions do not change. It is also the channel that [xfetch as a pipe](xfetch-as-a-pipe.md)
+> **Status:** proposal, 2026-11-07; built in part, same day, shipping as **0.48.0**.
+>
+> **Built:** `posipaki/port` — `Channel<F>` and its three endings, the memory pair, the splitter, the byte
+> channel over a stream pair, `json1`, the handshake, and `handshake(json1(split(port)))` under a test. The
+> remote is composed on it: the payload's fifo pair is a byte channel, and the serving half and every client
+> spawner reach the protocol through the same `partsOf` → `json1` → `handshake` chain. Both ends announce,
+> which is a **behaviour change**: a peer that used to only listen now has to say what it speaks, or the
+> handshake it is part of never finishes.
+>
+> **Not built, named as the next slice:** `Spawner` and `ClientSpawner` still name the frame channel — a
+> spawner is a port internally, but its type says `Promise<Channel>`. So `StringTransport` and `json1Channel`
+> survive inside the transports, the listeners still hand up a transport, and the seam composes over one
+> rather than over a port. Moving those three types is the breaking half, and it lands when `Listener`
+> returns a channel and `oneConnection` stops existing.
+>
+> The rest of the plan below stands: the sixteen frames, the reactor and both wire versions do not change,
+> and this document supersedes the *Layers*, *Transport* and *Spawners* sections of
+> [Remote Actors](actor-remote.md). It is also the channel that [xfetch as a pipe](xfetch-as-a-pipe.md)
 > deferred when it said a stream wants one and called it "a different proposal".
 
 ## The problem
@@ -426,3 +438,27 @@ with `fifoClientSpawner`; `fifoArgvSpawner` with `commandSpawner`) and the two m
 listener side cannot handshake yet because it hands up a `StringTransport` and `protocolStep` has no port to
 compose over; that is the next piece, and it is also what removes the line transports from the socket and
 websocket listeners.
+
+Every medium on the port stack, 2026-11-07 (`02ac1e2`):
+
+- `src/remote/seam.ts` gained `partsOf(transport)`: a line transport as `Channel<Part>`, holding a line until
+  the octets it announced arrive, because the transport reports those as two calls and a part is one value.
+  `seamOf(transport)` is the counterpart of `jsonSeam` for a medium that already frames itself, and it installs
+  its reader chain synchronously — a socket can deliver a frame in the same turn the seam is composed.
+- `handshake` gained `ready?: Promise<void>`: the announcement waits for it. A WebSocket exists before it can
+  send, and announcing into a socket that is still connecting is a refusal about the medium, not the protocol.
+- `protocolStep` is a handshake, not a one-sided announcement. `fifoArgvSpawner`, `commandSpawner`,
+  `fifoClientSpawner`, `socketClientSpawner`, `wsClientSpawner` and `wsServerSpawner` all compose the seam.
+
+Two defects this shook out, both of the same family as `d828b7b` — a frame lost in the window between a
+medium being ready and a reader being installed:
+
+- composing the WebSocket seam *after* awaiting the open dropped the far end's `$proto`. Fix: compose first,
+  hold the announcement behind `ready`.
+- `bunServerWebSocket` returned `readyState: ws.readyState`, a snapshot taken at the upgrade, so
+  `WebSocketTransport.send` could refuse for the life of the connection with "not open". Now a getter.
+
+What it cost the tests: a hand-driven peer must announce. `fifo-argv.test.ts`, `server.integration.test.ts`,
+`websocket.test.ts`, `ws.integration.test.ts` and the reactor's fake transport all say `$proto` now, and the
+two ws fakes deliver on a later turn because that is when a socket delivers — not because the library defers
+anything.
