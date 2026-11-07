@@ -59,9 +59,11 @@ export async function makeFifoPair(pair: FifoPair): Promise<void> {
 }
 
 /**
- * Listen on a pair, as the served side: it reads `pair.read` and writes `pair.write`, and it opens the
- * write end first.  That order is the handshake: a stream opened for reading on a fifo nobody writes to is
- * handed an immediate end-of-stream by some runtimes, which closes a connection that never carried a byte.
+ * Listens on a pair as the served side: reads `pair.read`, writes `pair.write`, and opens the write end first.
+ *
+ * The order is required: a read opened on a fifo that has no writer yet is handed an end-of-stream at once by
+ * some runtimes, which ends a connection that never carried a byte.  The connection it accepts carries a line
+ * transport; the reactor composes the frames over it.
  */
 export async function fifoListener<Meta = unknown>(
   pair: FifoPair,

@@ -1,14 +1,12 @@
 /* eslint-disable unicorn/prefer-add-event-listener */
 // ── WebSocket client spawner ────────────────────────────────────────────────────
 //
-// Environment-specific: connects to a `ws://` URL with the WHATWG WebSocket,
-// wraps it in a WebSocketTransport, and returns a frame Channel with the $proto
-// handshake already validated.
+// Connects to a `ws://` URL with the WHATWG WebSocket and returns the seam's frames over it.  The socket must be
+// open before `$proto` can be sent, so the seam is composed first and its announcement waits for the open.
 //
-// How the socket is opened is the caller's.  The second parameter constructs one from a URL, which is
-// what a runtime's own client takes; an opener replaces it with a function of the connection, which is
-// where a header belongs — a token in a URL is a token in every log the URL passes through — and the
-// only place a value that varies per spawn can be attached at all.
+// How the socket is opened is the caller's: the second parameter constructs one from a URL, and an opener
+// replaces that with a function of the connection, which is where a header belongs.  A token in a URL is a token
+// in every log that URL passes through.
 
 import { WebSocketTransport } from "../transports/websocket.js";
 import { seamOf } from "../seam.js";

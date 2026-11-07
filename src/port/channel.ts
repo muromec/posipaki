@@ -1,24 +1,22 @@
-// ── A channel: frames of one type, and the three ways it ends ───────────────
+// ── A channel ───────────────────────────────────────────────────────────────
 //
-// The bottom of a port.  A channel moves frames and knows nothing else: not what a frame means, not what
-// carries it, not whether anything is a process.  Its type parameter is the frame — bytes, a line, a decoded
-// object — so a medium and a protocol differ by what they carry rather than by which interface they implement.
+// Carries values of one type between two ends.  The type parameter is what crosses: bytes, a line and the
+// octets it announced, a decoded frame.  A medium produces one; a protocol adapter wraps one into another.
 //
-// Three endings, and they are not the same fact:
+// It ends one of three ways, and each has its own callback:
 //
-//   close() from here   our doing; the far end hears a close of its own, and we hear nothing
-//   onClose             the far end is gone, with whatever it said
-//   onError             the wire failed; once, and always followed by a close
+//   close()   this side ends it; the far end hears a close, this side's callers hear nothing
+//   onClose   the far end is gone, with the reason it gave
+//   onError   the wire failed; once, and always before onClose
 //
-// `close()` is idempotent and a second one is not news.  A send that cannot be delivered rejects rather than
-// resolving: a channel that swallowed it would be a message nobody can account for.
+// `close()` is idempotent.  `send()` rejects once the channel is over, from either side.
 
 /**
- * A frame of a channel that carries lines.
+ * A line of a channel that carries lines, and the octets it announced.
  *
- * A line may announce octets after it (a stream chunk on the remote seam), so a part is the line and what it
- * announced.  A medium that moves whole messages, like a websocket, produces parts with no octets; a medium
- * that moves bytes produces none until the splitter has run.
+ * A line may announce octets after it, as a stream chunk does on the remote seam, so a part is the line and
+ * what it announced.  A medium that moves whole messages, a websocket for instance, produces parts with no
+ * octets.  A byte medium produces none until the splitter has run.
  */
 export interface Part {
   /** One line, without its terminator. */
@@ -27,7 +25,7 @@ export interface Part {
   bytes: Uint8Array | null;
 }
 
-/** Frames of one type, and the three ways it ends. */
+/** Values of one type, between two ends. */
 export interface Channel<F> {
   /**
    * Put a frame on it.

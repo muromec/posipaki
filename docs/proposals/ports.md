@@ -20,6 +20,31 @@
 > [Remote Actors](actor-remote.md). It is also the channel that [xfetch as a pipe](xfetch-as-a-pipe.md)
 > deferred when it said a stream wants one and called it "a different proposal".
 
+## Terms
+
+The words this document and the code use, each with one meaning.
+
+- **frame** — one value a protocol puts on a connection. For the remote seam it is a plain object with a single
+  `$`-key (`$proto`, `$init`, `$msg`, …), defined in `src/remote/channel.ts`.
+- **channel** — values of one type `F` between two ends, with three endings: `close()` from this side, `onClose`
+  from the far side, `onError` when the transport fails. `src/port/channel.ts`.
+- **part** — one line and the octets that line announced. What a medium that frames its own messages produces,
+  and what the splitter produces from bytes.
+- **medium** — whatever carries the bytes: a fifo pair, a unix socket, a WebSocket, a child's stdio. It opens,
+  closes, and knows nothing about frames.
+- **port** — a channel a medium produced, before any protocol is applied. `src/port`.
+- **protocol** — the encoding of frames as bytes or lines, and their meaning: `json.v1` here.
+- **adapter** — a function from one channel to another of a different frame type: `splitChannel`, `json1`,
+  `handshake`, `frameChannel`.
+- **handshake** — the adapter that is asynchronous: each end sends `$proto`, each waits for the other's, and it
+  resolves to the channel above it.
+- **spawner** — a factory: arguments in, a connection out. On the serving side a spawner opens the medium it was
+  started on (a payload's fifo pair in argv); on the client side it opens one to a far side.
+- **listener** — where connections arrive. `accept()` gives a connection and whatever the medium knows about the
+  peer; `close()` releases the medium.
+- **seam** — this library's name for the remote layer as a whole: `serveRemoteActor` on one side,
+  `remoteClient` on the other, and the frames they exchange.
+
 ## The problem
 
 Three jobs are fused into one interface, and which two are fused differs by medium.
@@ -419,9 +444,9 @@ attempt starts from `4a415b6`, with the reader order settled first.
 The fifo flip, second attempt, 2026-11-07 — done for the payload path:
 
 - **The medium hands up bytes.** `src/remote/spawners/fifo-port.ts` opens the pair and gives a
-  `Channel<Uint8Array>`: `fifoByteChannel(readPath, writePath, "served" | "client")`. Its only knowledge is
-  which end is opened first — the served side blocks on its write, the client on its read — which is the open
-  order the line transport already had, moved down to where the medium is.
+  `Channel<Uint8Array>` through `fifoByteChannel(readPath, writePath, "served" | "client")`.  Its one decision is
+  which end to open first: the served side blocks on its write, the client on its read, as the line transport
+  already did.
 - `src/remote/spawners/fifo-argv.ts` and `fifo-command.ts` now compose `jsonSeam(...)` over that channel and
   build no frame themselves: no `json1Channel`, no `$proto` written by hand.
 - **The reader order was the blocker** (`d828b7b`): what arrived before any reader existed was handed to
@@ -432,33 +457,29 @@ The fifo flip, second attempt, 2026-11-07 — done for the payload path:
   `server.integration.test.ts` sent `$init` without announcing. Both now announce, which is what a symmetric
   handshake costs a hand-driven peer.
 
-What it leaves: `fifoListener` and `fifoClientSpawner` are still the first shape — the served side says
-`$proto` and reads none, the client waits and speaks none. Each pair is consistent within itself (listener
-with `fifoClientSpawner`; `fifoArgvSpawner` with `commandSpawner`) and the two must not be crossed. The
-listener side cannot handshake yet because it hands up a `StringTransport` and `protocolStep` has no port to
-compose over; that is the next piece, and it is also what removes the line transports from the socket and
-websocket listeners.
+Superseded by the next section: at this commit `fifoListener` and `fifoClientSpawner` still spoke with one end
+only — the served side said `$proto` and read none — so a listener paired with `fifoClientSpawner` and nothing
+else.  Every medium announces from both ends now.
 
 Every medium on the port stack, 2026-11-07 (`02ac1e2`):
 
 - `src/remote/seam.ts` gained `partsOf(transport)`: a line transport as `Channel<Part>`, holding a line until
   the octets it announced arrive, because the transport reports those as two calls and a part is one value.
-  `seamOf(transport)` is the counterpart of `jsonSeam` for a medium that already frames itself, and it installs
-  its reader chain synchronously — a socket can deliver a frame in the same turn the seam is composed.
-- `handshake` gained `ready?: Promise<void>`: the announcement waits for it. A WebSocket exists before it can
-  send, and announcing into a socket that is still connecting is a refusal about the medium, not the protocol.
+  `seamOf(transport)` is the counterpart of `jsonSeam` for a medium that already frames itself.  It installs its
+  readers before awaiting anything, because a socket can deliver a frame in the same turn the seam is composed.
+- `handshake` gained `ready?: Promise<void>`, and the announcement waits for it.  A WebSocket needs it: the socket
+  exists before it can send.
 - `protocolStep` is a handshake, not a one-sided announcement. `fifoArgvSpawner`, `commandSpawner`,
   `fifoClientSpawner`, `socketClientSpawner`, `wsClientSpawner` and `wsServerSpawner` all compose the seam.
 
-Two defects this shook out, both of the same family as `d828b7b` — a frame lost in the window between a
-medium being ready and a reader being installed:
+Two defects this shook out, both of the family of `d828b7b`: a frame lost between a medium becoming ready and a
+reader being installed.
 
-- composing the WebSocket seam *after* awaiting the open dropped the far end's `$proto`. Fix: compose first,
-  hold the announcement behind `ready`.
+- composing the WebSocket seam *after* awaiting the open dropped the far end's `$proto`.  Fix: compose first, hold
+  the announcement behind `ready`.
 - `bunServerWebSocket` returned `readyState: ws.readyState`, a snapshot taken at the upgrade, so
-  `WebSocketTransport.send` could refuse for the life of the connection with "not open". Now a getter.
+  `WebSocketTransport.send` could refuse for the life of the connection with "not open".  Now a getter.
 
-What it cost the tests: a hand-driven peer must announce. `fifo-argv.test.ts`, `server.integration.test.ts`,
-`websocket.test.ts`, `ws.integration.test.ts` and the reactor's fake transport all say `$proto` now, and the
-two ws fakes deliver on a later turn because that is when a socket delivers — not because the library defers
-anything.
+What it cost the tests: a hand-driven peer must announce.  `fifo-argv.test.ts`, `server.integration.test.ts`,
+`websocket.test.ts`, `ws.integration.test.ts` and the reactor's fake transport all send `$proto` now.  The two ws
+fakes deliver on a later turn, which is when a socket delivers.

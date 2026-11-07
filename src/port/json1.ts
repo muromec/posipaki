@@ -18,12 +18,10 @@ import type { Channel, Part } from "./channel.js";
 
 const BAD_KEY = "$bad";
 
-/** How much of an unreadable line is carried: enough to see what it was, never enough to be it.
- *  A line that failed to parse is the one line nobody vouched for, so quoting it whole would move
- *  whatever it holds — a credential in a paste accident is how that happens — into every log,
- *  transcript and context window that later reads the frame.  Why, how long, and a short head of
- *  it.  (`reason` carries a little of the line on its own: a JSON parser says where it gave up and
- *  quotes what it was looking at.  That is the parser's business, not a promise this file makes.) */
+/** How much of an unreadable line is carried: enough to see what it was, never enough to be all of it.
+ *  A line that failed to parse is the one line nobody vouched for, so quoting it whole would move whatever it
+ *  holds — a credential pasted by accident — into every log, transcript and context window that reads the
+ *  frame.  `reason` says why; this says how long it was and keeps a short head. */
 export const BAD_PREFIX_LIMIT = 32;
 
 export type BadFrame = {
@@ -88,9 +86,9 @@ export interface Delivered {
 /**
  * Text into frames, and frames back into text.
  *
- * A part is one line and its octets, so a message is decoded into a frame and the octets it arrived with —
- * nothing is remembered between reads and no second callback is needed to pair them.  What the frame means,
- * and whether the octets follow from it, is above this in the protocol that wrote them.
+ * A part is one line and its octets, so a message decodes to a frame and the octets it arrived with: nothing is
+ * remembered between reads, and no second callback pairs them.  What a frame means, and how many octets follow
+ * it, belongs to the protocol above.
  */
 export function json1(parts: Channel<Part>): Channel<Delivered> {
   const readers = new Set<(value: Delivered) => void>();

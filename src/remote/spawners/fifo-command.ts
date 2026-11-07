@@ -1,9 +1,7 @@
 // ── FIFO client spawner (command) ──────────────────────────────────────────
 //
-// Environment-specific: spawns a command, makes the two named fifos it is to serve on, and hands back
-// the frame Channel whose far side is that child.  The pair's own half is fifo.ts's — connect, and wait
-// for the `$proto` — so what is left here is the child, the paths in its argv, and the cleanup.
-
+// The other end of a payload: makes the pair, spawns the command with both paths in its argv, opens this side
+// as bytes, and returns the seam's frames.  Cleaning up the pair when the child exits is what is left here.
 import { spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { tmpdir } from "node:os";

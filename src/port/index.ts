@@ -1,12 +1,14 @@
 // ── posipaki/port ───────────────────────────────────────────────────────────
 //
-// A port is a channel, a spawner that makes one, and adapters that wrap one into another.  This entry is
-// everything below the seam: the channel type, a pair over nothing, a byte channel over a stream pair, the
-// splitter, the encoding that turns a line into a frame, and the handshake.  Still to come — the owner.
+// The layer the remote is built on: a channel of values of one type, a pair of them in memory, a channel of bytes
+// over a stream pair, the splitter that cuts bytes into lines, the encoding of a line as a frame, and the handshake
+// that agrees a protocol.
 //
-// Remotes are built on this: the seam is `handshake(json1(split(port, announced)))`, where `announced` is the
-// seam's own rule for how many octets follow a line — the splitter is handed it rather than knowing it.  Nothing
-// here knows what the seam's frames say; a channel carries whatever its type parameter names.
+// A remote connection composes as `handshake(json1(split(port, announced)))`.  `announced` is the caller's rule
+// for how many octets follow a line, so the splitter does not carry it; nothing here knows what a frame says.
+//
+// Not in this entry: the owner, one actor over a channel.  It is the next piece of work and is described in
+// docs/proposals/ports.md.
 
 export { ChannelClosed, type Channel, type Part } from "./channel.js";
 export { memoryChannelPair, type ChannelPair, type MemoryEnd } from "./memory.js";

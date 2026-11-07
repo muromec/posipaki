@@ -1,16 +1,13 @@
 // ── A channel with no medium ────────────────────────────────────────────────
 //
-// Two ends over nothing: what one sends, the other reads.  It exists so that an adapter, a protocol or a
-// protocol's tests can be written without a socket, a child or a file — and so that a channel's three endings
-// have somewhere to be exercised that is not a fake of one of them.
+// Two ends over nothing: what one sends, the other reads.  For testing an adapter or a protocol without a
+// socket, a child or a file, and for exercising the endings without faking one.
 //
-// No queue and no asynchrony beyond the promise: a frame is handed to the other end before `send` settles.  A
-// medium with a buffer of its own would be a different fake, and a test that needed one would be a test of the
-// buffer.
+// No buffer: a frame reaches the other end before `send` settles.
 
 import { ChannelClosed, type Channel } from "./channel.js";
 
-/** One end of a pair, plus the one thing a medium would do that nothing else can. */
+/** One end of a pair.  `fail` is the hook this double adds: it breaks the wire the way a socket would. */
 export interface MemoryEnd<F> extends Channel<F> {
   /** Break the wire: the far end hears an error, and then a close. */
   fail(error: unknown): void;

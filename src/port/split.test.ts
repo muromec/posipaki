@@ -1,7 +1,7 @@
 // ── the splitter ────────────────────────────────────────────────────────────
 //
-// Bytes in, parts out, over the in-memory pair: no stream, no socket, no child.  Every case here is a rule a
-// medium would otherwise have to implement for itself.
+// Bytes in, parts out, over the in-memory pair.  Each case is a rule every byte medium would otherwise have to
+// implement for itself.
 
 import { describe, expect, it } from "vitest";
 

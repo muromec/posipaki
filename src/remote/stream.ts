@@ -353,8 +353,8 @@ export class RemoteStream implements Stream {
     return this.asReadableStream().tee();
   }
 
-  /** One consumer, whichever door it comes through: where the runtime has a platform stream this
-   *  path goes through it, so the lock and the queue are the platform's and not two of ours. */
+  /** One consumer, however it reads: where the runtime has a platform stream this path goes through it, so
+   *  the lock and the queue are the platform's and not two of ours. */
   async *[Symbol.asyncIterator](): AsyncIterator<Uint8Array> {
     if (typeof globalThis.ReadableStream !== "function") {
       for (;;) {

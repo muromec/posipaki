@@ -1,15 +1,13 @@
 // ── the seam over a port ────────────────────────────────────────────────────
 //
-// A spawner from the port layer hands up a raw channel: octets for a stdio pair, parts for a medium that
-// frames its own lines.  The seam's frames sit four steps above that — split, decode, agree, and the reader
-// shape — and this file is those steps in one place, so a spawner says only what medium it is.
+// Composes a medium's channel into the seam's frames: split bytes into lines, decode `json.v1`, agree on the
+// protocol, and bridge the result onto `FrameChannel`.  A spawner supplies the channel underneath: bytes, or parts
+// where its medium already frames its own lines.
 //
-// The last step belongs to the seam: `Channel<F>` gives each reader its own unsubscribe and tells a close
-// why; `FrameChannel` returns the unsubscribe from `onMessage` and says nothing on `onClose`.  Both ends of
-// that difference are published, so it is bridged here rather than changed on either side.
-//
-// `Channel` also has an error of its own, and `FrameChannel` has none: a wire that fails is heard here as the
-// close that always follows it, which is what the seam has always heard.
+// The bridge is here because the two channel types differ.  `Channel<F>` returns an unsubscribe from every
+// subscription, gives a reason on close, and has an error of its own; `FrameChannel` returns one from
+// `onMessage` only, says nothing on `onClose`, and has no error, so a failed wire reaches its reader as the
+// close that follows it.
 
 import type { Announcement, Channel, Delivered, Part } from "../port/index.js";
 import { handshake, json1, readFrame, splitChannel } from "../port/index.js";
@@ -34,17 +32,15 @@ export interface JsonSeamOptions {
 /**
  * A port's channel, read as the seam's frames.
  *
- * A frame and the octets it announced are one value above the protocol and two facts below it; this is where
- * they separate again, because `FrameChannel` keeps them on two subscriptions.  One reader on the opened
- * channel does that separating: a subscription per kind would each be handed a share of what the handshake
- * held, and whichever filter did not want it would throw it away.
+ * `Channel<Delivered>` carries a frame and the octets it announced as one value; `FrameChannel` reports them on
+ * two subscriptions, so this function splits them.  It is one reader on the opened channel rather than one per
+ * kind: the handshake gives a held value to the first subscriber, and a subscription per kind would drop
+ * whichever half that subscriber did not want.
  *
- * A value nobody is reading yet is kept, one list per kind.  What arrived before there was anybody to take it
- * goes to every reader that comes for it, not to the first alone: a connection's readers do not all subscribe
- * at the same instant — the store that follows a chunk is built before the serve that waits for `$init` — and a
- * frame that crossed the wire before either existed belongs to neither of them in particular.  The lists end
- * when a frame is delivered to a reader: from then on the connection is being served, and a reader that comes
- * later has missed what went before it, the way it would on any live wire.
+ * A frame that arrives while nobody is subscribed is kept, one list per kind.  Every reader that subscribes
+ * before the first frame is delivered gets those, not just the first to ask; after that a reader gets only what
+ * arrives while it is subscribed.  The readers are not installed at the same moment — the stream store is
+ * built before the serve that waits for `$init` — which is why the lists exist at all.
  */
 export function frameChannel(opened: Channel<Delivered>): FrameChannel {
   const frameReaders = new Set<(frame: Record<string, unknown>) => void>();
@@ -57,9 +53,8 @@ export function frameChannel(opened: Channel<Delivered>): FrameChannel {
 
   const deliver = (value: Delivered): void => {
     if (value.bytes === null) {
-      // Nobody is reading yet: the frame waits for whoever comes.  Once somebody is, the connection is being
-      // served, and what predates every reader is finished — a reader arriving after this missed it by
-      // construction, which is what a live connection means.
+      // No reader yet, so the frame is held.  Held frames are given to every reader that subscribes before the
+      // first frame is delivered; after that a reader gets only what arrives while it is subscribed.
       if (frameReaders.size === 0) {
         heldFrames.push(value.frame);
         return;
@@ -119,6 +114,7 @@ export function frameChannel(opened: Channel<Delivered>): FrameChannel {
   };
 }
 
+/** Parts to the seam's frames: decode, agree, and bridge. */
 async function overParts(parts: Channel<Part>, options: JsonSeamOptions): Promise<FrameChannel> {
   const agreed = await handshake(json1(parts), {
     version: VERSION,
@@ -129,9 +125,10 @@ async function overParts(parts: Channel<Part>, options: JsonSeamOptions): Promis
 }
 
 /**
- * The spawner says only how to open its medium.  Splitting, decoding and agreeing are the same work for all
- * of them, and a caller that wired them itself would be wiring three adapters where the medium was the only
- * thing that differed.
+ * A spawner whose channel carries bytes, as one that hands back the seam's frames.
+ *
+ * It inserts `splitChannel`, then decodes, agrees and bridges.  Nothing above the medium depends on which
+ * medium it is, so a spawner says how to open one and this does the rest.
  */
 export function jsonSeam<Args = unknown>(
   spawner: (args: Args) => Promise<Channel<Uint8Array>>,
@@ -140,7 +137,7 @@ export function jsonSeam<Args = unknown>(
   return async (args) => overParts(splitChannel(await spawner(args), seamAnnounced), options);
 }
 
-/** A spawner that already hands up parts: a medium that frames its own lines and splits nothing. */
+/** The same for a spawner whose medium already frames whole lines, where no splitter is inserted. */
 export function jsonSeamParts<Args = unknown>(
   spawner: (args: Args) => Promise<Channel<Part>>,
   options: JsonSeamOptions = {},
@@ -149,15 +146,14 @@ export function jsonSeamParts<Args = unknown>(
 }
 
 /**
- * A line transport, as the port a seam composes over.
+ * A line transport as the port the seam composes over.
  *
- * A medium that frames its own messages — a websocket message, a line on a socket — hands up lines, and a
- * line that announces octets is one part in two halves: this side answers with how many octets follow, and
- * the transport then hands those over as bytes.  A part is that line and those octets, so they are held here
- * for the moment between the two.
+ * A medium that frames its own messages — a websocket message, a line on a socket — hands up lines.  A line that
+ * announces octets arrives in two calls: this side answers with how many octets follow and the transport hands
+ * them over as bytes.  A part is the line and those octets, so the line is held until its octets arrive.
  *
- * This is the adapter that lets the listeners keep their transports while the seam above them is a port:
- * `handshake(json1(partsOf(transport)))` is the whole of what a serving half does with a transport now.
+ * It is what lets a listener keep its transport while the seam above it is a port:
+ * `handshake(json1(partsOf(transport)))`.
  */
 export function partsOf(transport: StringTransport, announced: Announcement = seamAnnounced): Channel<Part> {
   const readers = new Set<(part: Part) => void>();
@@ -220,19 +216,18 @@ export function partsOf(transport: StringTransport, announced: Announcement = se
 }
 
 /**
- * A connection a medium has already framed, as the seam's frames: the counterpart of `jsonSeam` for a
- * transport rather than a port.
+ * A transport as the seam's frames: the transport counterpart of `jsonSeam`.
  *
- * A line transport hands up lines, which `partsOf` turns into the port's parts; the splitter, the encoding and
- * the agreement are then the same work a raw medium's channel would have gone through.  Both ends announce, so
- * a serving half and its client reach the protocol the same way round.
+ * `partsOf` turns the lines into parts, then the encoding and the agreement run as they do for any port.  The
+ * readers are installed synchronously, before this function awaits anything, because a medium can deliver a
+ * frame in the same turn it is handed over.
+ *
+ * `ready` holds the `$proto` announcement until the medium can carry it; see `JsonSeamOptions`.
  */
 export async function seamOf(
   transport: StringTransport,
   options: JsonSeamOptions = {},
 ): Promise<FrameChannel> {
-  // The reader chain is installed here, synchronously, before anything is awaited: a medium that delivers a
-  // frame in the same turn this is called — a socket can — must not find nobody listening.
   const delivered = json1(partsOf(transport));
   return frameChannel(
     await handshake(delivered, {

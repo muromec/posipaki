@@ -262,11 +262,11 @@ export function oneConnection<Meta = unknown>(
 }
 
 /**
- * The protocol step: a transport becomes the seam's frames.
+ * A transport as the seam's frames.
  *
- * The medium hands up lines, `partsOf` makes them the port's parts, and the seam above composes the splitter's
- * work, the encoding and the agreement.  Both ends announce, so a client that used to only listen now has to
- * say what it speaks — which is the price of one handshake instead of two shapes of it.
+ * `partsOf` splits the lines into the port's parts, and `seamOf` runs the encoding and the `$proto` agreement
+ * over them.  Both ends send `$proto` and wait for the other's.  A peer that only read the announcement no
+ * longer completes a connection.
  */
 async function protocolStep(
   transport: StringTransport,

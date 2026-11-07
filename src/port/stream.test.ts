@@ -1,8 +1,7 @@
 // ── a stream pair ───────────────────────────────────────────────────────────
 //
-// Two `PassThrough`s and nothing else: no child, no socket, no file.  What is exercised here is the part a
-// medium cannot fake — which of the three endings a reader of this side is told about, and when a send counts
-// as done.
+// Two `PassThrough`s, with no child, socket or file.  What only a real stream can show is the subject: which of
+// the three endings this side's readers hear, and when a send counts as done.
 
 import { PassThrough } from "node:stream";
 

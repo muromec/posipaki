@@ -1,13 +1,12 @@
 // ── the fifo pair as a channel of bytes ────────────────────────────────────
 //
-// Two named pipes and nothing above them.  A medium knows how to carry octets and in which order to open
-// them; what those octets mean — a line, a frame, which protocol — is composed on top by the seam, so this
-// file has no frame in it at all.
+// Opens a pair of named pipes and hands back a channel of raw octets.  Nothing here decodes a line or knows a
+// frame type: the seam composes those above it.
 //
-// The open order is the medium's one piece of knowledge.  A read opened on a fifo nobody writes to yet is
-// handed an immediate end-of-stream by some runtimes, which ends a connection that never carried a byte:
-// the served side therefore opens its write end first, and the client its read end, exactly as the line
-// transport does.
+// The open order is the one thing this file has to get right.  A read opened on a fifo that has no writer yet is
+// handed an immediate end-of-stream by some runtimes, and that ends a connection which never carried a byte.
+// The served side therefore opens its write end first, and the client its read end.
+// `FifoUtf8NlineTransport` does the same.
 
 import { open } from "node:fs/promises";
 
@@ -17,10 +16,10 @@ import { streamChannel, type Channel } from "../../port/index.js";
 export type FifoOpenOrder = "served" | "client";
 
 /**
- * A pair as bytes.
+ * A pair as a channel of bytes.
  *
- * `readPath` is where this side reads and `writePath` where it writes; the client's swap of the two is the
- * caller's, since which of the pair it reads is the pair's own definition.
+ * `readPath` is read here and `writePath` is written here — the pair as this side sees it, so the client
+ * passes them swapped.  `order` decides which open is waited for first.
  */
 export async function fifoByteChannel(
   readPath: string,

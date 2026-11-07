@@ -1,8 +1,8 @@
 // ── the handshake ───────────────────────────────────────────────────────────
 //
-// Two memory channels, one of them talking by hand: what is exercised is the agreement, not a medium.  The
-// cases are the four ways it can fail — silence, a wrong protocol, a peer that talks out of turn, a peer that
-// leaves — and the one thing that must survive a fast peer: a frame sent before anyone was reading.
+// Two memory channels, one of them driven by hand, so the cases are the agreement itself rather than a medium.
+// They cover each way it can fail: silence, another protocol, a peer that talks before announcing, and a peer
+// that leaves.  One more covers a frame sent before anyone was reading.
 
 import { describe, expect, it } from "vitest";
 

@@ -1,20 +1,16 @@
 // ── json1 wire protocol ────────────────────────────────────────────────────
 //
-// One JSON object per frame: `{"$key": value}`. encode/decode turn a decoded
-// frame object into a string and back. json1Channel wraps a StringTransport so
-// it moves frame objects instead of strings.
+// One JSON object per frame: `{"$key": value}`.  `encode` and `decode` turn a decoded frame object into a string
+// and back.  `json1Channel` wraps a `StringTransport` so it moves frame objects instead of strings; the stdio and
+// gateway wires still use it, while the remote seam composes `json1` over a port.
 //
-// This is the boundary where the wire's bytes become a frame, and it is the one
-// place a bad peer can throw into a callback that belongs to nobody but the host:
-// the handler runs where the transport called it — a socket's `message` event, a
-// line reader — so a `SyntaxError` here is an uncaught exception and takes the
-// process down.  So a line that will not parse is not thrown at the caller: it
-// becomes the frame that says so (`$bad`, channel.ts) and travels inward like any
-// other, where the connection it came from can answer for it.
+// A line that will not parse must not throw.  The handler runs where the transport called it, a socket's
+// `message` event or a line reader, so a `SyntaxError` here is an uncaught exception that takes the process down
+// with every other connection in it.  Such a line becomes the frame that says so (`$bad`, channel.ts) and
+// travels inward, where the connection it came from can answer for it.
 //
-// One frame is one JSON *object*: a line that parses to a number, a string, an
-// array or `null` is not a frame either, and reading one as a frame (`"$init" in 7`)
-// throws just as surely as a line that never parsed.
+// One frame is one JSON *object*.  A line that parses to a number, a string, an array or `null` is not a frame
+// either, and `"$init" in 7` throws as surely as a line that never parsed.
 
 import { badFrame, type Channel, type StringTransport } from "../channel.js";
 import { encode, readFrame } from "../../port/json1.js";

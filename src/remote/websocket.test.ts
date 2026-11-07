@@ -1,8 +1,7 @@
 // ── the websocket listener: an HTTP server's upgrades ───────────────────────
 //
-// A fake server that reports an upgrade when the test says one arrived, and a fake socket for each.
-// What is under test is the accept loop, admission and refusal; the handshake is the WebSocket
-// implementation's step, so here it is the test's own hook.
+// A fake server that reports an upgrade when the test says one arrived, and a fake socket for each.  The subject
+// is the accept loop, admission and refusal; the `$proto` agreement above it belongs to the seam.
 
 import type { IncomingMessage } from "node:http";
 import type { Duplex } from "node:stream";

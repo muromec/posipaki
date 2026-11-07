@@ -1,13 +1,10 @@
-// ── FIFO server spawner (argv) ─────────────────────────────────────────────
+// ── FIFO payload spawner, from argv ───────────────────────────────────────
 //
-// Environment-specific: reads what the caller put in argv — the two named fifos, and the host
-// version this artifact is being started for — checks that it *is* that build, connects, and
-// returns a frame Channel with the $proto handshake already sent.
+// The serving side of a payload someone else started: the two fifo paths and the host version arrive in argv.
+// It checks the version, opens the pair as bytes, and lets the seam compose the frames over it.
 //
-// The check comes first, before anything is opened: a payload that is not the build that was
-// asked for has no business on a wire, and saying so before it connects is the only moment
-// where the reason is still readable to the caller.
-
+// The check runs before anything is opened, because the reason is readable to the caller only while the
+// payload has not connected yet.
 import { jsonSeam } from "../seam.js";
 import { fifoByteChannel } from "./fifo-port.js";
 import type { Channel } from "../channel.js";

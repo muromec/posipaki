@@ -1,15 +1,13 @@
 // ── a stream pair as a channel of bytes ────────────────────────────────
 //
-// The medium every way into another process can carry, and the smallest thing that can be said about it:
-// chunks out as they arrive, chunks in as they are asked for, and an ending.  Framing, splitting and the
-// meaning of a frame all sit above this.
+// Chunks out as they arrive, chunks in as they are written, and an ending.  Framing, splitting and the meaning
+// of a frame compose on top of this.
 //
-// A send settles when the stream has flushed the chunk, not when it has accepted it into a buffer.  That is
-// the same promise the line transport makes, and it is what makes the write side of this channel resistive
-// to a consumer that writes faster than the pipe drains.
+// A send settles when the stream has flushed the chunk, not when it has accepted it into a buffer, so a writer
+// cannot run ahead of the pipe without waiting.
 //
-// The three endings are the channel's own, and this file is where two of them are discovered rather than
-// declared: the read side ending is a peer that closed, and a broken stream is a wire that failed.
+// Two of the three endings are discovered here rather than declared: a read side that ends is a peer that
+// closed, and a broken stream is a wire that failed.
 
 import type { Readable, Writable } from "node:stream";
 

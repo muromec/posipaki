@@ -42,6 +42,7 @@ import {
 import { CallSide, answerCall } from "./call-side.js";
 import { StreamStore, type StreamStoreOptions } from "./stream.js";
 
+/** How the serving side gets its connection: a factory that opens a medium and returns the frames over it. */
 export type Spawner = () => Promise<Channel>;
 
 /** The process a definition's spawn gives back: what a caller reports when it serves one. */

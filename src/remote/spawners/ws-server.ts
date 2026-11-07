@@ -1,8 +1,7 @@
 // ── WebSocket server spawner ────────────────────────────────────────────────────
 //
 // Environment-specific: serves an already-upgraded WebSocket connection.  The consumer's HTTP server does the
-// upgrade and hands us the socket; we wrap it in a WebSocketTransport and compose the seam over it, so both
-// ends reach the protocol the same way round.
+// upgrade and hands us the socket; we wrap it in a WebSocketTransport and compose the seam over it.
 
 import { WebSocketTransport, type WebSocketLike } from "../transports/websocket.js";
 import { seamOf } from "../seam.js";

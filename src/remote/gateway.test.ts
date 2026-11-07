@@ -138,7 +138,7 @@ describe("gateway boot", () => {
     expect(() => gatewayBoot(["--host-version=x"])).toThrow(/no <payload>/);
   });
 
-  it("has no door of its own: a `--version` is just an argument the payload ends up with", () => {
+  it("has no version flag of its own: a `--version` is just an argument the payload ends up with", () => {
     expect(gatewayBoot(["w", "--version"])).toEqual({ passthrough: ["--version"], worker: "w" });
   });
 });

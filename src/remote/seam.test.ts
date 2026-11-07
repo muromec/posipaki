@@ -1,7 +1,7 @@
 // ── the seam over a port ────────────────────────────────────────────────────
 //
-// The medium here is two memory channels with one end driven by hand: what is exercised is the composition —
-// split, decode, agree, and the reader shape the seam speaks — not a fifo, a socket or a child.
+// Two memory channels, one end driven by hand.  The subject is the composition: split, decode, agree, and the
+// reader shape the seam speaks, with no fifo, socket or child involved.
 
 import { describe, expect, it } from "vitest";
 

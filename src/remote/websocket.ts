@@ -12,7 +12,7 @@ import type { Duplex } from "node:stream";
 import type { Connection, Listener } from "./reactor.js";
 import { WebSocketTransport, type WebSocketLike } from "./transports/websocket.js";
 
-/** What the far side is told when admission refuses it: not this door, and no handshake happened. */
+/** What the far side is told when admission refuses it: the listener refused, and no handshake happened. */
 const REFUSED = "HTTP/1.1 401 Unauthorized\r\nconnection: close\r\n\r\n";
 
 /** A server that reports an upgrade before answering it: node's `http`/`https` server. */

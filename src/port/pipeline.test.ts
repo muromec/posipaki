@@ -1,8 +1,7 @@
 // ── the whole composition ───────────────────────────────────────────────────
 //
-// `handshake(json1(split(bytes)))`, on both ends of one pair of streams.  This is the file that says the four
-// pieces fit together: everything below the seam is exercised by the seam's own two frames, and nothing here
-// knows what a `$chunk` means beyond it being a frame with octets after it.
+// `handshake(json1(split(bytes)))` on both ends of one pair of streams.  It is the test that the four pieces fit
+// together: the frames are the seam's own, and `$chunk` is only a frame with octets after it.
 
 import { PassThrough, Writable } from "node:stream";
 

@@ -45,6 +45,7 @@ import {
 import { CallSide, answerCall } from "./call-side.js";
 import { StreamStore } from "./stream.js";
 
+/** The same from the client end, with the arguments the spawn was called with. */
 export type ClientSpawner<Args> = (args: Args) => Promise<Channel>;
 
 /** What the proxy knows about itself when its connection is handed over: enough to name itself. */

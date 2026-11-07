@@ -1,16 +1,16 @@
 // ── bytes into parts: the splitter ──────────────────────────────────────────
 //
-// The adapter every byte medium needs, and the one rule that does not change between a stdio pair, a socket
-// and an HTTP body: a stream of bytes is cut on 0x0a, and what comes between two cuts is a line.
+// Cuts a stream of bytes on 0x0a; what lies between two cuts is a line.  Every byte medium does this: a stdio pair,
+// a socket, an HTTP body.
+
+// Splitting on the byte is safe for UTF-8: a continuation byte is never 0x0a, so a character cannot be cut in
+// half.  A character that straddles two chunks waits in the buffer until the rest arrives.
 //
-// Splitting on the byte is safe for UTF-8 — a continuation byte is never 0x0a — so a character that straddles
-// two chunks costs nothing but the buffer carrying it until the rest arrives.  The decode is the other
-// direction of the same worry: what a caller reads is text, and a StringDecoder is what makes half a
-// character wait rather than become two replacement marks.
+// Text is decoded by a StringDecoder for the same reason: half a character waits rather than becoming two
+// replacement marks.
 //
-// A line may announce octets after it.  That is not this file's vocabulary — the generic splitter announces
-// nothing — so the rule travels in as a question: given a line, how many raw octets follow it?  The seam
-// answers with `$chunk`, a protocol with something else, and a medium with no such thing answers none.
+// A line may announce octets after it.  The splitter does not know that rule, so it is passed in: given a line,
+// how many raw octets follow it?  The seam answers with `$chunk`; a medium with no such thing answers none.
 
 import { StringDecoder } from "node:string_decoder";
 

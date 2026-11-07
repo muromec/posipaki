@@ -4,7 +4,7 @@
 // Bun globals.  The node/bun-only pieces (FIFO transport + subprocess glue)
 // live in ./node.js.
 
-// seam
+// the two ends: serve one actor over a connection, or hold a proxy for one
 export { serveRemoteActor } from "./reactor.js";
 export { makeSender } from "./sender.js";
 export type { Init, Served, Spawner, ServedProcess } from "./server.js";

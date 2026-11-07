@@ -1,8 +1,7 @@
 // ── json.v1 ─────────────────────────────────────────────────────────────────
 //
-// A line is one JSON object, and a line that is not one is a frame that says so.  Over the memory pair: the
-// encoding has no medium of its own, and the failure it exists to prevent is a throw inside a transport's
-// callback, which a stream fake would not make any more real.
+// A line carries one JSON object; a line that is not one becomes a frame that says so, not a throw inside a
+// transport's callback.  Exercised over the memory pair: the encoding has no medium of its own.
 
 import { describe, expect, it } from "vitest";
 

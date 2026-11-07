@@ -1,4 +1,4 @@
-// ── The payload's door: what it is asked for, and what it is ────────────────
+// ── The payload start: what it is asked for, and what it is ──────────────────
 //
 // The check is a decision taken before anything is opened, so the test takes it where it is
 // taken: argv in, exit code and reason out, with no fifo, no wire and no second process.  What
@@ -66,7 +66,7 @@ async function serve(own: string | undefined, args: string[]): Promise<Ending & 
   }
 }
 
-describe("the payload's door", () => {
+describe("the payload start", () => {
   it("refuses another build, before it opens anything", async () => {
     // The fifos are nonsense on purpose: a payload that checked its version *after*
     // connecting would fail on them instead, and say the wrong thing.

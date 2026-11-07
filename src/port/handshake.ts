@@ -1,18 +1,16 @@
 // ── the handshake: which protocol this connection speaks ────────────────────
 //
-// One frame each way, before anything else: `{"$proto":"json.v1"}`.  A connection that skipped it would be a
-// connection whose words are guessed at, so both ends say what they speak and read what the other says.
+// The first frame on a connection, each way: `{"$proto":"json.v1"}`.  Each end sends its own and waits for the
+// other's; nothing else may cross before the two agree.
 //
-// This is the one adapter that is asynchronous.  Every other adapter can wrap a channel and hand the wrapper
-// back at once, because it only reshapes frames as they pass; the handshake cannot, because its answer — "the
-// peer speaks what we speak" — is the thing the caller needs before it starts talking.  So it resolves to the
-// channel rather than returning one, and a peer that is silent, wrong or gone is a rejection rather than a
-// channel that fails quietly on its first frame.
+// It is the only adapter here that is asynchronous, because its result — the peer speaks what we speak — has
+// to be known before a caller can use the connection.  So it returns a promise, and a peer that stays silent,
+// speaks another version, or goes away rejects with a sentence rather than returning a channel that fails on
+// its first frame.
 //
-// A frame that arrives before the handshake is answered is the far end talking out of turn: the peer's own
-// output, on a medium where its prints share the wire.  The caller may claim those (`onEarly`) and carry them
-// somewhere; a frame nobody claims is a refusal, because a peer that says something else first is a peer
-// speaking something other than this protocol.
+// A frame that arrives before the agreement is the far end talking out of turn.  On a medium where the peer's
+// own output shares the wire that is its stdout, which `onEarly` may claim.  Unclaimed, it refuses the
+// handshake: the first thing a peer says has to be its protocol.
 
 import type { Channel } from "./channel.js";
 import type { Delivered } from "./json1.js";
@@ -47,13 +45,12 @@ export interface HandshakeOptions {
   version: string;
   /** How long to wait for the peer's announcement.  Defaults to {@link HANDSHAKE_TIMEOUT_MS}. */
   timeoutMs?: number;
-  /** A frame that arrived before the announcement, for a caller that knows what it is.  Returning nothing
-   *  leaves the handshake waiting; not setting this at all makes such a frame a refusal. */
-  /** A promise that settles when the medium can carry a frame: nothing is announced before it.  A WebSocket
-   *  is the case — the socket exists before it can send, and an announcement written into a socket that is
-   *  still opening is a refusal about the medium rather than about the protocol. */
-  ready?: Promise<void>;
+  /** A frame that arrives before the announcement.  Claim it here and the handshake keeps waiting; leave this
+   *  unset and such a frame refuses the connection. */
   onEarly?(value: Delivered): void;
+  /** Settles when the medium can carry a frame.  Nothing is announced before it.  Unset leaves it announcing
+   *  at once.  A WebSocket needs it: the socket exists before it can send. */
+  ready?: Promise<void>;
 }
 
 function head(frame: Record<string, unknown>): string {
@@ -62,10 +59,11 @@ function head(frame: Record<string, unknown>): string {
 }
 
 /**
- * Announce this side's protocol, read the peer's, and resolve to the channel above the handshake.
+ * Announces this side's protocol, reads the peer's, and resolves to the channel above the handshake.
  *
- * Frames that arrive after the announcement and before anyone is reading are held and handed to the first
- * reader: the far end may answer the announcement and get on with its work in one turn.
+ * It rejects instead when the peer stays silent for `timeoutMs`, speaks another version, says something other
+ * than its protocol first, or goes away.  A frame that arrives after the agreement and before anyone subscribes
+ * is held for the first reader.
  */
 export function handshake(
   inner: Channel<Delivered>,
@@ -74,7 +72,7 @@ export function handshake(
   const readers = new Set<(value: Delivered) => void>();
   const closers = new Set<(reason: string) => void>();
   const failers = new Set<(error: unknown) => void>();
-  /** Frames that arrived after the announcement with no reader to take them yet. */
+  /** Frames that arrived with no reader to take them yet. */
   let held: Delivered[] = [];
   let agreed = false;
   let reported: string | null = null;
@@ -97,7 +95,7 @@ export function handshake(
   }, options.timeoutMs ?? HANDSHAKE_TIMEOUT_MS);
   timer.unref?.();
 
-  /** End the handshake here: the caller hears why, and the frames above it are not this side's to deliver. */
+  /** Refuses the handshake: the caller hears why, and nothing above it is delivered. */
   function refuse(reason: string): void {
     if (agreed || refused !== null) return;
     refused = reason;
@@ -109,8 +107,7 @@ export function handshake(
     send: (value) => inner.send(value),
     onFrame: (handler) => {
       readers.add(handler);
-      // The far end may have answered and carried on before anyone was reading.  Those frames belong to the
-      // first reader, which is the seam: there is one connection here and one conversation on it.
+      // Held frames go to the first subscriber and are then gone: one conversation runs on this channel.
       if (held.length > 0) {
         const queued = held;
         held = [];

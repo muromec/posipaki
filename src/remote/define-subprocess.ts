@@ -1,9 +1,8 @@
 // ── defineSubprocessActor ───────────────────────────────────────────────────
 //
-// Environment-specific glue: wraps an actor definition so that spawning it runs
-// it in a subprocess over two named fifos. It does the guesswork — argv marker
-// detection and runner auto-detection — and prepares the client spawner. This
-// is the only place in the subprocess path that imports transports/protocols.
+// Runs an actor definition in a subprocess over a pair of named fifos.  It detects the argv marker that says this
+// process is a payload, prepares the client spawner a start needs, and serves the actor when this process is the
+// payload someone else started.
 
 import { fileURLToPath } from "node:url";
 import { createHash } from "node:crypto";

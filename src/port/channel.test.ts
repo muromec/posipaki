@@ -1,7 +1,7 @@
-// ── a channel, and the three ways it ends ───────────────────────────────────
+// ── a channel ───────────────────────────────────────────────────────────────
 //
-// The contract every medium, adapter and protocol is written against, exercised over the in-memory pair so
-// that a failure here names the contract rather than a socket or a child.
+// The contract every medium, adapter and protocol is written against.  Exercised over the in-memory pair, so a
+// failure names the contract rather than a socket or a child.
 
 import { describe, expect, it } from "vitest";
 
