@@ -3,12 +3,13 @@
 > **Status:** proposal, 2026-11-07; built in part, same day, shipping as **0.48.0**.
 >
 > **Built:** `posipaki/port` — `Channel<F, C>` with its three endings, the memory pair, the splitter, the byte
-> channel over a stream pair, and the two combinators `all` and `settled`. `C` is what the far end says when it
-> closes: a sentence for a medium, an exit status for a process. Nothing in this entry knows a protocol.
+> channel over a stream pair, the combinators `all` and `settled`, `held`, and `portActor` — one actor over one
+> channel, whose ending lands in `state.end` rather than in a message. `C` is what the far end says when it closes:
+> a sentence for a medium, an exit for a process. Nothing in this entry knows a protocol.
 >
-> `posipaki/port/node` — `spawnPort(command)` and `spawnPorts(command)`: a spawned command as a channel of bytes,
-> stdin out and its exit on close; the second gives its stderr as a channel of its own. The child's stderr is
-> discarded by default, because it is a stream the child writes while running and not a fact about how it ended.
+> `posipaki/port/node` — `spawnPort(command)` and `spawnPorts(command)`, a spawned command as a channel of bytes
+> otherwise), and the two pre-built actors `BinaryPort` and `Utf8Port` over them.
+>
 >
 > json.v1 and the handshake are adapters only this library's remote uses, so they live with it:
 > `src/remote/protocols/json1.ts` and `src/remote/handshake.ts`, composed in `src/remote/seam.ts` as
@@ -97,16 +98,16 @@ rule.
 Three types, and every medium, protocol and port becomes a composition of them.
 
 ```ts
-/** Frames of one type, and the three ways it ends. */
-export interface Channel<F> {
+/** Values of one type, between two ends.  `C` is what the far end says when it closes. */
+export interface Channel<F, C = string> {
   send(frame: F): Promise<void>;
   /** A frame arrived.  The returned function stops this reader and no one else. */
   onFrame(handler: (frame: F) => void): () => void;
-  /** The far side closed, with whatever it said.  Once, after any frames already read. */
-  onClose(handler: (reason: string) => void): void;
-  /** The wire failed.  Once, and always followed by a close. */
-  onError(handler: (error: unknown) => void): void;
-  /** Close it from this side.  Idempotent; the far side hears a close of its own. */
+  /** The far side closed, and this is what it said.  Once, after any frames already read. */
+  onClose(handler: (reason: C) => void): () => void;
+  /** The wire failed.  Once, and always before the close. */
+  onError(handler: (error: unknown) => void): () => void;
+  /** Close it from this side.  Idempotent; the reason is ours, so it is a sentence. */
   close(reason?: string): Promise<void>;
 }
 ```
@@ -190,25 +191,27 @@ Two consequences:
 
 ## The owner
 
-A channel is not a process. Something must hold it, hear its death, and kill what is underneath: the child,
-the socket, the request. That is an actor, and it is the layer this document names rather than builds:
+A channel is not a process. Something must hold it, hear its death, and stop what is underneath: the child, the
+socket, the request. That is an actor, and it is built: `portActor` in `src/port/actor.ts`.
 
 ```ts
-/** One actor: the channel it holds, and the reason it ended. */
-interface OwnedChannel<F> {
-  channel: Channel<F>;
-  /** Settles when the far end is gone and everything under it has been released. */
-  done: Promise<{ reason: string }>;
+export interface PortPublic<C> {
+  alive: boolean;   // the channel is open
+  end: C | null;    // how it ended, and null until it has
 }
+
+portActor<Args, F, C>({ name, open(args): Promise<Channel<F, C>>, signal? });
 ```
 
-A spawner that starts a process closes over the kill in `channel.close()`, so the owner needs no second
-vocabulary: closing the channel is stopping the thing. `close()` from our side is silence; the far side's
-close arrives at `onClose`; a failure arrives at `onError` and then at `onClose`. Three endings, one
-channel.
+In `SEND {data}` writes to the channel and `SIGNAL` reaches the medium through the spec; out is `DATA {data}` for
+every frame. When the channel closes the actor writes `end`, clears `alive`, and stops — the ending is state, not
+a message, because a parent reads state anyway and the death of the port is the death of the actor.
 
-This is also where the harness's process port belongs: it is a spawner over a child's stdio plus an owner,
-which is `spawners/command.ts` beside the `stdio.ts` and `process-streams.ts` already here.
+A spawner that starts a process closes over the kill in `channel.close()`, so the owner needs no second
+vocabulary: closing the channel is stopping the thing. `close()` from our side is silence; the far side's close
+arrives at `onClose`; a failure arrives at `onError` and then at `onClose`. Three endings, one channel.
+
+The harness's process port is this: `BinaryPort` and `Utf8Port` in `src/port/node/process.ts`, over `spawnPort`.
 
 ## Way in: what a package exports
 
@@ -313,10 +316,11 @@ not found`, with the last lines of what it said on stderr.
   their return type; `onBytes`/`sendBytes` are gone. Compatibility helpers (`jsonSeam`, `fromSpawner`) keep
   `serveRemoteActor`, `remoteClient` and `defineSubprocessActor` callable as they are today, so the harness
   can stay on 0.47.0 through the whole change and move one consumer at a time afterwards.
-- **A close carries a sentence, not a code.** A process that fails after connecting has its failure in the
-  close reason (`exit 127: …`, with the tail of what it printed), because the exit is a fact about the child
-  and only the spawner that started it knows one. A channel that understood process exits would stop being a
-  channel.
+- **The close carries a sentence by default, and `C` when the medium has one.** *(Superseded 2026-11-07: this
+  said the close is always a sentence and that a channel which understood process exits would stop being a
+  channel. The process port showed the cost — flattening `{code}` into prose throws away the one fact the caller
+  wants — so the close became `Channel<F, C>`: `C` is what the far end says, a sentence for a medium, an exit for
+  a process. `close()` from this side still takes a sentence, because that close is ours.)*
 - **The store puts one file at a time, and keeps its own index.** A file goes through the way in as the bytes
   one command reads on stdin, and lands where the artifact says; the digest is computed here, before it is
   sent, so `has` asks a question that does not need the bytes to travel. The index (digest → path) is written
@@ -352,8 +356,9 @@ Each one is a red test first, and the suite stays green between them.
 5. **Remotes move onto ports.** The seam takes a port instead of a `StringTransport`, `oneConnection` goes,
    and `serveRemoteActor`/`remoteClient` keep their signatures. This slice is the proof of the split: the
    whole remote suite runs on the new carrier with nothing above the seam changed.
-6. **The owner.** `process-streams.ts` and `stdio.ts` grow into a spawner over a child, and the harness's
-   process port moves here.
+6. **The owner.** *(Built 2026-11-07: `src/port/actor.ts`, one actor over one channel, and the harness's process
+   port is `BinaryPort`/`Utf8Port` over `spawnPort`.)* `process-streams.ts` and `stdio.ts` grow into a spawner over
+   a child, which is where the code it replaced now lives.
 7. **The second medium that is not a process**: an HTTP connector returning `Channel<Part>` over an SSE or
    chunked body, which is what `xfetch`'s streaming half becomes.
 8. **Docs**: [Remote Actors](actor-remote.md) states the composition and links here;
@@ -370,9 +375,9 @@ Each one is a red test first, and the suite stays green between them.
 - **The name of the unit above a byte channel.** `Part` is short and says nothing on its own. `Line` is
   false when it carries octets; `Message` is taken by the actor. A reader who has to open this document to
   learn what a frame is has not been helped.
-- **Does the owner belong here or beside it?** It is one actor over a channel, with no knowledge of any
-  medium, which argues for this library. It is also the only place a kill policy lives, which argues for
-  whoever knows what is being killed.
+- **Does the owner belong here or beside it?** *(Answered 2026-11-07: here. It is one actor over a channel with
+  no knowledge of a medium, and the kill policy stayed with whoever opens the channel — `close()` — so the actor
+  needed none of its own.)*
 - **Whether a listener should be a spawner.** `accept()` repeated is a loop with its own lifetime, which a
   factory is not. Keeping them apart costs the `fromSpawner` shim and keeps each honest.
 - **One compatibility helper or two.** `jsonSeam(spawner)` can only exist once, for a spawner whose channel
