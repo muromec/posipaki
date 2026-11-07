@@ -370,3 +370,17 @@ The handshake and the composition, 2026-11-07:
   (`announcedOctets`), which is why the composition names it.
 
 The owner, and the spawners returning raw channels, are what is left.
+
+The wrappers, and what the flip found, 2026-11-07:
+
+- `src/remote/seam.ts` — `jsonSeam(spawner)` and `jsonSeamParts(spawner)`: a spawner that hands up a
+  `Channel<Uint8Array>` or a `Channel<Part>` comes back as the seam's `FrameChannel`, with splitting,
+  decoding and the agreement done above it. Two names rather than one that takes the frame type as an
+  argument, because the frame type is the only thing that differs — and a caller reading `jsonSeamParts` does
+  not have to work out what an argument would be. `frameChannel(delivered)` is the bridge: a close carries
+  no reason upward, and a wire error is heard as the close that follows it, which is the shape
+  `FrameChannel` has always had.
+- **The handshake cannot be one-sided.** The reactor's protocol step sends `$proto` and reads none
+  (`src/remote/reactor.ts:264`), while the port's handshake both announces and waits. A client that flipped
+  on its own would have its `$proto` arrive where the serve expects `$init`, and be refused. So the spawners
+  and `protocolStep` move in one commit, and slice 2 is one slice rather than two.
