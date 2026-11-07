@@ -356,3 +356,17 @@ The encoding, 2026-11-07:
   frame a line decoded to and the octets that line announced. One value, so a chunk of a stream is one thing
   on the wire rather than a frame plus a callback, and `sendBytes`/`onBytes` have no counterpart above the
   splitter. The `$bad` answer to a line nobody could read lives here too, and `posipaki/remote` re-exports it.
+
+The handshake and the composition, 2026-11-07:
+
+- `src/port/handshake.ts` — `handshake(inner, {version, timeoutMs, onEarly})`, the one adapter that is
+  asynchronous: it resolves to the channel rather than returning one, because "the peer speaks what we speak"
+  is what the caller needs before it talks. Silence, a wrong version, a peer that talks out of turn and a peer
+  that leaves are rejections with a sentence each. Frames that arrive after the agreement and before anyone
+  reads are held and handed to the first reader.
+- `src/port/pipeline.test.ts` — `handshake(json1(split(bytes, announced)))` on both ends of one pair of
+  streams, over a medium that delivers on a later turn: a frame each way, octets through and back out
+  unchanged, and the frame after a segment still in order. The announcement argument is the seam's
+  (`announcedOctets`), which is why the composition names it.
+
+The owner, and the spawners returning raw channels, are what is left.
