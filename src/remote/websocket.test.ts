@@ -136,6 +136,8 @@ describe("webSocketListener", () => {
     const socket = answered[0]!;
     await waitUntil(() => socket.frames().some(isProto), "the $proto frame");
     expect(socket.frames().find(isProto)!.$proto).toBe(VERSION);
+    // The far side announces too: the serve waits for it before anything it is told counts as a spawn.
+    socket.receive({ $proto: VERSION });
 
     socket.receive({ $init: { rootName: "echo", parentName: "root", parentIdName: "root" } });
     await waitUntil(() => sessions.length === 1, "the session report");

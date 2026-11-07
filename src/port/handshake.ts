@@ -49,6 +49,10 @@ export interface HandshakeOptions {
   timeoutMs?: number;
   /** A frame that arrived before the announcement, for a caller that knows what it is.  Returning nothing
    *  leaves the handshake waiting; not setting this at all makes such a frame a refusal. */
+  /** A promise that settles when the medium can carry a frame: nothing is announced before it.  A WebSocket
+   *  is the case — the socket exists before it can send, and an announcement written into a socket that is
+   *  still opening is a refusal about the medium rather than about the protocol. */
+  ready?: Promise<void>;
   onEarly?(value: Delivered): void;
 }
 
@@ -172,6 +176,17 @@ export function handshake(
     for (const closer of [...closers]) closer(reason);
   });
 
-  announce();
+  if (options.ready === undefined) {
+    announce();
+  } else {
+    void options.ready.then(
+      () => {
+        if (refused === null) announce();
+      },
+      (error: unknown) => {
+        refuse(`the medium was never ready: ${error instanceof Error ? error.message : String(error)}`);
+      },
+    );
+  }
   return settling;
 }

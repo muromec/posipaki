@@ -126,6 +126,8 @@ export function remoteClient<
       const table = new ProcessTable("odd", (proc, id) => streams.crossed(proc, id), ids);
       const root = this.ctx;
       table.bindRoot(root);
+      // A spawner hands up a connection that already speaks this protocol: the medium and the seam above it
+      // are its business, and this side reads frames.
       const channel = await spawner(args);
       // Its byte streams, on the same parity split: a stream crosses as itself, and a blob as a stream
       // over the same octets with its size and name said first.

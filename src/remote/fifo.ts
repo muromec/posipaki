@@ -10,8 +10,7 @@ import { dirname } from "node:path";
 import { promisify } from "node:util";
 
 import type { ClientSpawner } from "./client.js";
-import { isProto } from "./channel.js";
-import { json1Channel, VERSION } from "./protocols/json1.js";
+import { seamOf } from "./seam.js";
 import type { Connection, Listener } from "./reactor.js";
 import { FifoUtf8NlineTransport } from "./transports/fifo.js";
 
@@ -126,8 +125,10 @@ export async function fifoListener<Meta = unknown>(
 }
 
 /**
- * Connect to a pair, as the client side: it reads what the listener writes and writes what it reads,
- * and it awaits the `$proto` frame, which is the side of the handshake a served actor speaks.
+ * Connect to a pair, as the client side: it reads what the listener writes and writes what it reads.
+ *
+ * The seam is composed above the transport — both ends announce what they speak, so this side says its part
+ * rather than waiting for the served side's word alone.
  */
 export function fifoClientSpawner<Args = unknown>(
   pair: FifoPair | ((args: Args) => FifoPair),
@@ -136,16 +137,6 @@ export function fifoClientSpawner<Args = unknown>(
     const served = typeof pair === "function" ? pair(args) : pair;
     // The swap: this side reads what the serving side writes.
     const { transport } = FifoUtf8NlineTransport.beginConnect(served.write, served.read);
-    const channel = json1Channel(await transport);
-    const first = await new Promise<Record<string, unknown>>((resolve) => {
-      const off = channel.onMessage((frame) => {
-        off();
-        resolve(frame);
-      });
-    });
-    if (!isProto(first) || first.$proto !== VERSION) {
-      throw new Error(`unsupported protocol: ${JSON.stringify(first).slice(0, 50)}`);
-    }
-    return channel;
+    return seamOf(await transport);
   };
 }

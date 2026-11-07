@@ -143,18 +143,21 @@ describe("WebSocket remote actors", () => {
     });
     await opened.promise;
 
-    // The connection is made in two hops — the handshake, and then the handler that serves it — and
-    // a frame that arrives between them is lost rather than fatal, so the line is said until the
-    // wire answers it: first `$init`, the way any peer makes a connection, and then the line that
-    // is not a frame.  It is the line swat sends, in substance: not JSON, ASCII, nothing of
-    // anyone's in it.
+    // The connection is made in three hops — the protocol, the spawn, and the handler that serves it — and
+    // both ends announce before anything else.  So the line is said until the wire answers it: what this
+    // peer speaks, then `$init` the way any peer makes a connection, and then the line that is not a frame.
+    // It is the line swat sends, in substance: not JSON, ASCII, nothing of anyone's in it.
     const deadline = Date.now() + 5000;
     let sent = 0;
     while (!closed && Date.now() < deadline) {
-      if (sent++ === 0) {
+      if (sent === 0) {
+        raw.send(JSON.stringify({ $proto: "json.v1" }));
+      } else if (sent === 1) {
         raw.send(JSON.stringify({ $init: { parentName: "raw", parentIdName: "root" } }));
+      } else {
+        raw.send("not-json-1759080000");
       }
-      raw.send("not-json-1759080000");
+      sent += 1;
       await sleep(5);
     }
     await ended.promise;

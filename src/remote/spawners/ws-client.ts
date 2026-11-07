@@ -11,8 +11,7 @@
 // only place a value that varies per spawn can be attached at all.
 
 import { WebSocketTransport } from "../transports/websocket.js";
-import { json1Channel, VERSION } from "../protocols/json1.js";
-import { isProto } from "../channel.js";
+import { seamOf } from "../seam.js";
 import type { ClientSpawner } from "../client.js";
 
 /** The socket the spawner needs: what the transport reads and writes, and the open/error slots. */
@@ -78,22 +77,18 @@ export function wsClientSpawner<Args = unknown>(
     const target = typeof url === "function" ? url(args) : url;
     const ws = open(target, args);
     const transport = new WebSocketTransport(ws);
-    const channel = json1Channel(transport);
-
-    // Set the $proto waiter before awaiting open so a fast server's handshake
-    // frame is not dropped.
-    const protoPromise = new Promise<Record<string, unknown>>((resolve) => {
-      const off = channel.onMessage((frame) => {
-        off();
-        resolve(frame);
-      });
-    });
-    await openWebSocket(ws);
-    const protoFrame = await protoPromise;
-
-    if (!isProto(protoFrame) || protoFrame.$proto !== VERSION) {
-      throw new Error(`unsupported protocol: ${JSON.stringify(protoFrame).slice(0, 50)}`);
+    // The seam is composed before the socket opens — its reader is installed synchronously — and the
+    // announcement waits for the open, because a socket that is still connecting cannot carry it.
+    const opened = openWebSocket(ws);
+    const seam = seamOf(transport, { ready: opened });
+    try {
+      await opened;
+    } catch (error) {
+      // The seam refuses for the same reason; the open failure is the one worth naming, so it is the one
+      // that leaves here and the other is not left unhandled.
+      void seam.catch(() => undefined);
+      throw error;
     }
-    return channel;
+    return seam;
   };
 }

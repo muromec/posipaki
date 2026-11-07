@@ -19,15 +19,24 @@ import {
 } from "./reactor.js";
 import { sleep } from "../util.js";
 import { nextState } from "../testing/index.js";
+/** The protocol both ends of every connection in these tests speak. */
+const PROTO = "json.v1";
 
-/** A transport the test drives: what the reactor writes is recorded, what the test writes is delivered. */
-/** A transport the test drives: what the reactor writes is recorded, what the test writes is delivered. */
+/**
+ * A transport the test drives: what the reactor writes is recorded, what the test writes is delivered.
+ *
+ * It speaks the protocol the way a real peer does: the far side announces as soon as this side starts reading,
+ * on a later turn, because that is when a line arrives.  A test that is about the announcement itself passes
+ * `{ speaks: false }`.
+ */
 class FakeTransport implements StringTransport {
   readonly sent: string[] = [];
   readonly sentBytes: Uint8Array[] = [];
   private handler: ((line: string) => number | void) | null = null;
   private bytesHandler: ((bytes: Uint8Array) => void) | null = null;
   private closeHandler: (() => void) | null = null;
+
+  constructor(private readonly opts: { speaks?: boolean } = {}) {}
 
   send(frame: string): void {
     this.sent.push(frame);
@@ -37,6 +46,8 @@ class FakeTransport implements StringTransport {
   }
   onMessage(handler: (line: string) => number | void): void {
     this.handler = handler;
+    if (this.opts.speaks === false) return;
+    queueMicrotask(() => handler(JSON.stringify({ $proto: PROTO })));
   }
   onBytes(handler: (bytes: Uint8Array) => void): void {
     this.bytesHandler = handler;

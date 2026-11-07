@@ -7,8 +7,8 @@
 import type { ActorDefinition, ReflectionOptions } from "../actor-types.js";
 import type { Message } from "../types.js";
 import { channelThrough, type Channel, type StringTransport } from "./channel.js";
-import { json1Channel, VERSION } from "./protocols/json1.js";
 import { serveChannel, type AnyProcess, type Init, type Served, type ServedProcess, type Spawner } from "./server.js";
+import { seamOf } from "./seam.js";
 import type { StreamStoreOptions } from "./stream.js";
 
 /** Any actor definition: the reactor serves it, and does not care which one it is. */
@@ -228,9 +228,9 @@ export function reactor<Meta = unknown>(
 }
 
 /**
- * A listener with exactly one connection: what a caller serves on when the medium is already open for it,
- * as a spawner that hands back a channel is.  The connection is taken once, a second `accept()` is a
- * mistake worth naming, and `close()` releases an accept that is still waiting for one.
+ * A listener with exactly one connection: what a caller serves on when the medium is already open for it, as a
+ * spawner that hands back a channel is.  The connection is taken once, a second `accept()` is a mistake worth
+ * naming, and `close()` releases an accept that is still waiting for one.
  */
 export function oneConnection<Meta = unknown>(
   spawner: Spawner,
@@ -261,14 +261,18 @@ export function oneConnection<Meta = unknown>(
   };
 }
 
-/** The protocol step: the frame channel over a transport, and the `$proto` frame that opens it. */
+/**
+ * The protocol step: a transport becomes the seam's frames.
+ *
+ * The medium hands up lines, `partsOf` makes them the port's parts, and the seam above composes the splitter's
+ * work, the encoding and the agreement.  Both ends announce, so a client that used to only listen now has to
+ * say what it speaks — which is the price of one handshake instead of two shapes of it.
+ */
 async function protocolStep(
   transport: StringTransport,
   options: ReactorOptions<unknown>,
 ): Promise<Channel> {
-  const channel = json1Channel(transport);
-  await channel.send({ $proto: VERSION });
-  return withFrameHook(channel, options.onIncomingFrame);
+  return withFrameHook(await seamOf(transport), options.onIncomingFrame);
 }
 
 /**

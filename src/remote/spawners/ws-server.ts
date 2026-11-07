@@ -1,19 +1,15 @@
 // ── WebSocket server spawner ────────────────────────────────────────────────────
 //
-// Environment-specific: serves an already-upgraded WebSocket connection.  The
-// consumer's HTTP server does the upgrade and hands us the socket; we wrap it in
-// a WebSocketTransport, send $proto, and return the frame Channel.
+// Environment-specific: serves an already-upgraded WebSocket connection.  The consumer's HTTP server does the
+// upgrade and hands us the socket; we wrap it in a WebSocketTransport and compose the seam over it, so both
+// ends reach the protocol the same way round.
 
 import { WebSocketTransport, type WebSocketLike } from "../transports/websocket.js";
-import { json1Channel, VERSION } from "../protocols/json1.js";
+import { seamOf } from "../seam.js";
 import type { Spawner } from "../server.js";
 
 export function wsServerSpawner(ws: WebSocketLike): Spawner {
-  return async () => {
-    const channel = json1Channel(new WebSocketTransport(ws));
-    await channel.send({ $proto: VERSION });
-    return channel;
-  };
+  return async () => seamOf(new WebSocketTransport(ws));
 }
 
 /**
@@ -52,7 +48,11 @@ export function bunServerWebSocket(ws: BunServerWebSocketLike): WebSocketLike {
   return {
     send: (data) => ws.send(data),
     close: (code, reason) => ws.close(code, reason),
-    readyState: ws.readyState,
+    // Read through on every ask: a socket's state changes, and a snapshot taken at the upgrade would keep
+    // saying "opening" for the life of the connection — which is a send that refuses forever.
+    get readyState() {
+      return ws.readyState;
+    },
     onmessage: null,
     onclose: null,
   };

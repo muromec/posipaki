@@ -30,7 +30,9 @@ class FakeClientWebSocket {
   openAndSend(frame: Record<string, unknown>): void {
     this.readyState = 1;
     this.onopen?.();
-    this.onmessage?.({ data: JSON.stringify(frame) });
+    // On a later turn, because that is when a message arrives: the spawner composes the seam once the socket
+    // is open, and a frame handed over in the same breath would precede its reader.
+    queueMicrotask(() => this.onmessage?.({ data: JSON.stringify(frame) }));
   }
 }
 
@@ -63,7 +65,9 @@ describe("wsClientSpawner", () => {
     const spawner = wsClientSpawner("ws://x", fakeCtor);
     const channelPromise = spawner({});
     FakeClientWebSocket.last!.openAndSend({ $proto: "wrong.v1" });
-    await expect(channelPromise).rejects.toThrow(/unsupported protocol/);
+    await expect(channelPromise).rejects.toThrow(
+      "the far end speaks wrong.v1, and this side speaks json.v1",
+    );
   });
 
   it("names what a failed open was, rather than the event that carried it", async () => {
@@ -119,7 +123,7 @@ function asText(data: string | Uint8Array): string {
 }
 
 describe("wsServerSpawner", () => {
-  it("sends $proto and returns a ready channel", async () => {
+  it("announces, and hands back the seam once the far side has spoken", async () => {
     const sent: Array<string | Uint8Array> = [];
     const ws: WebSocketLike = {
       send: (data) => sent.push(data),
@@ -129,7 +133,11 @@ describe("wsServerSpawner", () => {
       onclose: null,
     };
 
-    const channel = await wsServerSpawner(ws)();
+    const spawning = wsServerSpawner(ws)();
+    // Both ends announce: the far side's word is what the seam waits for before it hands the channel over.
+    await Promise.resolve();
+    ws.onmessage?.({ data: JSON.stringify({ $proto: VERSION }) });
+    const channel = await spawning;
     expect(sent.map(asText).map(decode)).toEqual([{ $proto: VERSION }]);
 
     await channel.send({ $init: { parentName: "x", parentIdName: "x" } });

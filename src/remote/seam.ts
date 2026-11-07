@@ -11,8 +11,9 @@
 // `Channel` also has an error of its own, and `FrameChannel` has none: a wire that fails is heard here as the
 // close that always follows it, which is what the seam has always heard.
 
-import type { Channel, Delivered, Part } from "../port/index.js";
+import type { Announcement, Channel, Delivered, Part } from "../port/index.js";
 import { handshake, json1, readFrame, splitChannel } from "../port/index.js";
+import type { StringTransport } from "./channel.js";
 import type { FrameChannel } from "../types.js";
 import type { ClientSpawner } from "./client.js";
 import { announcedOctets, VERSION } from "./protocols/json1.js";
@@ -26,6 +27,8 @@ export function seamAnnounced(line: string): number | null {
 export interface JsonSeamOptions {
   /** How long to wait for the peer to say what it speaks. */
   timeoutMs?: number;
+  /** Settles when the medium can carry a frame: nothing is announced before it. */
+  ready?: Promise<void>;
 }
 
 /**
@@ -116,15 +119,16 @@ export function frameChannel(opened: Channel<Delivered>): FrameChannel {
   };
 }
 
-/** The steps above a channel of parts, which end at the seam's frames. */
 async function overParts(parts: Channel<Part>, options: JsonSeamOptions): Promise<FrameChannel> {
-  const agreed = await handshake(json1(parts), { version: VERSION, timeoutMs: options.timeoutMs });
+  const agreed = await handshake(json1(parts), {
+    version: VERSION,
+    timeoutMs: options.timeoutMs,
+    ready: options.ready,
+  });
   return frameChannel(agreed);
 }
 
 /**
- * A spawner whose channel carries octets: a stdio pair or a socket given as a stream pair.
- *
  * The spawner says only how to open its medium.  Splitting, decoding and agreeing are the same work for all
  * of them, and a caller that wired them itself would be wiring three adapters where the medium was the only
  * thing that differed.
@@ -142,4 +146,99 @@ export function jsonSeamParts<Args = unknown>(
   options: JsonSeamOptions = {},
 ): ClientSpawner<Args> {
   return async (args) => overParts(await spawner(args), options);
+}
+
+/**
+ * A line transport, as the port a seam composes over.
+ *
+ * A medium that frames its own messages — a websocket message, a line on a socket — hands up lines, and a
+ * line that announces octets is one part in two halves: this side answers with how many octets follow, and
+ * the transport then hands those over as bytes.  A part is that line and those octets, so they are held here
+ * for the moment between the two.
+ *
+ * This is the adapter that lets the listeners keep their transports while the seam above them is a port:
+ * `handshake(json1(partsOf(transport)))` is the whole of what a serving half does with a transport now.
+ */
+export function partsOf(transport: StringTransport, announced: Announcement = seamAnnounced): Channel<Part> {
+  const readers = new Set<(part: Part) => void>();
+  const closers = new Set<(reason: string) => void>();
+  /** The line whose announced octets have not arrived yet. */
+  let held: string | null = null;
+  let ended = false;
+
+  const emit = (part: Part): void => {
+    for (const reader of [...readers]) reader(part);
+  };
+
+  transport.onMessage((line) => {
+    if (ended) return;
+    const count = announced(line);
+    if (count === null) {
+      emit({ line, bytes: null });
+      return;
+    }
+    held = line;
+    return count;
+  });
+  transport.onBytes((bytes) => {
+    const line = held;
+    held = null;
+    // Octets nobody announced are a peer talking past the protocol: the splitter above says so, so they are
+    // dropped here rather than attached to whatever line came last.
+    if (line === null) return;
+    emit({ line, bytes });
+  });
+  transport.onClose(() => {
+    if (ended) return;
+    ended = true;
+    for (const closer of [...closers]) closer("the far end closed the connection");
+  });
+
+  return {
+    async send(part) {
+      await transport.send(part.line);
+      if (part.bytes !== null) await transport.sendBytes(part.bytes);
+    },
+    onFrame(handler) {
+      readers.add(handler);
+      return () => {
+        readers.delete(handler);
+      };
+    },
+    onClose(handler) {
+      closers.add(handler);
+      return () => {
+        closers.delete(handler);
+      };
+    },
+    onError() {
+      // A line transport reports a broken wire as the close that follows it.
+      return () => {};
+    },
+    close: () => transport.close(),
+  };
+}
+
+/**
+ * A connection a medium has already framed, as the seam's frames: the counterpart of `jsonSeam` for a
+ * transport rather than a port.
+ *
+ * A line transport hands up lines, which `partsOf` turns into the port's parts; the splitter, the encoding and
+ * the agreement are then the same work a raw medium's channel would have gone through.  Both ends announce, so
+ * a serving half and its client reach the protocol the same way round.
+ */
+export async function seamOf(
+  transport: StringTransport,
+  options: JsonSeamOptions = {},
+): Promise<FrameChannel> {
+  // The reader chain is installed here, synchronously, before anything is awaited: a medium that delivers a
+  // frame in the same turn this is called — a socket can — must not find nobody listening.
+  const delivered = json1(partsOf(transport));
+  return frameChannel(
+    await handshake(delivered, {
+      version: VERSION,
+      timeoutMs: options.timeoutMs,
+      ready: options.ready,
+    }),
+  );
 }
