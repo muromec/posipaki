@@ -25,3 +25,4 @@ export {
   type SendMessage,
   type SignalMessage,
 } from "./actor.js";
+export { fetchPort, type FetchPortOptions, type HttpEnd } from "./fetch.js";
