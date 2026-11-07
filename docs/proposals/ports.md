@@ -272,6 +272,12 @@ not found`, with the last lines of what it said on stderr.
   close reason (`exit 127: …`, with the tail of what it printed), because the exit is a fact about the child
   and only the spawner that started it knows one. A channel that understood process exits would stop being a
   channel.
+- **The store puts one file at a time, and keeps its own index.** A file goes through the way in as the bytes
+  one command reads on stdin, and lands where the artifact says; the digest is computed here, before it is
+  sent, so `has` asks a question that does not need the bytes to travel. The index (digest → path) is written
+  beside them, which makes `has` one read rather than a hash of every candidate. No archive: a tar would be a
+  second encoding of the same bytes, a second thing to get wrong on a far side nobody is watching, and a
+  format the library would then have to keep.
 
 ## Cost
 
@@ -319,9 +325,6 @@ Each one is a red test first, and the suite stays green between them.
 - **The name of the unit above a byte channel.** `Part` is short and says nothing on its own. `Line` is
   false when it carries octets; `Message` is taken by the actor. A reader who has to open this document to
   learn what a frame is has not been helped.
-- **How the store puts a file.** Per file is the general case and reuses the way in exactly — `cat > path`
-  with the bytes on stdin, one round trip each. A single tar is fewer round trips and one more thing to get
-  wrong on the far side, where nobody is watching.
 - **Does the owner belong here or beside it?** It is one actor over a channel, with no knowledge of any
   medium, which argues for this library. It is also the only place a kill policy lives, which argues for
   whoever knows what is being killed.
