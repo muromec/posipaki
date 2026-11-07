@@ -35,6 +35,10 @@
       "types": "./dist/plugins/tree-introspection.d.ts",
       "default": "./dist/plugins/tree-introspection.js"
     },
+    "./port": {
+      "types": "./dist/port/index.d.ts",
+      "default": "./dist/port/index.js"
+    },
     "./remote": {
       "types": "./dist/remote/index.d.ts",
       "default": "./dist/remote/index.js"
