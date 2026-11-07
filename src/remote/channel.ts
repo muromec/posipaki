@@ -6,6 +6,7 @@
 // in Channels and these guards — they never see a specific protocol or
 // transport.
 
+import type { BadFrame } from "../port/json1.js";
 import type { FrameChannel, Message } from "../types.js";
 import {
   decodeProcessRefs,
@@ -242,37 +243,11 @@ export function isExit(msg: Record<string, unknown>): msg is ExitFrame {
 // `$error` is not a refused call — a call that is refused says so about itself, in
 // `$r.result.<name>` (see below).  This one is about the wire the calls travel on.
 
-const BAD_KEY = "$bad";
+// The `$bad` frame is built and read by the encoding, which is the only place a line that nobody could read
+// is answered for (`../port/json1.ts`).  It is re-exported here because a reader of the wire wants both of
+// its frames in one place.
 
-/** How much of an unreadable line is carried: enough to see what it was, never enough to be it.
- *  A line that failed to parse is the one line nobody vouched for, so quoting it whole would move
- *  whatever it holds — a credential in a paste accident is how that happens — into every log,
- *  transcript and context window that later reads the frame.  Why, how long, and a short head of
- *  it.  (`reason` carries a little of the line on its own: a JSON parser says where it gave up and
- *  quotes what it was looking at.  That is the parser's business, not a promise this file makes.) */
-export const BAD_PREFIX_LIMIT = 32;
-
-export type BadFrame = {
-  $bad: { reason: string };
-};
-
-export function isBad(msg: Record<string, unknown>): msg is BadFrame {
-  return BAD_KEY in msg;
-}
-
-/** The frame that says a frame could not be read: why, how long it was, and the head of it. */
-export function badFrame(reason: string, raw: string): Record<string, unknown> {
-  const prefix = raw.length > BAD_PREFIX_LIMIT ? `${raw.slice(0, BAD_PREFIX_LIMIT)}…` : raw;
-  return { [BAD_KEY]: { reason, length: raw.length, prefix } };
-}
-
-/** Why a frame could not be read, or null when it is not a frame that says so. */
-export function badReason(msg: Record<string, unknown>): string | null {
-  const body = msg[BAD_KEY];
-  if (typeof body !== "object" || body === null) return null;
-  const reason = (body as { reason?: unknown }).reason;
-  return typeof reason === "string" ? reason : null;
-}
+export { BAD_PREFIX_LIMIT, badFrame, badReason, isBad } from "../port/json1.js";
 
 const ERROR_KEY = "$error";
 

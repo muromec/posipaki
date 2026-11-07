@@ -11,3 +11,13 @@ export { ChannelClosed, type Channel, type Part } from "./channel.js";
 export { memoryChannelPair, type ChannelPair, type MemoryEnd } from "./memory.js";
 export { splitChannel, type Announcement } from "./split.js";
 export { streamChannel, type StreamPair } from "./stream.js";
+export {
+  badFrame,
+  badReason,
+  BAD_PREFIX_LIMIT,
+  decode,
+  encode,
+  isBad,
+  readFrame,
+  type BadFrame,
+} from "./json1.js";
