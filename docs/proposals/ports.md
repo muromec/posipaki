@@ -384,3 +384,21 @@ The wrappers, and what the flip found, 2026-11-07:
   (`src/remote/reactor.ts:264`), while the port's handshake both announces and waits. A client that flipped
   on its own would have its `$proto` arrive where the serve expects `$init`, and be refused. So the spawners
   and `protocolStep` move in one commit, and slice 2 is one slice rather than two.
+
+Flipping the fifo medium, 2026-11-07 — attempted, and taken back out. What it found is worth keeping:
+
+- **The bridge has to fan out itself.** A subscription per kind is handed whatever the handshake held, and
+  the filter that does not want it throws it away: a connection's `$init` went missing that way, and the
+  payload answered `expected $init`. It is one reader on the port channel, a list per kind, and what
+  arrived before a reader of that kind is kept for it (`4a415b6`).
+- **Every consumer of a spawner flips with the spawner.** `serveRemoteActor(actor, fifoArgvSpawner)` is the
+  far end of the handshake, so a payload written that way never says what it speaks; three fixtures had to
+  become `serveRemoteActor(actor, () => jsonSeamParts(() => fifoArgvSpawner())(undefined))` before one real
+  connection came up.
+- **A hand-driven client announces too.** `server.integration.test.ts` drives a raw transport and sends no
+  `$proto` of its own, which was correct against a server that only spoke first.
+
+With those fixed, eight of the twenty reflection-integration cases still failed — lost method
+announcements, one 20 s stall — which is the seam's reader timing rather than the medium. The flip was
+taken back to the bridge commit instead of being patched to green at the end of a session; the next
+attempt starts from `4a415b6`, with the reader order settled first.
