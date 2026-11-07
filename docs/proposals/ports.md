@@ -534,3 +534,14 @@ The port actor, 2026-11-07:
   stream is a trap the harness already paid for.
 - `signal` is not wired in the two process ports yet: `spawnPort`'s channel has no way to reach the process, and
   stopping them is `close()` — stdin's end, then SIGKILL after the grace.
+
+The ending is state, 2026-11-07:
+
+- The port's ending is not a message. `PortPublic<C> = { alive, end: C | null }`: when the channel closes the
+  actor writes `end`, clears `alive` and stops, so a parent reads it where it reads everything else.
+- `portActor` therefore lost `exit()` and its message generic: the spec is `{name, open, signal?}`, and out is
+  only `DATA`.
+- `ProcessEnd` is two shapes, both of them the OS's own: `{kind: "exit", code}` or `{kind: "signal", signal}`.
+  Measured: `kill -9` on a child gives `code: null, signal: "SIGKILL"`, `exit 7` gives `code: 7, signal: null`,
+  and a kill we send after the grace is indistinguishable from a stranger's — so "we stopped it" could only
+  come from our own bookkeeping, and was dropped.

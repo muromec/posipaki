@@ -7,7 +7,7 @@ import type { Message } from "../../types.js";
 import { portActor } from "../actor.js";
 import type { Channel, Part } from "../channel.js";
 import { splitChannel } from "../split.js";
-import { spawnPort, type ProcessExit } from "./spawn.js";
+import { spawnPort, type ProcessEnd } from "./spawn.js";
 
 /** How a process port is started. */
 export interface ProcessPortArgs {
@@ -18,23 +18,12 @@ export interface ProcessPortArgs {
   killAfterMs?: number;
 }
 
-/** The process is gone.  Once, and then the actor ends. */
-export interface PortExitMessage extends Message {
-  type: "ENDED";
-  code: number | null;
-  signal: string | null;
-}
 
-const exitOf = (reason: ProcessExit): PortExitMessage => ({
-  type: "ENDED",
-  code: reason.code,
-  signal: reason.signal,
-});
 
 /** Parts as their text: what a line port carries.  Octets that came with a line are not text and are dropped. */
-function lines(parts: Channel<Part, ProcessExit>): Channel<string, ProcessExit> {
+function lines(parts: Channel<Part, ProcessEnd>): Channel<string, ProcessEnd> {
   const readers = new Set<(line: string) => void>();
-  const closers = new Set<(reason: ProcessExit) => void>();
+  const closers = new Set<(reason: ProcessEnd) => void>();
   const failers = new Set<(error: unknown) => void>();
 
   parts.onFrame(({ line }) => {
@@ -72,15 +61,13 @@ function lines(parts: Channel<Part, ProcessExit>): Channel<string, ProcessExit> 
 }
 
 /** The child's octets, frame for frame. */
-export const BinaryPort = portActor<ProcessPortArgs, Uint8Array, ProcessExit, PortExitMessage>({
+export const BinaryPort = portActor<ProcessPortArgs, Uint8Array, ProcessEnd>({
   name: "binary-port",
   open: (args) => spawnPort(args.command, args),
-  exit: exitOf,
 });
 
 /** The same child, cut into lines. */
-export const Utf8Port = portActor<ProcessPortArgs, string, ProcessExit, PortExitMessage>({
+export const Utf8Port = portActor<ProcessPortArgs, string, ProcessEnd>({
   name: "utf8-port",
   open: async (args) => lines(splitChannel(await spawnPort(args.command, args))),
-  exit: exitOf,
 });

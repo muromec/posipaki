@@ -5,7 +5,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import type { ProcessExit } from "./spawn.js";
+import type { ProcessEnd } from "./spawn.js";
 import { spawnPort, spawnPorts, type SpawnPortOptions } from "./spawn.js";
 
 const sh = (script: string): string[] => ["/bin/sh", "-c", script];
@@ -27,18 +27,18 @@ async function port(command: string[], options?: SpawnPortOptions) {
 async function drain(port: {
 
   onFrame(handler: (bytes: Uint8Array) => void): unknown;
-  onClose(handler: (exit: ProcessExit) => void): unknown;
-}): Promise<{ said: string; exit: ProcessExit }> {
+  onClose(handler: (end: ProcessEnd) => void): unknown;
+}): Promise<{ said: string; end: ProcessEnd }> {
   const parts: string[] = [];
   port.onFrame((bytes) => parts.push(Buffer.from(bytes).toString("utf8")));
-  const exit = await new Promise<ProcessExit>((resolve) => port.onClose(resolve));
-  return { said: parts.join(""), exit };
+  const end = await new Promise<ProcessEnd>((resolve) => port.onClose(resolve));
+  return { said: parts.join(""), end };
 }
 
 describe("spawnPort", () => {
   it("carries what the child wrote, and how it ended", async () => {
     const used = await port(sh("printf hello; exit 3"));
-    expect(await drain(used)).toEqual({ said: "hello", exit: { code: 3, signal: null } });
+    expect(await drain(used)).toEqual({ said: "hello", end: { kind: "exit", code: 3 } });
   });
 
   it("writes to the child's stdin, and closes its end of it", async () => {
@@ -46,7 +46,7 @@ describe("spawnPort", () => {
     const said = drain(used);
     await used.send(Buffer.from("ping\n"));
     await used.close();
-    expect(await said).toEqual({ said: "ping\n", exit: { code: 0, signal: null } });
+    expect(await said).toEqual({ said: "ping\n", end: { kind: "exit", code: 0 } });
   });
 
   it("discards the child's stderr", async () => {
@@ -58,7 +58,7 @@ describe("spawnPort", () => {
     const used = await port(sh("sleep 60"), { killAfterMs: 50 });
     const ending = drain(used);
     await used.close();
-    expect((await ending).exit.signal).toBe("SIGKILL");
+    expect((await ending).end).toEqual({ kind: "signal", signal: "SIGKILL" });
   });
 
   it("refuses a command that cannot be started", async () => {
@@ -72,8 +72,8 @@ describe("spawnPorts", () => {
     const both = await Promise.all([drain(ports.stdout), drain(ports.stderr)]);
     expect(both[0].said).toBe("out");
     expect(both[1].said).toBe("err");
-    expect(both[0].exit).toEqual({ code: 4, signal: null });
-    expect(both[1].exit).toEqual(both[0].exit);
+    expect(both[0].end).toEqual({ kind: "exit", code: 4 });
+    expect(both[1].end).toEqual(both[0].end);
   });
 
   it("has no input on stderr", async () => {
