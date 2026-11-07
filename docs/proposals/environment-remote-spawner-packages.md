@@ -97,21 +97,23 @@ everything below the entry; what a package keeps is its command shape and, for p
 container's life. A new way in is one `entry` function and one package: `posipaki-remote-host`
 (the same machine) is `hostRemote` in the core for that reason.
 
-**What a package exports, after [the port split](ports.md).** Four things, and the last two are one line each
-over the first two:
+**What a package exports, after [the port split](ports.md).** A way in, and nothing else; the store and the
+gateway above it are the core's, built once over whatever way in they are handed:
 
-| Entry | Returns | What it does |
+| Where | What | Over what |
 | --- | --- | --- |
-| `sshPort(host, command)` | `Spawner<Args, Uint8Array>` | a command there, its stdio, nothing wrapped |
-| `stageKit(spec)` | the way in | the kit and the gateway put there, which can fail on its own |
-| `sshGateway(spec)` | `Spawner<Args, Uint8Array>` | staging, the gateway, the wrap — a port into our own payload |
-| `sshRemote(spec)` | `Spawner<Args, Frame>` | `seamOf(sshGateway(spec))`: what exists today |
+| the package | `sshPort(host, command)`, or the same for podman and bwrap | that binary |
+| the core | `filesOver(wayIn)` — `put`/`has`/`remove`; an `Artifact` is a path, a digest and the runtime that runs it | one command per file |
+| the core | `gatewayPort(wayIn, store, { gateway, payload })` — put, boot, wrap `$fd`, stop | the two artifacts |
+| the core | `sshRemote(spec)` = `seamOf(gatewayPort(wayIn, store, spec.artifacts))` | all of it |
 
-`sshRemote` keeps its name and its callers. The core's `gatewayClient` splits into the second and the third:
-what it does today minus the two adapters at its top, which the fourth puts back for a caller who wants
-frames. A package that ends up with more than an argv, a spec and a lifetime has taken work the core should
-be doing — and the two ports are not the same thing: a raw command's own prints arrive in its channel, while
-the wrapped one carries nothing but the worker's protocol bytes.
+`sshRemote` keeps its name and its callers, and `stageKit` goes: what it did was put files there and report
+what happened, and both halves are the store's now — `has(digest)` answers "these exact bytes are there",
+where today the payload is trusted to state which build it is and the far side's report is parsed. A package
+left with more than an argv and a lifetime has taken work the core should be doing.
+
+The two ports are not the same thing: a raw command's own prints arrive in its channel, while the wrapped one
+carries nothing but the worker's protocol bytes.
 
 **Tests** assert the commands and what travels on stdin, against an injected host runner —
 the pattern the consumer already uses (`HostRun`). No ssh or podman needs to be present to

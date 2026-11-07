@@ -172,16 +172,47 @@ same with a container's lifetime around it, and `bwrap` the same inside a namesp
 implementation in the core — `RemoteWayIn { name, entry, run?, spawn? }` is already that interface — and a
 companion package is only what it alone can say: the argv, the spec, and the lifetime it owns.
 
-Each way-in package answers four things, and the last two are one composition over the first two:
+The primitive under all of it is a **file store over a way in**, and a gateway that is a function of what it
+is handed:
 
-| Entry | Returns | What it does |
+```ts
+/** A file that is on the environment, and what it takes to run it. */
+export type Artifact = { path: string; digest: string; runtime?: string[] };
+
+/** Files on the other side of a way in.  Nothing here knows which way in it is. */
+export interface FileStore {
+  put(name: string, bytes: Uint8Array): Promise<Artifact>;
+  /** These exact bytes are there — what a second spawn asks instead of staging again. */
+  has(digest: string): Promise<boolean>;
+  remove(digest: string): Promise<void>;
+}
+
+/** A port into our own payload, over a store that already holds it. */
+gatewayPort(wayIn, store, { gateway: Artifact, payload: Artifact }): Spawner<Args, Uint8Array>;
+```
+
+So a package exports a **way in** and nothing else, and everything above it is core:
+
+| Where | What | Over what |
 | --- | --- | --- |
-| `sshPort(host, command)` | `Spawner<Args, Uint8Array>` | runs a command there and gives its stdio, unwrapped |
-| `stageKit(spec)` | the way in | puts the kit and the gateway there; can fail on its own |
-| `sshGateway(spec)` | `Spawner<Args, Uint8Array>` | `stageKit`, boot the gateway, wrap stdio and `$fd`, stop |
-| `sshRemote(spec)` | `Spawner<Args, Frame>` | `seamOf(sshGateway(spec))` — one line |
+| `posipaki-remote-ssh` | `sshPort(host, command)` — the way in | the `ssh` binary |
+| `posipaki-remote-podman` | a way in, plus the container's lifetime | `podman exec -i` |
+| `posipaki-remote-bwrap` | a way in, plus the namespace argv | `bwrap` |
+| core | `filesOver(wayIn)` — the store | one command per file, through the way in |
+| core | `gatewayPort(wayIn, store, artifacts)` | the two artifacts |
+| core | `sshRemote(spec)` = `seamOf(gatewayPort(wayIn, store, spec.artifacts))` | all of it |
 
-If the last two are more than one line apart, something above the port is still fused.
+Two things the store buys that a `stageKit` step could not:
+
+- **The version check becomes a lookup.** Today the payload is trusted to state which build it is
+  (`--host-version=`, compared against its own bytes) and the far side's report is parsed to find out what
+  happened. With the store keyed by digest, `has(sha256)` answers "these exact bytes are there", which is the
+  question the string was approximating, and it needs no cooperation from whatever is running. `sha256Hex` is
+  already here.
+- **One staging implementation, not three.** The store and the gateway are shared *and* named, so the three
+  packages differ in an argv and, for podman, a lifetime.
+
+If `gatewayPort` and `seamOf` are ever more than one line apart, something above the port is still fused.
 
 **A wrapped port is not a raw one, and that is the reason to have both.** A command's stdout carries whatever
 the command prints; the gateway's wrapping is what keeps a worker's own output out of the channel, so a port
@@ -278,15 +309,19 @@ Each one is a red test first, and the suite stays green between them.
    [The connection both ends hold](connection-both-ends.md) loses the octet announcement, because it is now
    a framing adapter; [environment remote spawner packages](environment-remote-spawner-packages.md) says a
    spawner's product is a raw channel.
-9. **The three way-in packages** export their four entries and shrink to argv, a spec and a lifetime; their
-   integration tests then prove the seam over ssh, podman and bwrap on the new carrier, and a cheaper new
-   test covers a command run there for its own sake.
+9. **The store and the gateway, in core**: `filesOver(wayIn)` and `gatewayPort(wayIn, store, artifacts)`, with
+   the three packages cut back to a way in (podman's container lifetime with it). Their integration tests then
+   prove the seam over ssh, podman and bwrap on the new carrier, and a cheaper test covers a command run there
+   for its own sake.
 
 ## Open
 
 - **The name of the unit above a byte channel.** `Part` is short and says nothing on its own. `Line` is
   false when it carries octets; `Message` is taken by the actor. A reader who has to open this document to
   learn what a frame is has not been helped.
+- **How the store puts a file.** Per file is the general case and reuses the way in exactly — `cat > path`
+  with the bytes on stdin, one round trip each. A single tar is fewer round trips and one more thing to get
+  wrong on the far side, where nobody is watching.
 - **Does the owner belong here or beside it?** It is one actor over a channel, with no knowledge of any
   medium, which argues for this library. It is also the only place a kill policy lives, which argues for
   whoever knows what is being killed.
