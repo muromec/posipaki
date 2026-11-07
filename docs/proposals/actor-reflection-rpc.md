@@ -458,6 +458,7 @@ declare module "posipaki" {
 ## Related
 
 - [Remote Actors](actor-remote.md)
+- [Ports](ports.md)
 - [Actor Plugin System](actor-plugin-system.md)
 - [defineActor Proposal](define-actor-proposal.md)
 - [Migration: reflection methods are async](../migration/reflection-methods-are-async.md)

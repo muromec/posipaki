@@ -61,8 +61,8 @@ export type FetchMessage =
 ## What it does not do
 
 No parsing, no sniffing, no body shaping, no retrying, no redirect policy of its own, no streaming. A
-stream cannot cross a message boundary cheaply; `stream: true` wants a channel, which is a different
-proposal.
+stream cannot cross a message boundary cheaply: `stream: true` wants a channel, and that channel is now
+written down — [Ports](ports.md), a different proposal and a different entry point.
 
 ## Decisions
 
@@ -88,5 +88,5 @@ headers are passed through, and `ERROR` carries `reason`.  The state keeps `code
 Tests: eight, and the four that state the new contract were red first (`d317196`).  The old suite's
 expectations about serialized bodies and parsed answers were deleted with the behaviour they described.
 
-Not done, deliberately: streaming (a stream cannot cross a message boundary; that is a channel), retries,
-and a caller-supplied `signal` (ours is the one that is honoured).
+Not done, deliberately: streaming (a stream cannot cross a message boundary; that is a channel, and it is
+[written down now](ports.md)), retries, and a caller-supplied `signal` (ours is the one that is honoured).

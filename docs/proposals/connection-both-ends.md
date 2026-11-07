@@ -7,6 +7,12 @@ the fan-out behind `onMessage` (`5a582f9`), the connection is the process's own 
 `onChannel` with its own on the client), and the byte streams are built — `connectionFds`, `fdWriter`
 and `logStream` in `remote/node`, with the gateway's own forwarding writing through `fdWriter`.  What
 the plan asked for is built; what is left is under Open.
+>
+> **Superseded in part, 2026-11-07.** What moves the frames is becoming a **port** — a channel, a spawner and
+> an adapter ([Ports](ports.md)). The connection this document describes does not change: the fan-out behind
+> `onMessage`, `$fd`, the hooks and the byte streams all stay. What changes is where an announced run of
+> octets is cut: today each transport carries the announcement, and in the target shape a framing adapter
+> does, so `onBytes`/`sendBytes` have no counterpart.
 
 ## Motivation
 

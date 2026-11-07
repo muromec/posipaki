@@ -239,6 +239,7 @@ const pool = defineActor<PoolArgs, PoolState, PoolInMessage, PoolOutMessage>({
 - [Actor lifecycle hooks](actor-lifecycle-hooks.md)
 - [Actor tree naming](actor-tree-naming.md)
 - [Remote Actors](actor-remote.md)
+- [Ports](ports.md)
 - [Docs index](../00-INDEX.md)
 
 ## Spawn API (design in progress, 2026-08-11)

@@ -6,6 +6,11 @@ unsubscribe, the spawner table is what exists, and the seam is served by a one-c
 [reactor](server-reactor.md).  The channel handle each starter gets, the fan-out behind that
 unsubscribe, and the byte streams over a connection are [the connection both ends
 hold](connection-both-ends.md).
+>
+> **Superseded in part, 2026-11-07.** The carrier under the seam is being replaced by a **port** — a channel,
+> a spawner and an adapter, with its own entry point: [Ports](ports.md). The sixteen frames, the reactor,
+> the stream references and both wire versions do not change; the *Layers*, *Transport* and *Spawners*
+> sections below describe the tree as it is at 0.47.0 and say where each part is going.
 
 The primitive is **context mobility**: run a posipaki actor in any execution
 context that can speak a small protocol, and let consumers treat local and
@@ -47,36 +52,44 @@ sides at once.
 
 ## Layers
 
+The carrier is a **port** — a channel, a spawner and an adapter — and it has its own document and its own
+entry point: [Ports](ports.md), `posipaki/port`.
+
 ```
 ┌──────────────────────────────────────────────────────────────┐
 │  glue       defineSubprocessActor               sugar        │
 ├──────────────────────────────────────────────────────────────┤
 │  seam       serveRemoteActor · remoteClient     server/client│
 ├──────────────────────────────────────────────────────────────┤
-│  channel    Channel · StringTransport · guards  frame vocab  │
+│  frames     Channel<Frame> · guards             frame vocab  │
 ├──────────────────────────────────────────────────────────────┤
-│  transport  FIFO · WebSocket · Worker           framing      │
+│  adapters   handshake · json.v1                 protocol step│
 ├──────────────────────────────────────────────────────────────┤
-│  protocol   json1 (json.v1) · clone (clone.v1)  encoding     │
+│  port       Channel<Part|Uint8Array> · Spawner  medium       │
+│             Listener · the owner actor                       │
 └──────────────────────────────────────────────────────────────┘
 ```
 
 | Layer | Files | Owns |
 | --- | --- | --- |
-| **Protocol** | `protocols/json1.ts` | JSON `encode`/`decode` + the version string (`json.v1`). The worker's structured-clone encoding (`clone.v1`) has no JSON and lives in its transport. |
-| **Channel** | `channel.ts` | `Channel` (frame objects), `StringTransport` (frame strings), and the frame guards. This is the seam's shared vocabulary. |
-| **Transport** | `transports/*.ts` | Framing + movement. FIFO and WebSocket move encoded strings; Worker moves frame objects directly. |
-| **Spawner** | `spawners/*.ts` | Environment bootstrap: how a transport is *obtained* on each side, plus the `$proto` handshake. |
-| **Seam** | `server.ts`, `client.ts` | `serveRemoteActor` / `remoteClient` — pump frames over a `Channel`. |
+| **Port** | `port/` (proposed) | A channel of parts or bytes, the spawner that makes one, the listener that accepts one, and the owner that holds one. Nothing here knows a frame. |
+| **Adapter** | `port/adapters/`, `protocols/json1.ts` | The `$proto` handshake and `json.v1`: a port in, frames out. The worker needs neither — structured clone already carries frame objects. |
+| **Frames** | `channel.ts` | The sixteen `$`-shaped frames and the guards that narrow one. This is the seam's shared vocabulary. |
+| **Seam** | `server.ts`, `client.ts` | `serveRemoteActor` / `remoteClient` — pump frames over a `Channel<Frame>`. |
 | **Glue** | `define-subprocess.ts` | `defineSubprocessActor` — wrap the client side as a normal actor definition. |
 
-Each rung is a stable interface, usable on its own. You don't have to climb to
-the top, and the seam never sees a specific protocol, transport, or spawner.
+Each rung is a stable interface, usable on its own. You don't climb to the top if you don't want to, and
+the seam never sees a specific medium, protocol or spawner: it sees a `Channel<Frame>` and nothing below it.
+
+**As built at 0.47.0, before the split.** The tree fuses the bottom three rungs: `StringTransport` carries
+lines *and* announced octets, each transport splits its own lines, and every spawner applies `json1Channel`
+and the `$proto` handshake inside itself. So the table above is the target and the *Transport* and
+*Spawners* sections below are the state; [Ports](ports.md) is the proposal that separates them.
 
 ## Protocol
 
 The protocol is a set of **frame objects** — plain JS objects carrying a single
-`$`-key each. It knows nothing about framing; that is the transport's business.
+`$`-key each. It knows nothing about framing; that is the port's business ([Ports](ports.md)).
 
 ### Version
 
@@ -141,45 +154,29 @@ serialization.
 parent's identity *does* round-trip — both sides resolve the same global symbol
 by name.
 
-### Framing is **not** here
+### Framing is a port's business
 
-- **Encoding** (JSON) is the protocol's job — `encode`/`decode` turn a frame
-  object into a string and back, and the version names it (`json.v1`).
-- **Framing** is how a byte stream is split back into discrete messages. It
-  belongs to the transport — the transport is the thing that must split the
-  stream.
+- **Encoding** (JSON) is the protocol's job — `encode`/`decode` turn a frame object into a string and back,
+  and the version names it (`json.v1`).
+- **Framing** — how a byte stream is split back into discrete messages — belongs to the layer that has the
+  bytes, and in the target shape it is an *adapter* over a byte channel rather than a rule every transport
+  implements for itself: a part is a line plus the octets it announced ([Ports](ports.md)). WebSocket and
+  Worker have native message boundaries and add nothing.
 
-So `encode`/`decode` stay in the protocol (JSON only, no delimiter); the
-transport adds and strips the delimiter. WebSocket and Worker have native
-message boundaries, so they add nothing.
+Today that split is written per transport — `lines.ts`, called by fifo, stdio and socket — which is one rule
+in three places. The seam above it sees no delimiter either way.
 
 ## Transport
 
-There are two currency types above the transport:
+There is one currency above the medium: `Channel<Frame>`, the sixteen frames and the guards in `channel.ts`.
+Below it is a port, whose frames are parts or bytes ([Ports](ports.md)).
 
-```ts
-interface StringTransport {
-  send(frame: string): void | Promise<void>;
-  onMessage(handler: (frame: string) => void): void;
-  removeHandler(): void;
-  onClose(handler: () => void): void;
-  close(): Promise<void>;
-}
-
-interface Channel {
-  send(frame: Frame): void | Promise<void>;
-  onMessage(handler: (frame: Frame) => void): () => void; // the returned function unsubscribes this reader
-  onClose(handler: () => void): void;
-  close(): Promise<void>;
-}
-```
-
-`StringTransport` moves encoded frames (strings); `Channel` moves decoded frame objects, and
-`json1Channel(transport)` wraps the former into the latter.  That wrapper is where several readers on
-one connection are kept: it installs one handler on the transport and offers each frame to every
-subscriber, so a second reader — a log stream, a terminal's own output — is a second entry and not a
-second handler.  The transports keep their one-handler contract and throw on a second one, which is
-why the fan-out belongs above them.
+`json1Channel` is what stands between them today: it wraps a `StringTransport` into a `Channel`, and that
+wrapper is where several readers on one connection are kept — one handler on the transport, every frame
+offered to every subscriber, so a second reader (a log stream, a terminal's own output) is a second entry
+and not a second handler. The transports keep their one-handler contract and throw on a second one, which is
+why the fan-out belongs above them. In the target shape that wrapper is `json1`, and the fan-out is the
+channel's own `onFrame`.
 
 | Transport | Implements | Encoding | Client reaches the server by |
 | --- | --- | --- | --- |
@@ -208,6 +205,11 @@ The spawner owns the `$proto` handshake: the server spawner **sends** `$proto`
 and returns the channel; the client spawner **awaits and validates** `$proto`
 and returns the channel. The seam starts at `$init` and never sees the version
 string.
+
+> **Target, from [Ports](ports.md).** A spawner narrows to its medium: it returns the channel that medium
+> gives — parts or bytes — and stops doing the handshake and the encoding. What the seam receives becomes
+> `handshake(json1(spawner(args)))`, composed once at the entry point instead of rebuilt inside eight
+> spawners. What each spawner *opens* does not change, which is what the table below says.
 
 | Spawner | Side | Bootstraps by |
 | --- | --- | --- |

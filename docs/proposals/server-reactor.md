@@ -9,6 +9,12 @@
 > A connection is also a way out: `ServedConnection.output(fd, data)` writes on the far end's own output, as the
 > `$fd` frame its reader lifts out of the wire, and `socketClientSpawner(path, { onOutput })` takes it there.
 
+>
+> **Carrier, 2026-11-07.** What a `Listener` accepts and a spawner produces is becoming a **port** — a
+> channel of parts or bytes ([Ports](ports.md)). The reactor's own shape, its `identify` and upgrade hooks and
+> its sessions do not change; the protocol step it already performs (`json1Channel`, the `$proto` handshake)
+> becomes the adapter that a caller composes, and `oneConnection(spawner)` becomes `fromSpawner(spawner)`.
+
 ## Summary
 
 Every server that serves actors to a remote caller writes the same loop by hand: take a connection from a

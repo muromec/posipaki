@@ -3,6 +3,8 @@
 **Status:** delivered, short of the consumer's switch (step 5): the core's half, both
 packages and the documentation page are in.  See the delivery list below.
 **Follows:** [actor-remote.md](./actor-remote.md)
+**Carrier:** [Ports](ports.md), 2026-11-07 — a spawner's product becomes the raw channel its medium gives, with
+the handshake and the encoding as adapters above it. What each package here *reaches* does not change.
 
 ## Motivation
 
