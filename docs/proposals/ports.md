@@ -334,3 +334,18 @@ Each one is a red test first, and the suite stays green between them.
   carries bytes; one that already hands up parts needs `jsonSeamParts`, or a single helper that takes the
   spawner's frame type as an argument. Which of those is worth exporting is not decided, and it is the whole
   cost of keeping old call sites alive.
+
+## As built
+
+Slices 1 and 2 of the list above, 2026-11-07:
+
+- `src/port/channel.ts` — `Channel<F>`, `Part`, `ChannelClosed`.
+- `src/port/memory.ts` — `memoryChannelPair()`, a channel with no medium, and the one ending a medium would
+  discover for it (`fail`).
+- `src/port/stream.ts` — `streamChannel({read, write})`, the byte channel a stdio pair, a fifo or a socket
+  gives. A send settles once the stream has flushed the chunk, so the write side resists a writer that runs
+  ahead of the reader.
+- `src/port/split.ts` — `splitChannel(inner, announced?)`, bytes into parts, with the announcement travelling
+  in as a question.
+
+The spawners still run the whole stack themselves, so nothing in `posipaki/remote` is on this yet.
