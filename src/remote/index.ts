@@ -71,6 +71,10 @@ export type {
 } from "./stream.js";
 export { VERSION, encode, decode, readFrame, json1Channel } from "./protocols/json1.js";
 
+// the seam over a port, for a spawner that hands up a raw channel
+export { frameChannel, jsonSeam, jsonSeamParts, seamAnnounced } from "./seam.js";
+export type { JsonSeamOptions } from "./seam.js";
+
 // transports
 export { WebSocketTransport, WS_OPEN, type WebSocketLike } from "./transports/websocket.js";
 export { WorkerTransport, WORKER_VERSION, type WorkerLike } from "./transports/worker.js";
