@@ -99,6 +99,12 @@ export {
   type WebSocketCtor,
   type WebSocketOpener,
 } from "./spawners/ws-client.js";
-export { wsServerSpawner, bunServerWebSocket, type BunServerWebSocketLike } from "./spawners/ws-server.js";
+export {
+  wsServerSpawner,
+  bunServerWebSocket,
+  nodeServerWebSocket,
+  type BunServerWebSocketLike,
+  type NodeServerWebSocketLike,
+} from "./spawners/ws-server.js";
 export { workerClientSpawner, type WorkerCtor } from "./spawners/worker-client.js";
 export { workerSelfSpawner } from "./spawners/worker-self.js";

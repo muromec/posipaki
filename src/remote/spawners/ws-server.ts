@@ -56,3 +56,51 @@ export function bunServerWebSocket(ws: BunServerWebSocketLike): WebSocketLike {
     onclose: null,
   };
 }
+
+/** The `ws` package's server-side socket, as little of it as is used here. */
+export interface NodeServerWebSocketLike {
+  send(data: string | Uint8Array): void;
+  close(code?: number, reason?: string): void;
+  readonly readyState: number;
+  on(event: "message", handler: (data: unknown) => void): unknown;
+  on(event: "close", handler: () => void): unknown;
+  on(event: "error", handler: (error: Error) => void): unknown;
+}
+
+/**
+ * Adapt a node `ws` socket to the `WebSocketLike` the transport consumes.
+ *
+ * The difference from Bun's is who delivers the events: `ws` hands them to listeners on the socket itself, so the
+ * adapter subscribes once and routes them onto the settable slots.  An error ends the connection the way a close
+ * does — the transport hears one ending, not two.
+ *
+ * ```ts
+ * server.on("upgrade", (request, socket, head) => {
+ *   wss.handleUpgrade(request, socket, head, (ws) => {
+ *     serveRemoteActor(actor, wsServerSpawner(nodeServerWebSocket(ws)));
+ *   });
+ * });
+ * ```
+ */
+export function nodeServerWebSocket(ws: NodeServerWebSocketLike): WebSocketLike {
+  const adapter: WebSocketLike = {
+    send: (data) => ws.send(data),
+    close: (code, reason) => ws.close(code, reason),
+    // Read through on every ask, for the same reason as Bun's: a snapshot keeps saying "opening".
+    get readyState() {
+      return ws.readyState;
+    },
+    onmessage: null,
+    onclose: null,
+  };
+  let ended = false;
+  const finish = (): void => {
+    if (ended) return;
+    ended = true;
+    adapter.onclose?.();
+  };
+  ws.on("message", (data) => adapter.onmessage?.({ data }));
+  ws.on("close", finish);
+  ws.on("error", finish);
+  return adapter;
+}

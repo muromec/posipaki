@@ -3,7 +3,7 @@
 
 import { describe, it, expect } from "vitest";
 import { wsClientSpawner, type WebSocketCtor } from "./ws-client.js";
-import { wsServerSpawner, bunServerWebSocket } from "./ws-server.js";
+import { wsServerSpawner, bunServerWebSocket, nodeServerWebSocket } from "./ws-server.js";
 import { VERSION, decode } from "../protocols/json1.js";
 import type { WebSocketLike } from "../transports/websocket.js";
 
@@ -169,5 +169,46 @@ describe("bunServerWebSocket", () => {
     };
     adapter.onmessage?.(message);
     expect(got).toBe("x");
+  });
+});
+
+describe("nodeServerWebSocket", () => {
+  it("adapts a ws socket whose events arrive as listeners, and ends once", () => {
+    const listeners = new Map<string, (payload?: unknown) => void>();
+    const sent: Array<string | Uint8Array> = [];
+    let closed = false;
+    const adapter = nodeServerWebSocket({
+      send: (data) => sent.push(data),
+      close: () => {
+        closed = true;
+      },
+      readyState: 1,
+      on(event, handler) {
+        listeners.set(event, handler as (payload?: unknown) => void);
+        return this;
+      },
+    });
+
+    adapter.send("hi");
+    adapter.close();
+    expect(sent).toEqual(["hi"]);
+    expect(closed).toBe(true);
+
+    let said = "";
+    let endings = 0;
+    adapter.onmessage = (event) => {
+      said = String(event.data);
+    };
+    adapter.onclose = () => {
+      endings += 1;
+    };
+
+    listeners.get("message")?.("hello");
+    // An error and the close that follows it are one ending, not two.
+    listeners.get("error")?.(new Error("boom"));
+    listeners.get("close")?.();
+
+    expect(said).toBe("hello");
+    expect(endings).toBe(1);
   });
 });
