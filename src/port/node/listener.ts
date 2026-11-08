@@ -5,8 +5,10 @@
 // sees a pair and nothing about the protocol.
 //
 // The body is built before the handler runs, because a server must answer with a `Response` in the same turn it is
-// asked: writes go into the response's stream, and closing the outbound port ends it.
+// asked: writes go into the response's stream, and closing the outbound port ends it.  The head — status and
+// headers — rides the outbound port as one command, so the `Response` is built from what the handler chose.
 
+import { HttpRefusal } from "../fetch.js";
 import type { Channel } from "../channel.js";
 import { held } from "../held.js";
 import type { PortListener, PortPair } from "../reactor.js";
@@ -22,6 +24,12 @@ export interface HttpListenerOptions<Meta> {
 export interface HttpListener<Meta> extends PortListener<Uint8Array, Uint8Array, Meta> {
   readonly port: number;
 }
+/** What a response says before its body: the status and the headers a handler chose. */
+export interface ResponseHead {
+  readonly status: number;
+  readonly headers?: HeadersInit;
+}
+
 
 /** The Bun server this wraps, as little of it as is used here. */
 interface BunServer {
@@ -70,11 +78,19 @@ export function httpListener<Meta = unknown>(options: HttpListenerOptions<Meta> 
       try {
         meta = options.identify === undefined ? (undefined as Meta) : await options.identify(request);
       } catch (error) {
-        return new Response(error instanceof Error ? error.message : String(error), { status: 401 });
+        // A refusal is an answer: a `HttpRefusal` says which status, anything else is the listener's own 401.
+        const status = error instanceof HttpRefusal ? error.status : 401;
+        return new Response(error instanceof Error ? error.message : String(error), { status });
       }
       const outbound = responsePort();
       take({ inbound: requestPort(request), outbound: outbound.channel, meta });
-      return new Response(outbound.body);
+      // The handler says what it answers with before it writes — the head rides the outbound channel as one
+      // command — so the `Response` is built once that is known rather than a 200 nobody chose.
+      const head = await outbound.head;
+      return new Response(outbound.body, {
+        status: head.status,
+        ...(head.headers === undefined ? {} : { headers: head.headers }),
+      });
     },
   });
   server = bound;
@@ -158,18 +174,34 @@ function requestPort(request: Request): Channel<Uint8Array, void> {
       for (const target of [...readers]) target(chunk.value);
     }
   })();
-
   return port;
 }
 
 /** The response's channel, and the body a `Response` is built from.  One stream, written by the channel. */
-function responsePort(): { channel: Channel<Uint8Array, void>; body: ReadableStream<Uint8Array> } {
+function responsePort(): {
+  channel: Channel<Uint8Array, void>;
+  body: ReadableStream<Uint8Array>;
+  head: Promise<ResponseHead>;
+} {
   const readers = new Set<(frame: Uint8Array) => void>();
   const closers = new Set<(reason: void) => void>();
   let ended = false;
+  /** The head, once the handler has said it — or the first byte has, which is a 200. */
+  let stated: ResponseHead | null = null;
+  let settle: (head: ResponseHead) => void = () => {};
+  const head = new Promise<ResponseHead>((resolve) => {
+    settle = resolve;
+  });
+  const say = (what: ResponseHead): void => {
+    if (stated !== null) return;
+    stated = what;
+    settle(what);
+  };
 
   const end = (): void => {
     if (ended) return;
+    // An answer that ends without saying anything is a 200 with no body, which is what the wire says too.
+    say({ status: 200 });
     ended = true;
     for (const closer of [...closers]) closer(undefined);
   };
@@ -195,6 +227,7 @@ function responsePort(): { channel: Channel<Uint8Array, void>; body: ReadableStr
     async send(frame) {
       if (ended) throw new Error("this response is over");
       for (const reader of [...readers]) reader(frame);
+      say({ status: 200 });
     },
     onFrame() {
       return () => {};
@@ -216,8 +249,20 @@ function responsePort(): { channel: Channel<Uint8Array, void>; body: ReadableStr
       end();
     },
     info: {},
-    control: () => {},
+    control(command) {
+      // The head is a command on the same channel: a handler says what it answers with before it writes, and
+      // the listener builds the `Response` from it.
+      const head = command.head;
+      if (typeof head === "object" && head !== null) {
+        const status = (head as { status?: unknown }).status;
+        const headers = (head as { headers?: unknown }).headers;
+        say({
+          status: typeof status === "number" ? status : 200,
+          ...(typeof headers === "object" && headers !== null ? { headers: headers as HeadersInit } : {}),
+        });
+      }
+    },
   };
 
-  return { channel, body };
+  return { channel, body, head };
 }

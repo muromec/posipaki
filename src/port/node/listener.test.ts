@@ -6,7 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import type { Channel } from "../channel.js";
-import { fetchPort, type HttpEnd } from "../fetch.js";
+import { fetchPort, HttpRefusal, type HttpEnd } from "../fetch.js";
 import { portReactor } from "../reactor.js";
 import { httpListener, type HttpListener } from "./listener.js";
 
@@ -104,5 +104,51 @@ describe("httpListener", () => {
     await reactor.stop();
 
     expect(seen).toHaveLength(1);
+  });
+});
+
+describe("the head a handler chooses", () => {
+  it("answers with the status and headers the outbound port stated", async () => {
+    const listener = listen();
+    const client = fetchPort(`http://127.0.0.1:${listener.port}/created`);
+    const pair = await listener.accept();
+
+    // The head is one command on the same channel, said before the first byte.
+    pair.outbound.control({ head: { status: 202, headers: { "x-made-by": "a test" } } });
+    await pair.outbound.send(new TextEncoder().encode("accepted"));
+    await pair.outbound.close();
+
+    const answer = await client;
+    const said = await read(answer);
+    expect(said.said).toBe("accepted");
+    expect(said.end.status).toBe(202);
+  });
+
+  it("answers 200 when a handler writes without saying anything first", async () => {
+    const listener = listen();
+    const client = fetchPort(`http://127.0.0.1:${listener.port}/plain`);
+    const pair = await listener.accept();
+
+    await pair.outbound.send(new TextEncoder().encode("plain"));
+    await pair.outbound.close();
+
+    expect((await read(await client)).end.status).toBe(200);
+  });
+});
+
+describe("a refusal that knows its status", () => {
+  it("answers with the status a HttpRefusal carries, where a plain throw is the listener's own 401", async () => {
+    const listener = listen((request) => {
+      if (!request.url.endsWith("/known")) throw new HttpRefusal(404, "nothing is registered at that path");
+      return { route: "known" };
+    });
+
+    const missing = await fetchPort(`http://127.0.0.1:${listener.port}/nobody`).then(
+      () => "answered",
+      (error: unknown) => error,
+    );
+    expect(missing).toBeInstanceOf(HttpRefusal);
+    expect((missing as HttpRefusal).status).toBe(404);
+    expect((missing as HttpRefusal).message).toContain("nothing is registered");
   });
 });
