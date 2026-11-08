@@ -3,6 +3,7 @@
 // A real `/bin/sh` behind the actor.  The ending is state, not a message: the actor puts it in `state.end` and
 // stops, so the test reads it there once the actor has gone.
 
+import { existsSync } from "node:fs";
 import { afterEach, describe, expect, it } from "vitest";
 
 import { createCollector, createRootTracker } from "../../testing/index.js";
@@ -51,6 +52,32 @@ describe("Utf8Port", () => {
 
     proc.send({ type: "STOP" });
     await proc.wait();
+  });
+
+  it("says which process it started, and a signal reaches it", async () => {
+    const collector = createCollector<Utf8Out>({ type: "DATA" });
+    const proc = await Utf8Port.spawn(
+      {
+        command: [
+          "/bin/sh",
+          "-c",
+          "trap 'echo caught; exit 7' TERM; echo ready; while :; do sleep 0.1; done",
+        ],
+      },
+      { addPlugins: [tracker.plugin, collector.plugin] },
+    );
+    await proc.ready();
+    const ready = await collector.next((msg: Utf8Out) => msg.type === "DATA" && msg.data === "ready");
+    if (!ready.ok) throw new Error(ready.detail);
+
+    // The id is the medium's own fact, read from the port rather than from a child handle.
+    const pid = proc.state?.info?.pid;
+    expect(typeof pid).toBe("number");
+    expect(existsSync(`/proc/${pid}`)).toBe(true);
+
+    proc.send({ type: "SIGNAL", signal: "SIGTERM" });
+    await proc.wait();
+    expect(proc.state?.end).toEqual({ kind: "exit", code: 7 });
   });
 });
 

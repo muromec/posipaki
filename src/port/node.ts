@@ -5,5 +5,5 @@
 // such import.
 
 export { spawnPort, spawnPorts, type ProcessEnd, type ProcessPorts, type SpawnPortOptions } from "./node/spawn.js";
-export { BinaryPort, Utf8Port, type ProcessPortArgs } from "./node/process.js";
+export { BinaryPort, Utf8Port, type ProcessInfo, type ProcessPortArgs } from "./node/process.js";
 export { httpListener, type HttpListener, type HttpListenerOptions } from "./node/listener.js";

@@ -34,45 +34,73 @@ export type PortIn<F> = SendMessage<F> | SignalMessage;
 export type PortOut<F> = DataMessage<F>;
 
 /** What a parent may read of a port.  The ending is here because it is state, not news. */
-export interface PortPublic<C> {
+export interface PortPublic<C, Info = unknown> {
   /** The channel is open.  False before it opens and after it has ended. */
   alive: boolean;
   /** How it ended, or null while it has not. */
   end: C | null;
+  /** What the medium knows about itself — a process its pid — or null while it knows nothing. */
+  info: Info | null;
 }
 
-export interface PortActorSpec<Args, F, C> {
+/**
+ * What an opener answers when the medium has more to say than a channel.
+ *
+ * `info` is what the medium knows about itself, and `signal` is how a signal reaches what is behind the
+ * channel: a channel cannot offer that, so the opener that made it does.
+ */
+export interface Opened<F, C = string, Info = unknown> {
+  channel: Channel<F, C>;
+  info?: Info;
+  signal?(signal: string): void;
+}
+
+export interface PortActorSpec<Args, F, C, Info = unknown> {
   name: string;
   /** Opens the channel this actor owns.  Called once, when the actor starts. */
-  open(args: Args): Promise<Channel<F, C>>;
-  /** How a signal reaches the medium.  A process sends it; a connection with no process behind it has none. */
-  signal?(channel: Channel<F, C>, signal: string): void;
+  open(args: Args): Promise<Channel<F, C> | Opened<F, C, Info>>;
 }
 
-type PortState<C> = { public: PortPublic<C>; private: { channel: Channel<unknown, C> | null; args: unknown } };
+type PortState<C, Info> = {
+  public: PortPublic<C, Info>;
+  private: {
+    channel: Channel<unknown, C> | null;
+    signal: ((signal: string) => void) | null;
+    args: unknown;
+  };
+};
 
 /**
  * An actor over one channel.
  *
- * In `SEND {data}` writes to it and `SIGNAL {signal}` asks the medium to act on what is behind it; posipaki's
- * `STOP` ends the actor, which closes the channel.  Out `DATA {data}` for every frame.  The channel's ending is
- * left in `state.end` and the actor stops.
+ * In `SEND {data}` writes to it and `SIGNAL {signal}` reaches the medium through the opener's `signal`;
+ * posipaki's `STOP` ends the actor, which closes the channel.  Out `DATA {data}` for every frame.  The
+ * channel's ending is left in `state.end`, what the medium knows about itself in `state.info`, and then the
+ * actor stops.
  */
-export function portActor<Args, F, C>(
-  spec: PortActorSpec<Args, F, C>,
-): ActorDefinition<Args, PortState<C>, PortIn<F>, PortOut<F>, {}> {
+export function portActor<Args, F, C, Info = unknown>(
+  spec: PortActorSpec<Args, F, C, Info>,
+): ActorDefinition<Args, PortState<C, Info>, PortIn<F>, PortOut<F>, {}> {
   return defineActor({
     name: spec.name,
     inMessages: defineMessages<PortIn<F>>(),
     outMessages: defineMessages<PortOut<F>>(),
     setup: (args: Args) => ({
-      public: { alive: false as boolean, end: null as C | null },
-      private: { channel: null as Channel<unknown, C> | null, args },
+      public: { alive: false as boolean, end: null as C | null, info: null as Info | null },
+      private: {
+        channel: null as Channel<unknown, C> | null,
+        signal: null as ((signal: string) => void) | null,
+        args,
+      },
     }),
     afterStart() {
       const { args } = this.state.private;
-      void spec.open(args).then((channel) => {
+      void spec.open(args).then((answer) => {
+        const opened: Opened<F, C, Info> = "channel" in answer ? answer : { channel: answer };
+        const { channel } = opened;
         this.state.private.channel = channel;
+        this.state.private.signal = opened.signal ?? null;
+        this.state.public.info = opened.info ?? null;
         this.state.public.alive = true;
         channel.onFrame((data) => {
           this.emit({ type: "DATA", data });
@@ -93,8 +121,7 @@ export function portActor<Args, F, C>(
         await (this.state.private.channel as Channel<F, C> | null)?.send(msg.data);
       },
       SIGNAL(msg: SignalMessage) {
-        const channel = this.state.private.channel as Channel<F, C> | null;
-        if (channel !== null) spec.signal?.(channel, msg.signal);
+        this.state.private.signal?.(msg.signal);
       },
     },
   });

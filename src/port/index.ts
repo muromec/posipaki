@@ -6,8 +6,7 @@
 // Nothing here knows a protocol.  A protocol is an adapter over one of these channels and lives above, with the
 // thing that speaks it: `src/remote/protocols` is json.v1, and `src/remote/seam.ts` composes it.
 //
-// Not in this entry: the owner, one actor over a channel.  It is the next piece of work and is described in
-// docs/proposals/ports.md.
+// The owner is here too: `portActor` is one actor over one channel, whatever the medium behind it.
 
 export { ChannelClosed, type Channel, type Part } from "./channel.js";
 export { memoryChannelPair, type ChannelPair, type MemoryEnd } from "./memory.js";
@@ -18,6 +17,7 @@ export { held } from "./held.js";
 export {
   portActor,
   type DataMessage,
+  type Opened,
   type PortActorSpec,
   type PortIn,
   type PortOut,

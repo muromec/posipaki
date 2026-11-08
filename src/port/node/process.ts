@@ -1,13 +1,13 @@
 // ── the two ports that wrap a process ───────────────────────────────────────
 //
-// Both are `portActor` over `spawnPort`: one carries the child's octets as they are, the other puts the splitter
+// Both are `portActor` over `spawnPorts`: one carries the child's octets as they are, the other puts the splitter
 // underneath and carries lines.  The names are the contract — an actor definition is spawned by name.
 
 import type { Message } from "../../types.js";
 import { portActor } from "../actor.js";
 import type { Channel, Part } from "../channel.js";
 import { splitChannel } from "../split.js";
-import { spawnPort, type ProcessEnd } from "./spawn.js";
+import { spawnPorts, type ProcessEnd } from "./spawn.js";
 
 /** How a process port is started. */
 export interface ProcessPortArgs {
@@ -60,14 +60,29 @@ function lines(parts: Channel<Part, ProcessEnd>): Channel<string, ProcessEnd> {
   };
 }
 
+/** What a process port knows about itself: the id the kernel gave the process it started. */
+export interface ProcessInfo {
+  pid: number | undefined;
+}
+
 /** The child's octets, frame for frame. */
-export const BinaryPort = portActor<ProcessPortArgs, Uint8Array, ProcessEnd>({
+export const BinaryPort = portActor<ProcessPortArgs, Uint8Array, ProcessEnd, ProcessInfo>({
   name: "binary-port",
-  open: (args) => spawnPort(args.command, args),
+  open: async (args) => {
+    const ports = await spawnPorts(args.command, args);
+    return { channel: ports.stdout, info: { pid: ports.pid }, signal: (name) => ports.signal(name) };
+  },
 });
 
 /** The same child, cut into lines. */
-export const Utf8Port = portActor<ProcessPortArgs, string, ProcessEnd>({
+export const Utf8Port = portActor<ProcessPortArgs, string, ProcessEnd, ProcessInfo>({
   name: "utf8-port",
-  open: async (args) => lines(splitChannel(await spawnPort(args.command, args))),
+  open: async (args) => {
+    const ports = await spawnPorts(args.command, args);
+    return {
+      channel: lines(splitChannel(ports.stdout)),
+      info: { pid: ports.pid },
+      signal: (name) => ports.signal(name),
+    };
+  },
 });
