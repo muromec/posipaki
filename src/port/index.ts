@@ -24,6 +24,6 @@ export {
   type SendMessage,
   type SignalMessage,
 } from "./actor.js";
-export { fetchPort, type FetchPortOptions, type HttpEnd } from "./fetch.js";
+export { fetchPort, HttpRefusal, type FetchPortOptions, type HttpEnd } from "./fetch.js";
 export { portReactor, type PortListener, type PortPair, type PortReactor, type PortReactorOptions } from "./reactor.js";
 export { duplexChannel } from "./duplex.js";

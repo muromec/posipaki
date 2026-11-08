@@ -15,6 +15,7 @@
 import { StringDecoder } from "node:string_decoder";
 
 import type { Channel, Part } from "./channel.js";
+import { held } from "./held.js";
 
 const NL = 0x0a;
 const CR = 0x0d;
@@ -97,29 +98,10 @@ export function splitChannel<C = string>(
     }
   };
 
-  inner.onFrame((chunk) => {
-    if (ended) return;
-    buffered = buffered.length === 0 ? Buffer.from(chunk) : Buffer.concat([buffered, Buffer.from(chunk)]);
-    drain();
-  });
-  inner.onError((error) => {
-    for (const failer of [...failers]) failer(error);
-  });
-  inner.onClose((why) => {
-    if (ended) return;
-    // Whatever is left without a terminator is still a line: a peer that hangs up after writing has said
-    // something, and dropping it would be the framing deciding to lose the last word.
-    if (pending === null && buffered.length > 0) {
-      const rest = buffered;
-      buffered = Buffer.alloc(0);
-      emit({ line: decoder.write(rest) + decoder.end(), bytes: null });
-    } else {
-      decoder.end();
-    }
-    close(why);
-  });
-
-  return {
+  // Built and wrapped before the inner channel is read: the medium may have kept frames for its first
+  // reader, and subscribing drains them at once — a part produced then must be a reader's to find, not the
+  // wire's to lose.
+  const parts: Channel<Part, C> = held<Part, C>({
     send: async (part: Part) => {
       const head = Buffer.from(`${part.line}\n`, "utf8");
       const body = part.bytes === null ? head : Buffer.concat([head, Buffer.from(part.bytes)]);
@@ -153,5 +135,29 @@ export function splitChannel<C = string>(
     },
     info: inner.info,
     control: (command) => inner.control(command),
-  };
+  });
+
+  inner.onFrame((chunk) => {
+    if (ended) return;
+    buffered = buffered.length === 0 ? Buffer.from(chunk) : Buffer.concat([buffered, Buffer.from(chunk)]);
+    drain();
+  });
+  inner.onError((error) => {
+    for (const failer of [...failers]) failer(error);
+  });
+  inner.onClose((why) => {
+    if (ended) return;
+    // Whatever is left without a terminator is still a line: a peer that hangs up after writing has said
+    // something, and dropping it would be the framing deciding to lose the last word.
+    if (pending === null && buffered.length > 0) {
+      const rest = buffered;
+      buffered = Buffer.alloc(0);
+      emit({ line: decoder.write(rest) + decoder.end(), bytes: null });
+    } else {
+      decoder.end();
+    }
+    close(why);
+  });
+
+  return parts;
 }

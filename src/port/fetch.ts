@@ -70,7 +70,7 @@ export async function fetchPort(url: string, options: FetchPortOptions = {}): Pr
       controller.abort();
       await reader?.cancel().catch(() => undefined);
     },
-    info: { url },
+    info: { url, status: response.status },
     control: () => {},
   };
 
@@ -103,6 +103,22 @@ export async function fetchPort(url: string, options: FetchPortOptions = {}): Pr
 }
 
 /** The response head, or a rejection that says why there is none. */
+/**
+ * A response that is not a stream: the far end answered, and the answer was a refusal.
+ *
+ * The status is here as a fact and in the sentence, because a caller that decides what to do next wants the
+ * number and a caller reading a log wants the words.
+ */
+export class HttpRefusal extends Error {
+  constructor(
+    readonly status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "HttpRefusal";
+  }
+}
+
 async function answered(url: string, init: RequestInit, connectMs: number | undefined): Promise<Response> {
   const attempt = fetch(url, init).catch((error: unknown) => Promise.reject(named(url, error)));
   const response =
@@ -117,7 +133,10 @@ async function answered(url: string, init: RequestInit, connectMs: number | unde
 
   if (!response.ok) {
     const body = await response.text().catch(() => "");
-    throw new Error(`fetchPort: ${url} answered ${response.status}${body === "" ? "" : `: ${body.slice(0, 200)}`}`);
+    throw new HttpRefusal(
+      response.status,
+      `fetchPort: ${url} answered ${response.status}${body === "" ? "" : `: ${body.slice(0, 200)}`}`,
+    );
   }
   return response;
 }
