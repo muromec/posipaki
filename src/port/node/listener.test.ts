@@ -1,13 +1,14 @@
-// ── an HTTP server whose answers are ports ──────────────────────────────────
+// ── an HTTP server as a port listener ───────────────────────────────────────
 //
-// A real Bun server and a real fetch.  The client's head arrives with the first frame the handler writes, which
-// is how HTTP works: a request is started, the handler answers, and the client reads from there.
+// A real Bun server and a real fetch.  The request arrives as a pair: its body is the inbound port, the answer is
+// written into the outbound one, and the client reads what that port wrote.
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { fetchPort, type HttpEnd } from "../fetch.js";
 import type { Channel } from "../channel.js";
-import { httpListener, type HttpAccept, type HttpListener } from "./listener.js";
+import { fetchPort, type HttpEnd } from "../fetch.js";
+import { portReactor } from "../reactor.js";
+import { httpListener, type HttpListener } from "./listener.js";
 
 const open: Array<HttpListener<unknown>> = [];
 
@@ -30,30 +31,48 @@ async function read(port: Channel<Uint8Array, HttpEnd>): Promise<{ said: string;
 }
 
 describe("httpListener", () => {
-  it("hands the request to accept(), and the body is what the channel wrote", async () => {
+  it("answers with what the outbound port wrote, as a whole body", async () => {
     const listener = listen();
     const client = fetchPort(`http://127.0.0.1:${listener.port}/one`);
-    const request: HttpAccept<unknown> = await listener.accept();
+    const pair = await listener.accept();
 
-    await request.response.send(new TextEncoder().encode("hello"));
-    await request.response.close();
+    await pair.outbound.send(new TextEncoder().encode("hello"));
+    await pair.outbound.close();
 
     expect(await read(await client)).toEqual({ said: "hello", end: { status: 200 } });
   });
 
-  it("answers with a stream when the channel keeps writing", async () => {
+  it("answers with a stream when the outbound port keeps writing", async () => {
     const listener = listen();
     const client = fetchPort(`http://127.0.0.1:${listener.port}/stream`);
-    const request = await listener.accept();
+    const pair = await listener.accept();
 
-    await request.response.send(new TextEncoder().encode("one\n"));
-    await request.response.send(new TextEncoder().encode("two\n"));
-    await request.response.close();
+    await pair.outbound.send(new TextEncoder().encode("one\n"));
+    await pair.outbound.send(new TextEncoder().encode("two\n"));
+    await pair.outbound.close();
 
     expect((await read(await client)).said).toBe("one\ntwo\n");
   });
 
-  it("refuses before a body exists when identify throws", async () => {
+  it("carries the request's body as the inbound port", async () => {
+    const listener = listen();
+    const client = fetchPort(`http://127.0.0.1:${listener.port}/post`, {
+      init: { method: "POST", body: "ping" },
+    });
+    const pair = await listener.accept();
+
+    const received: string[] = [];
+    pair.inbound.onFrame((bytes) => received.push(Buffer.from(bytes).toString("utf8")));
+    await new Promise((resolve) => pair.inbound.onClose(resolve));
+
+    await pair.outbound.send(new TextEncoder().encode("pong"));
+    await pair.outbound.close();
+    await read(await client);
+
+    expect(received.join("")).toBe("ping");
+  });
+
+  it("refuses before a pair exists when identify throws", async () => {
     const listener = listen<never>(() => {
       throw new Error("no token");
     });
@@ -63,11 +82,27 @@ describe("httpListener", () => {
   it("gives identify's answer to the handler as meta", async () => {
     const listener = listen((request: Request) => new URL(request.url).pathname);
     const client = fetchPort(`http://127.0.0.1:${listener.port}/who`);
-    const request = await listener.accept();
+    const pair = await listener.accept();
 
-    expect(request.meta).toBe("/who");
-    await request.response.send(new TextEncoder().encode("ok"));
-    await request.response.close();
+    expect(pair.meta).toBe("/who");
+    await pair.outbound.send(new TextEncoder().encode("ok"));
+    await pair.outbound.close();
     await read(await client);
+  });
+
+  it("serves the pairs through portReactor, one handler per request", async () => {
+    const listener = listen();
+    const seen: string[] = [];
+    const reactor = portReactor(listener, async (pair) => {
+      seen.push(pair.meta as string);
+      await pair.outbound.send(new TextEncoder().encode("done"));
+      await pair.outbound.close();
+    });
+
+    const client = fetchPort(`http://127.0.0.1:${listener.port}/via-reactor`);
+    expect((await read(await client)).said).toBe("done");
+    await reactor.stop();
+
+    expect(seen).toHaveLength(1);
   });
 });
