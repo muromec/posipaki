@@ -61,10 +61,11 @@ export interface PortActorSpec<Args, F, C, Info = unknown> {
   open(args: Args): Promise<Channel<F, C> | Opened<F, C, Info>>;
 }
 
-type PortState<C, Info> = {
+type PortState<F, C, Info> = {
   public: PortPublic<C, Info>;
   private: {
-    channel: Channel<unknown, C> | null;
+    /** The opening, kept so a send waits for the channel rather than being dropped before it exists. */
+    opening: Promise<Channel<F, C>> | null;
     signal: ((signal: string) => void) | null;
     args: unknown;
   };
@@ -80,7 +81,7 @@ type PortState<C, Info> = {
  */
 export function portActor<Args, F, C, Info = unknown>(
   spec: PortActorSpec<Args, F, C, Info>,
-): ActorDefinition<Args, PortState<C, Info>, PortIn<F>, PortOut<F>, {}> {
+): ActorDefinition<Args, PortState<F, C, Info>, PortIn<F>, PortOut<F>, {}> {
   return defineActor({
     name: spec.name,
     inMessages: defineMessages<PortIn<F>>(),
@@ -88,17 +89,16 @@ export function portActor<Args, F, C, Info = unknown>(
     setup: (args: Args) => ({
       public: { alive: false as boolean, end: null as C | null, info: null as Info | null },
       private: {
-        channel: null as Channel<unknown, C> | null,
+        opening: null as Promise<Channel<F, C>> | null,
         signal: null as ((signal: string) => void) | null,
         args,
       },
     }),
     afterStart() {
       const { args } = this.state.private;
-      void spec.open(args).then((answer) => {
+      const opening = spec.open(args).then((answer) => {
         const opened: Opened<F, C, Info> = "channel" in answer ? answer : { channel: answer };
         const { channel } = opened;
-        this.state.private.channel = channel;
         this.state.private.signal = opened.signal ?? null;
         this.state.public.info = opened.info ?? null;
         this.state.public.alive = true;
@@ -110,15 +110,28 @@ export function portActor<Args, F, C, Info = unknown>(
           this.state.public.end = reason;
           this.exit();
         });
+        return channel;
+      });
+      this.state.private.opening = opening;
+      // A channel that never opens is this actor's own failure: nothing can be sent and nothing arrives.
+      void opening.catch((error: unknown) => {
+        this.exit(`the port could not open: ${error instanceof Error ? error.message : String(error)}`);
       });
     },
     async beforeEnd() {
       this.state.public.alive = false;
-      await (this.state.private.channel as Channel<F, C> | null)?.close();
+      const opening = this.state.private.opening;
+      if (opening === null) return;
+      const channel = await opening.catch(() => null);
+      await channel?.close();
     },
     handlers: {
+      // Held until the channel exists: an opener that has not answered yet is not a reason to lose a frame.
       async SEND(msg: SendMessage<F>) {
-        await (this.state.private.channel as Channel<F, C> | null)?.send(msg.data);
+        const opening = this.state.private.opening;
+        if (opening === null) return;
+        const channel = await opening;
+        await channel.send(msg.data);
       },
       SIGNAL(msg: SignalMessage) {
         this.state.private.signal?.(msg.signal);
