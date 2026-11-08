@@ -211,4 +211,27 @@ describe("nodeServerWebSocket", () => {
     expect(said).toBe("hello");
     expect(endings).toBe(1);
   });
+
+  it("hands a text frame back as text, and a binary one as bytes", () => {
+    // `ws` gives a Buffer for both and puts the distinction in the second argument; a text frame passed on as
+    // bytes is a line the transport never terminates, so nothing above the adapter ever reads a frame.
+    const box: { heard: ((data: unknown, isBinary: boolean) => void) | null } = { heard: null };
+    const adapter = nodeServerWebSocket({
+      send: () => {},
+      close: () => {},
+      readyState: 1,
+      on(event, handler) {
+        if (event === "message") box.heard = handler as (data: unknown, isBinary: boolean) => void;
+        return this;
+      },
+    });
+    const seen: unknown[] = [];
+    adapter.onmessage = (event) => seen.push(event.data);
+
+    box.heard?.(Buffer.from("a line"), false);
+    box.heard?.(Buffer.from([1, 2]), true);
+
+    expect(seen[0]).toBe("a line");
+    expect(Buffer.from(seen[1] as Uint8Array)).toEqual(Buffer.from([1, 2]));
+  });
 });

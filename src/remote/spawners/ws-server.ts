@@ -62,7 +62,7 @@ export interface NodeServerWebSocketLike {
   send(data: string | Uint8Array): void;
   close(code?: number, reason?: string): void;
   readonly readyState: number;
-  on(event: "message", handler: (data: unknown) => void): unknown;
+  on(event: "message", handler: (data: unknown, isBinary: boolean) => void): unknown;
   on(event: "close", handler: () => void): unknown;
   on(event: "error", handler: (error: Error) => void): unknown;
 }
@@ -99,7 +99,17 @@ export function nodeServerWebSocket(ws: NodeServerWebSocketLike): WebSocketLike 
     ended = true;
     adapter.onclose?.();
   };
-  ws.on("message", (data) => adapter.onmessage?.({ data }));
+  ws.on("message", (data, isBinary) => {
+    const bytes = Array.isArray(data)
+      ? Buffer.concat(data as Uint8Array[])
+      : Buffer.isBuffer(data)
+        ? data
+        : Buffer.from(data as ArrayBuffer);
+    // A text frame has to come back as text.  `ws` hands over a Buffer either way and puts the distinction in
+    // its second argument; the transport reads a string as a line and bytes as the body a line announced, so a
+    // text frame passed on as bytes is a line nobody ever terminates.
+    adapter.onmessage?.({ data: isBinary ? bytes : bytes.toString("utf8") });
+  });
   ws.on("close", finish);
   ws.on("error", finish);
   return adapter;
