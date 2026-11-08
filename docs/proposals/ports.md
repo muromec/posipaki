@@ -549,7 +549,7 @@ The port actor, 2026-11-07:
   posipaki's own `EXIT` is the runtime's message about the actor ending, and two messages of one name on one
   stream is a trap the harness already paid for.
 - `signal` was not wired in the two process ports: `spawnPort`'s channel has no way to reach the process, and
-  stopping them was `close()` — stdin's end, then SIGKILL after the grace. *(Superseded 2026-11-08: the opener
+  stopping them was `close()` — stdin's end, then SIGKILL after the grace. *(Superseded 2026-11-08: `open`
   answers an `Opened`, and both process ports carry `pid` and `signal` — see below.)*
 
 What a medium can say about itself, 2026-11-08:
@@ -558,7 +558,7 @@ A port is one abstraction over every medium, so what only one medium can do arri
 rather than as a second thing beside it.
 
 - `SIGNAL` was already in the abstraction (`PortIn<F> = SEND | SIGNAL`); what was missing was a way to the
-  thing behind the channel, which a channel cannot offer. The opener now says it: `open(args)` answers a
+  thing behind the channel, which a channel cannot offer. `open` says it now: it answers a
   `Channel`, or an `Opened` — `{channel, info?, signal?}` — the same normalisation the reactor's factory
   already uses for `{proc}`.
 - `PortPublic<C, Info>` gains `info: Info | null`: what the medium knows about itself. A process answers

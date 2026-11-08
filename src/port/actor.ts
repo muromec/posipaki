@@ -4,7 +4,7 @@
 // comes out as DATA, and the way the channel ended is left in the actor's state, where a parent reads anyway.
 //
 // The channel is opened when the actor starts and closed when it ends, so the actor's life and the channel's
-// are the same one.  What a channel is — a process, a socket, a pair in memory — is the opener's business; the
+// are the same one.  What a channel is — a process, a socket, a pair in memory — is `open`'s business; the
 // actor knows only that it has one.
 
 import type { ActorDefinition } from "../actor-types.js";
@@ -44,10 +44,10 @@ export interface PortPublic<C, Info = unknown> {
 }
 
 /**
- * What an opener answers when the medium has more to say than a channel.
+ * What `open` answers when the medium has more to say than a channel.
  *
  * `info` is what the medium knows about itself, and `signal` is how a signal reaches what is behind the
- * channel: a channel cannot offer that, so the opener that made it does.
+ * channel: a channel cannot offer that, so whatever opened it does.
  */
 export interface Opened<F, C = string, Info = unknown> {
   channel: Channel<F, C>;
@@ -73,7 +73,7 @@ type PortState<C, Info> = {
 /**
  * An actor over one channel.
  *
- * In `SEND {data}` writes to it and `SIGNAL {signal}` reaches the medium through the opener's `signal`;
+ * In `SEND {data}` writes to it and `SIGNAL {signal}` reaches the medium through what `open` answered;
  * posipaki's `STOP` ends the actor, which closes the channel.  Out `DATA {data}` for every frame.  The
  * channel's ending is left in `state.end`, what the medium knows about itself in `state.info`, and then the
  * actor stops.
