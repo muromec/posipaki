@@ -151,10 +151,19 @@ export function announcedOctets(frame: Record<string, unknown>): number | null {
 export function json1Channel(transport: StringTransport): FrameChannel {
   const frameReaders = new Set<(frame: Record<string, unknown>) => void>();
   const segmentReaders = new Set<(frame: Record<string, unknown>, bytes: Uint8Array) => void>();
+  /** What arrived with nobody reading it.  A connection is live from the moment it is made, and a
+   *  first stage that relays it has nowhere to hand a frame until the payload it relays to exists. */
+  const heldFrames: Record<string, unknown>[] = [];
+  const heldSegments: Array<[Record<string, unknown>, Uint8Array]> = [];
   /** The head whose octets are on their way: set between the line and the run it announced. */
   let expecting: Record<string, unknown> | null = null;
 
   const deliver = (frame: Record<string, unknown>): void => {
+    if (frameReaders.size === 0) {
+      heldFrames.push(frame);
+      return;
+    }
+    heldFrames.length = 0;
     // Over a copy: a reader that leaves as it is handed a frame must not cut the rest short.
     for (const reader of [...frameReaders]) reader(frame);
   };
@@ -180,6 +189,11 @@ export function json1Channel(transport: StringTransport): FrameChannel {
       deliver(badFrame(`${bytes.length} octets arrived that no frame announced`, ""));
       return;
     }
+    if (segmentReaders.size === 0) {
+      heldSegments.push([frame, bytes]);
+      return;
+    }
+    heldSegments.length = 0;
     for (const reader of [...segmentReaders]) reader(frame, bytes);
   });
 
@@ -188,7 +202,10 @@ export function json1Channel(transport: StringTransport): FrameChannel {
       return transport.send(encode(frame));
     },
     onMessage(handler) {
+      // Listed before the held frames are handed over, so a reader that answers one of them is
+      // already reading when the answer comes back.
       frameReaders.add(handler);
+      for (const frame of heldFrames) handler(frame);
       return () => {
         frameReaders.delete(handler);
       };
@@ -202,6 +219,7 @@ export function json1Channel(transport: StringTransport): FrameChannel {
     },
     onSegment(handler) {
       segmentReaders.add(handler);
+      for (const [frame, bytes] of heldSegments) handler(frame, bytes);
       return () => {
         segmentReaders.delete(handler);
       };

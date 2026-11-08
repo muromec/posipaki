@@ -263,6 +263,35 @@ describe("a frame that carries octets", () => {
     expect(io.octetsWritten()).toHaveLength(1);
   });
 });
+
+describe("a frame that arrives before anyone reads", () => {
+  it("keeps it, and gives it to the reader that subscribes", () => {
+    // A first stage reads its connection from the moment it exists, and has nowhere to put a frame
+    // until it has a payload to relay to.  Both ends announce, so the client speaks first and that
+    // window is real: a frame lost in it is a connection that never agrees on a protocol.
+    const io = lineTransport();
+    const channel = json1Channel(io.transport);
+
+    io.deliver(encode({ $proto: VERSION }));
+    const frames: Record<string, unknown>[] = [];
+    channel.onMessage((frame) => frames.push(frame));
+
+    expect(frames).toEqual([{ $proto: VERSION }]);
+  });
+
+  it("keeps the octets of a line that announced them, for the reader that asks", () => {
+    const io = lineTransport();
+    const channel = json1Channel(io.transport);
+
+    io.deliver(encode({ $chunk: { id: 7, seq: 1, bytes: 4 } }));
+    io.deliverBytes(Buffer.from("abcd"));
+    const segments: Array<{ frame: Record<string, unknown>; bytes: Uint8Array }> = [];
+    channel.onSegment!((frame, bytes) => segments.push({ frame, bytes }));
+
+    expect(segments).toHaveLength(1);
+    expect(Buffer.from(segments[0]!.bytes).toString("utf8")).toBe("abcd");
+  });
+});
 const bytes = (text: string): Uint8Array => new TextEncoder().encode(text);
 
 function harness() {
