@@ -25,10 +25,23 @@ await writeFd.write('{"$proto":"json.v1"}\n');
 const rs = createReadStream("", { fd: readFd.fd, encoding: "utf-8", autoClose: false });
 const rl = readline.createInterface({ input: rs });
 
+/**
+ * The client's protocol frame, before anything else will be answered: a peer that serves speaks and
+ * then waits, and a client that only listened leaves it waiting.  Anything else first is refused the
+ * way a payload refuses it.
+ */
+let agreed = false;
+
 rl.on("line", async (line) => {
   const msg = JSON.parse(line);
-  // The client announces its protocol as well: that is the agreement, not something to echo.
-  if (msg.$proto !== undefined) return;
+  if (msg.$proto !== undefined) {
+    agreed = true;
+    return;
+  }
+  if (!agreed) {
+    process.stderr.write(`payload: ${line} arrived before the protocol was named\n`);
+    process.exit(78);
+  }
   const body = msg.$msg?.body;
   if (body?.type === "BYE") {
     await writeFd.write('{"$exit":{"code":0,"state":{"echoed":true}}}\n');

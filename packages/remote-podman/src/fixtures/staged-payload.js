@@ -11,10 +11,20 @@ process.stdout.write('{"$proto":"json.v1"}\n');
 process.stderr.write("the far end is ready\n");
 
 const lines = readline.createInterface({ input: process.stdin });
+
+/** The client's protocol frame, before anything else will be answered. */
+let agreed = false;
+
 lines.on("line", (line) => {
   const frame = JSON.parse(line);
-  // The client announces its protocol as well: that is the agreement, not something to echo.
-  if (frame.$proto !== undefined) return;
+  if (frame.$proto !== undefined) {
+    agreed = true;
+    return;
+  }
+  if (!agreed) {
+    process.stderr.write(`payload: ${line} arrived before the protocol was named\n`);
+    process.exit(78);
+  }
   const body = frame.$msg?.body;
   if (body?.type === "BYE") {
     process.stdout.write('{"$exit":{"code":0,"state":{"said":true}}}\n');
