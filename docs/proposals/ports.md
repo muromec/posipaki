@@ -1,15 +1,14 @@
 # Ports: a channel, a spawner, an adapter
 
-> **Status:** proposal, 2026-11-07; built in part, same day, shipping as **0.48.0**.
+> **Status:** proposal, 2026-11-07; built in part, same day. The port entry, the process ports, the fetch client and the
+> HTTP listener ship as **0.49.0**; the seam moving onto ports (slice 5) is the next release.
 >
 > **Built:** `posipaki/port` — `Channel<F, C>` with its three endings, the memory pair, the splitter, the byte
-> channel over a stream pair, the combinators `all` and `settled`, `held`, and `portActor` — one actor over one
-> channel, whose ending lands in `state.end` rather than in a message. `C` is what the far end says when it closes:
-> a sentence for a medium, an exit for a process. Nothing in this entry knows a protocol.
+> channel over a stream pair, `held`, `all`/`settled`, `duplexChannel`, `portReactor`, `portActor`, and `fetchPort`
+> for a response body. Nothing in this entry knows a protocol.
 >
-> `posipaki/port/node` — `spawnPort(command)` and `spawnPorts(command)`, a spawned command as a channel of bytes
-> otherwise), and the two pre-built actors `BinaryPort` and `Utf8Port` over them.
->
+> `posipaki/port/node` — `spawnPort`/`spawnPorts` and the two actors over them (`BinaryPort`, `Utf8Port`), and
+> `httpListener`, a `PortListener` whose requests arrive as pairs of ports.
 >
 > json.v1 and the handshake are adapters only this library's remote uses, so they live with it:
 > `src/remote/protocols/json1.ts` and `src/remote/handshake.ts`, composed in `src/remote/seam.ts` as
@@ -594,3 +593,22 @@ actor on it; a listener gives a pair and the actor reactor puts an actor on it.
 
 Built after this section was written: `httpListener` hands `{request, meta, response}` today, which is the pair
 minus the request body; the refit gives it an inbound port and moves the loop into `portReactor`.
+
+The HTTP pair and the duplex adapter, 2026-11-07:
+
+- `src/port/fetch.ts` — `fetchPort(url, options)`: a response body as a channel.  Chunks as they arrive, `close()`
+  aborts (the far side hears it), the ending is `{status}`, and a non-2xx or a dead connection rejects before a
+  channel exists.  `connectMs` bounds the response head and nothing else; a stream may be long.
+- `src/port/node/listener.ts` — `httpListener` is a `PortListener<Uint8Array, Uint8Array, Meta>`: a request arrives
+  as a pair, its body inbound and its answer outbound, and the `Response` is built in the listener.  `identify`
+  runs before a pair exists, so a refusal is a 401 with the sentence and costs no stream.
+- `src/port/reactor.ts` — `portReactor(listener, handle, options)`: the loop, one handler per pair, `live` and
+  `stop()`.  The listener keeps admission and the medium; the launch of a handler and its reporting are the
+  reactor's, as they are for connections.
+- `src/port/duplex.ts` — `duplexChannel({inbound, outbound})`: a pair read as one channel, which is what an actor
+  is written against.  The composition above a pair is `duplexChannel` → `splitChannel` (only for byte media) →
+  `json1` → `handshake` → an actor; `seamOf` is that with one line in front of it.
+
+One fact the tests forced out: a client's response head arrives with the first frame the handler writes, because
+that is how HTTP works.  `await fetchPort(url)` therefore does not resolve until the server writes or closes, and
+a handler that waits for the client before answering deadlocks.  That is the medium, not the port.
