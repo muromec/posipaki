@@ -22,6 +22,9 @@ export function held<F, C>(inner: Channel<F, C>): Channel<F, C> {
   const failers = new Set<(error: unknown) => void>();
   const kept: F[] = [];
   let live = false;
+  /** The ending, kept for a reader that arrives after it: a channel that is over is not one to wait on. */
+  let ending: { reason: C } | null = null;
+  let failed: { error: unknown } | null = null;
 
   const emit = (frame: F): void => {
     for (const reader of [...readers]) reader(frame);
@@ -42,9 +45,11 @@ export function held<F, C>(inner: Channel<F, C>): Channel<F, C> {
     emit(frame);
   });
   inner.onClose((reason) => {
+    ending = { reason };
     for (const closer of [...closers]) closer(reason);
   });
   inner.onError((error) => {
+    failed = { error };
     for (const failer of [...failers]) failer(error);
   });
 
@@ -59,12 +64,20 @@ export function held<F, C>(inner: Channel<F, C>): Channel<F, C> {
       };
     },
     onClose(handler) {
+      if (ending !== null) {
+        handler(ending.reason);
+        return () => {};
+      }
       closers.add(handler);
       return () => {
         closers.delete(handler);
       };
     },
     onError(handler) {
+      if (failed !== null) {
+        handler(failed.error);
+        return () => {};
+      }
       failers.add(handler);
       return () => {
         failers.delete(handler);

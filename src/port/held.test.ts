@@ -47,3 +47,14 @@ describe("held", () => {
     expect(endings).toEqual(["done"]);
   });
 });
+
+describe("held: an ending nobody was there for", () => {
+  it("tells a reader that arrives after the channel is over", async () => {
+    // A body can be finished before the port that owns it has a reader: the ending is kept for that reader,
+    // or the caller waits on a channel that is already gone.
+    const { near, far } = memoryChannelPair<Uint8Array>();
+    const channel = held(far);
+    await near.close("over");
+    await expect(new Promise((resolve) => channel.onClose(resolve))).resolves.toBe("over");
+  });
+});
