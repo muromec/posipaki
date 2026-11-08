@@ -421,6 +421,18 @@ The handshake and the composition, 2026-11-07:
 
 The owner, and the spawners returning raw channels, are what is left.
 
+The stdio wire, 2026-11-08 (0.48.1):
+
+- `clientChannel` and `serverChannel` are one exchange now: both announce, and each arms its read before it sends.
+  0.48 gave the agreement to the seam and left the stdio pair asymmetric, so a payload behind a gateway — the
+  bwrap, podman and ssh ways in — waited for a `$proto` its client never sent, and refused the `$init` behind it
+  as a frame that came before the protocol was named.
+- `json1Channel` holds a frame that arrives before its reader, one list per kind, as `frameChannel` already did.
+  A first stage reads its connection from the first moment and has nowhere to put a frame until the payload it
+  relays to exists, which is exactly the window a client that speaks first opens.
+- the gateway offers the payload's output on the client's first frame *after* the agreement, not on the agreement
+  itself: the agreement says nothing about whether the client has a store to receive an announcement.
+
 The wrappers, and what the flip found, 2026-11-07:
 
 - `src/remote/seam.ts` — `jsonSeam(spawner)` and `jsonSeamParts(spawner)`: a spawner that hands up a
