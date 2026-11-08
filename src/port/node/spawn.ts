@@ -24,6 +24,10 @@ export interface SpawnPortOptions {
 export interface ProcessPorts {
   readonly stdout: Channel<Uint8Array, ProcessEnd>;
   readonly stderr: Channel<Uint8Array, ProcessEnd>;
+  /** The process's own id, or undefined when the spawn did not report one. */
+  readonly pid: number | undefined;
+  /** A signal to the process and to everything it started. */
+  signal(name: string): void;
 }
 const DEFAULT_KILL_AFTER_MS = 5_000;
 /** A command as a channel of bytes: stdout in, stdin out, and its exit when it closes. */
@@ -40,7 +44,7 @@ export async function spawnPorts(
 ): Promise<ProcessPorts> {
   const [file, ...args] = command;
   if (file === undefined) throw new Error("spawnPort: there is no command to run");
-  const child = spawn(file, args, { cwd: options.cwd, env: options.env });
+  const child = spawn(file, args, { cwd: options.cwd, env: options.env, detached: true });
   await started(child, file);
   const out = bytesOf(child.stdout, "stdout");
   const err = bytesOf(child.stderr, "stderr");
@@ -91,6 +95,8 @@ export async function spawnPorts(
   return {
     stdout: { send: (frame) => write(child, frame), onFrame: out.onFrame, onClose, onError, close },
     stderr,
+    pid: child.pid,
+    signal: (name) => signalGroup(child, name as NodeJS.Signals),
   };
 }
 /** Resolves once the child exists, rejects when the command could not be started at all. */
@@ -132,7 +138,25 @@ function write(child: ChildProcess, frame: Uint8Array): Promise<void> {
     stdin.write(frame, (error) => (error === null || error === undefined ? resolve() : reject(error)));
   });
 }
-/** Ends stdin, and kills what is still there after the grace. */
+/** Signal the child's process group, or the child alone when it has none. */
+function signalGroup(child: ChildProcess, signal: NodeJS.Signals): void {
+  const pid = child.pid;
+  if (pid === undefined) return;
+  try {
+    // The negative id is the group a detached child leads: its own children are in it too.
+    process.kill(-pid, signal);
+    return;
+  } catch {
+    /* no group of that number: this is one process after all */
+  }
+  try {
+    child.kill(signal);
+  } catch {
+    /* gone */
+  }
+}
+
+/** Ends stdin, and kills what is still there after the grace.  A caller in a hurry sends `signal` first. */
 async function shutdown(child: ChildProcess, killAfterMs: number): Promise<void> {
   if (child.exitCode !== null || child.signalCode !== null) return;
   const closed = new Promise<void>((resolve) => {
@@ -140,7 +164,7 @@ async function shutdown(child: ChildProcess, killAfterMs: number): Promise<void>
   });
   child.stdin?.end();
   const timer = setTimeout(() => {
-    if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+    if (child.exitCode === null && child.signalCode === null) signalGroup(child, "SIGKILL");
   }, killAfterMs);
   timer.unref?.();
   await closed;

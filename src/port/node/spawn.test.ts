@@ -5,6 +5,7 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { existsSync } from "node:fs";
 import type { ProcessEnd } from "./spawn.js";
 import { spawnPort, spawnPorts, type SpawnPortOptions } from "./spawn.js";
 
@@ -74,6 +75,29 @@ describe("spawnPorts", () => {
     expect(both[1].said).toBe("err");
     expect(both[0].end).toEqual({ kind: "exit", code: 4 });
     expect(both[1].end).toEqual(both[0].end);
+  });
+
+  it("ends what the command started, not only the command", async () => {
+    // A shell that starts a child of its own, and says which one: a signal to the shell alone leaves the
+    // child running, and that child is what this case is for.
+    const used = await port(sh("sleep 300 & echo $!; wait"), { killAfterMs: 50 });
+    const seen: string[] = [];
+    used.onFrame((bytes) => seen.push(Buffer.from(bytes).toString("utf8")));
+    const until = Date.now() + 3_000;
+    while (!seen.join("").includes("\n") && Date.now() < until) {
+      await new Promise((done) => setTimeout(done, 10));
+    }
+    const child = Number(seen.join("").trim());
+    expect(Number.isInteger(child)).toBe(true);
+    expect(existsSync(`/proc/${child}`)).toBe(true);
+
+    await used.close();
+    // The kernel may need a moment to reap what the group signal ended.
+    const gone = Date.now() + 3_000;
+    while (existsSync(`/proc/${child}`) && Date.now() < gone) {
+      await new Promise((done) => setTimeout(done, 20));
+    }
+    expect(existsSync(`/proc/${child}`)).toBe(false);
   });
 
   it("has no input on stderr", async () => {

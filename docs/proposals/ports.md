@@ -565,9 +565,10 @@ rather than as a second thing beside it.
   `{pid}`; a socket could answer `{peer}`; a memory pair answers nothing and its `Info` stays null.
 - `ProcessPorts` answers `pid` and `signal(name)`. Both are the medium's own facts, so the two process ports
   pass them into the actor rather than re-deriving them from a child handle they would have to keep.
-- A spawned command is `detached`, which is what gives it a process group, and stopping it signals that group
-  — `SIGTERM`, then `SIGKILL` after the grace — so a shell's children end with the shell. Without the group
-  there is nothing for `-pid` to name: the two are one mechanism, not a policy and a helper.
+- A spawned command is `detached`, which is what gives it a process group, and closing the port kills that
+  group after the grace — so a shell's children end with the shell. Without the group there is nothing for
+  `-pid` to name: the two are one mechanism. `close()` stays the polite half (stdin's end, then the group),
+  and a caller that wants to ask before insisting has `signal(name)`.
 
 The ending is state, 2026-11-07:
 
