@@ -27,6 +27,8 @@ const rl = readline.createInterface({ input: rs });
 
 rl.on("line", async (line) => {
   const msg = JSON.parse(line);
+  // The client announces its protocol as well: that is the agreement, not something to echo.
+  if (msg.$proto !== undefined) return;
   const body = msg.$msg?.body;
   if (body?.type === "BYE") {
     await writeFd.write('{"$exit":{"code":0,"state":{"echoed":true}}}\n');

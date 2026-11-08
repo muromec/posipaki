@@ -30,7 +30,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { promisify } from "node:util";
-import { channelThrough } from "./channel.js";
+import { channelThrough, isProto } from "./channel.js";
 import { json1Channel } from "./protocols/json1.js";
 import { lowBand } from "./process-ref.js";
 import { StreamStore } from "./stream.js";
@@ -266,10 +266,11 @@ export async function runGateway(argv: string[] = process.argv.slice(2)): Promis
   };
   let offered = false;
   fromClient.onMessage((frame) => {
-    if (!offered) {
+    if (!offered && !isProto(frame)) {
       offered = true;
-      // The client has spoken, which means its store exists: an announcement made before that would
-      // land in a connection with nobody listening for it.
+      // The client's first words are the protocol agreement, and that says nothing about whether it
+      // has a store yet.  The frame after it does: an announcement made earlier would land in a
+      // connection with nobody listening for it.
       offerOutput();
     }
     forward((next) => payload.send(next), frame);

@@ -13,6 +13,8 @@ process.stderr.write("the far end is ready\n");
 const lines = readline.createInterface({ input: process.stdin });
 lines.on("line", (line) => {
   const frame = JSON.parse(line);
+  // The client announces its protocol as well: that is the agreement, not something to echo.
+  if (frame.$proto !== undefined) return;
   const body = frame.$msg?.body;
   if (body?.type === "BYE") {
     process.stdout.write('{"$exit":{"code":0,"state":{"said":true}}}\n');

@@ -131,6 +131,25 @@ describe("handshakes", () => {
     expect(await arrived).toEqual({ $msg: { fromName: "whoever", body: {} } });
   });
 
+  it("announces what it speaks, so a peer that waits for it can answer", async () => {
+    // A peer that speaks and waits — the shape 0.48 gave the payload's own serve — says nothing
+    // else until it hears the far end's `$proto`.  A client that only listens leaves it waiting
+    // for the frame the client cannot send without an agreement, and the payload refuses the
+    // `$init` that follows as one that came before the protocol was named.
+    const [a, b] = wirePair();
+    const far = new LineTransport(b);
+    const heard = nextLine(far);
+    const started = clientChannel(a);
+    const guard = new Promise<string>((resolve) => {
+      const timer = setTimeout(() => resolve("nothing arrived"), 2_000);
+      timer.unref?.();
+    });
+    expect(await Promise.race([heard, guard])).toBe(JSON.stringify({ $proto: "json.v1" }));
+
+    await far.send(JSON.stringify({ $proto: "json.v1" }));
+    await expect(started).resolves.toBeDefined();
+  });
+
   it("reports a failed start as its reason", async () => {
     const [a, b] = wirePair();
     const started = clientChannel(a);

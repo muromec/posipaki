@@ -241,19 +241,24 @@ export interface ClientChannelOptions {
 }
 
 /**
- * The client end of the connection: hand the streams to the seam and wait for the peer's `$proto`.
- * A first stage reports a failed start as an `$error` frame instead.
+ * The agreement both ends of a stdio wire make: say what you speak, read what the far end says.
  *
- * What the far end prints is not here: it arrives as a stream the far end announces under a name,
- * and whoever wants it reads it by that name.
+ * The read is armed before the send, because a peer that answers in the same tick would otherwise
+ * arrive at a channel with nobody listening.  A first stage reports a failed start as an `$error`
+ * frame instead of a `$proto`, and that reason is handed on.
  */
-export async function clientChannel(
-  streams: LineStreams,
-  opts: ClientChannelOptions = {},
-): Promise<Channel> {
+async function agree(streams: LineStreams, timeoutMs: number): Promise<Channel> {
   const channel = json1Channel(new LineTransport(streams));
-  const frame = await nextFrame(channel, opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS);
+  const first = nextFrame(channel, timeoutMs);
+  try {
+    await channel.send({ $proto: VERSION });
+  } catch (err) {
+    // No answer is coming, so the wait is dropped rather than left to reject on its own.
+    void first.catch(() => {});
+    throw err;
+  }
 
+  const frame = await first;
   const reason = errorReason(frame);
   if (reason) throw new StdioWireError(reason);
   if (!isProto(frame)) {
@@ -265,9 +270,24 @@ export async function clientChannel(
   return channel;
 }
 
-/** The server end of the wire — a payload speaking stdio itself. */
+/**
+ * The client end of the connection: the streams, and the agreement with whatever answers on them.
+ *
+ * A payload started by this end announces its protocol and waits for the client's, so this sends
+ * before it reads.  A client that only read left the payload waiting for a frame that never came,
+ * and the payload refused the `$init` after it as one that arrived before the protocol was named.
+ *
+ * What the far end prints is not here: it arrives as a stream the far end announces under a name,
+ * and whoever wants it reads it by that name.
+ */
+export async function clientChannel(
+  streams: LineStreams,
+  opts: ClientChannelOptions = {},
+): Promise<Channel> {
+  return agree(streams, opts.timeoutMs ?? HANDSHAKE_TIMEOUT_MS);
+}
+
+/** The other end of the same exchange: a payload speaking stdio itself. */
 export async function serverChannel(streams: LineStreams): Promise<Channel> {
-  const channel = json1Channel(new LineTransport(streams));
-  await channel.send({ $proto: VERSION });
-  return channel;
+  return agree(streams, HANDSHAKE_TIMEOUT_MS);
 }
