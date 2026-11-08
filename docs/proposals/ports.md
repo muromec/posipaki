@@ -548,8 +548,26 @@ The port actor, 2026-11-07:
   `splitChannel` underneath so its frames are lines. Their exit message is `ENDED {code, signal}`, not `EXIT`:
   posipaki's own `EXIT` is the runtime's message about the actor ending, and two messages of one name on one
   stream is a trap the harness already paid for.
-- `signal` is not wired in the two process ports yet: `spawnPort`'s channel has no way to reach the process, and
-  stopping them is `close()` — stdin's end, then SIGKILL after the grace.
+- `signal` was not wired in the two process ports: `spawnPort`'s channel has no way to reach the process, and
+  stopping them was `close()` — stdin's end, then SIGKILL after the grace. *(Superseded 2026-11-08: the opener
+  answers an `Opened`, and both process ports carry `pid` and `signal` — see below.)*
+
+What a medium can say about itself, 2026-11-08:
+
+A port is one abstraction over every medium, so what only one medium can do arrives as an extension of it
+rather than as a second thing beside it.
+
+- `SIGNAL` was already in the abstraction (`PortIn<F> = SEND | SIGNAL`); what was missing was a way to the
+  thing behind the channel, which a channel cannot offer. The opener now says it: `open(args)` answers a
+  `Channel`, or an `Opened` — `{channel, info?, signal?}` — the same normalisation the reactor's factory
+  already uses for `{proc}`.
+- `PortPublic<C, Info>` gains `info: Info | null`: what the medium knows about itself. A process answers
+  `{pid}`; a socket could answer `{peer}`; a memory pair answers nothing and its `Info` stays null.
+- `ProcessPorts` answers `pid` and `signal(name)`. Both are the medium's own facts, so the two process ports
+  pass them into the actor rather than re-deriving them from a child handle they would have to keep.
+- A spawned command is `detached`, which is what gives it a process group, and stopping it signals that group
+  — `SIGTERM`, then `SIGKILL` after the grace — so a shell's children end with the shell. Without the group
+  there is nothing for `-pid` to name: the two are one mechanism, not a policy and a helper.
 
 The ending is state, 2026-11-07:
 
