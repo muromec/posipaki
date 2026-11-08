@@ -27,3 +27,4 @@ export {
 } from "./actor.js";
 export { fetchPort, type FetchPortOptions, type HttpEnd } from "./fetch.js";
 export { portReactor, type PortListener, type PortPair, type PortReactor, type PortReactorOptions } from "./reactor.js";
+export { duplexChannel } from "./duplex.js";
