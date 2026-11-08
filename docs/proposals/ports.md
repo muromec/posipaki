@@ -549,33 +549,34 @@ The port actor, 2026-11-07:
   posipaki's own `EXIT` is the runtime's message about the actor ending, and two messages of one name on one
   stream is a trap the harness already paid for.
 - `signal` was not wired in the two process ports: `spawnPort`'s channel has no way to reach the process, and
-  stopping them was `close()` — stdin's end, then SIGKILL after the grace. *(Superseded 2026-11-08: `open`
-  answers an `Opened`, and both process ports carry `pid` and `signal` — see below.)*
+  stopping them was `close()` — stdin's end, then SIGKILL after the grace. *(Superseded 2026-11-08: a channel
+  carries `info` and `control`, so a process port answers its pid and takes a signal — see below.)*
 
 What a medium can say about itself, 2026-11-08:
 
-A port is one abstraction over every medium, so what only one medium can do arrives as an extension of it
-rather than as a second thing beside it.
+A port is one abstraction over every medium, so what only one medium can do arrives on the channel itself
+rather than as a shape beside it.
 
-- `SIGNAL` was already in the abstraction (`PortIn<F> = SEND | SIGNAL`); what was missing was a way to the
-  thing behind the channel, which a channel cannot offer. `open` says it now: it answers a
-  `Channel`, or an `Opened` — `{channel, info?, signal?}` — the same normalisation the reactor's factory
-  already uses for `{proc}`.
-- `PortPublic<C, Info>` gains `info: Info | null`: what the medium knows about itself. A process answers
-  `{pid}`; a socket could answer `{peer}`; a memory pair answers nothing and its `Info` stays null.
-- `ProcessPorts` answers `pid` and `signal(name)`. Both are the medium's own facts, so the two process ports
-  pass them into the actor rather than re-deriving them from a child handle they would have to keep.
+- `Channel<F, C>` gained two members. `info: Record<string, unknown>` is what the medium knows about itself —
+  a process its `pid`, an HTTP request its `method` and `url` — and `control(command: Record<string, unknown>)`
+  is how it is asked to act on what is behind it, a signal being the first command. A medium with nothing
+  behind it answers `{}` and does nothing.
+- Every adapter forwards both, as it already forwards `C`: a wrapper is the same medium.
+- That leaves `PortActorSpec` as `{name, open}`. `SIGNAL {signal}` becomes `channel.control({signal})`, and
+  `state.info` is the channel's own record, so a parent reads one place. An earlier attempt answered an
+  `Opened` — `{channel, info?, signal?}` — from `open` and gave the spec `info`/`signal` hooks; it is
+  withdrawn, because the facts belong to the object the medium produced and not to a shape beside it.
 - A spawned command is `detached`, which is what gives it a process group, and closing the port kills that
   group after the grace — so a shell's children end with the shell. Without the group there is nothing for
   `-pid` to name: the two are one mechanism. `close()` stays the polite half (stdin's end, then the group),
-  and a caller that wants to ask before insisting has `signal(name)`.
+  and a caller that wants to ask before insisting sends `control({signal})`.
 
 The ending is state, 2026-11-07:
 
-- The port's ending is not a message. `PortPublic<C> = { alive, end: C | null }`: when the channel closes the
-  actor writes `end`, clears `alive` and stops, so a parent reads it where it reads everything else.
-- `portActor` therefore lost `exit()` and its message generic: the spec is `{name, open, signal?}`, and out is
-  only `DATA`.
+- The port's ending is not a message. `PortPublic<C> = { alive, end: C | null, info }`: when the channel closes
+  the actor writes `end`, clears `alive` and stops, so a parent reads it where it reads everything else; `info`
+  is the record the channel carried.
+- `portActor` therefore lost `exit()` and its message generic: the spec is `{name, open}`, and out is `DATA` only.
 - `ProcessEnd` is two shapes, both of them the OS's own: `{kind: "exit", code}` or `{kind: "signal", signal}`.
   Measured: `kill -9` on a child gives `code: null, signal: "SIGKILL"`, `exit 7` gives `code: 7, signal: null`,
   and a kill we send after the grace is indistinguishable from a stranger's — so "we stopped it" could only

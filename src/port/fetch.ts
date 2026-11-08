@@ -70,6 +70,8 @@ export async function fetchPort(url: string, options: FetchPortOptions = {}): Pr
       controller.abort();
       await reader?.cancel().catch(() => undefined);
     },
+    info: { url },
+    control: () => {},
   };
 
   const reader = response.body?.getReader();

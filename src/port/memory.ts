@@ -73,6 +73,8 @@ export function memoryChannelPair<F>(): ChannelPair<F> {
         closed[peer] = reason;
         for (const handler of [...theirs.closes]) handler(reason);
       },
+      info: {},
+      control: () => {},
       fail: (error: unknown) => {
         if (closed[side] !== null) return;
         const peer = other(side);

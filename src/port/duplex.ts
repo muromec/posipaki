@@ -22,5 +22,7 @@ export function duplexChannel<F, C = void>(pair: {
     close: async (reason) => {
       await pair.outbound.close(reason);
     },
+    info: { ...pair.inbound.info, ...pair.outbound.info },
+    control: (command) => pair.inbound.control(command),
   };
 }

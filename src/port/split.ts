@@ -151,5 +151,7 @@ export function splitChannel<C = string>(
       shut();
       await inner.close(why);
     },
+    info: inner.info,
+    control: (command) => inner.control(command),
   };
 }

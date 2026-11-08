@@ -7,7 +7,7 @@ import type { Message } from "../../types.js";
 import { portActor } from "../actor.js";
 import type { Channel, Part } from "../channel.js";
 import { splitChannel } from "../split.js";
-import { spawnPorts, type ProcessEnd } from "./spawn.js";
+import { spawnPort, type ProcessEnd } from "./spawn.js";
 
 /** How a process port is started. */
 export interface ProcessPortArgs {
@@ -57,32 +57,20 @@ function lines(parts: Channel<Part, ProcessEnd>): Channel<string, ProcessEnd> {
       };
     },
     close: (reason) => parts.close(reason),
+    info: parts.info,
+    control: (command) => parts.control(command),
   };
 }
 
-/** What a process port knows about itself: the id the kernel gave the process it started. */
-export interface ProcessInfo {
-  pid: number | undefined;
-}
 
 /** The child's octets, frame for frame. */
-export const BinaryPort = portActor<ProcessPortArgs, Uint8Array, ProcessEnd, ProcessInfo>({
+export const BinaryPort = portActor<ProcessPortArgs, Uint8Array, ProcessEnd>({
   name: "binary-port",
-  open: async (args) => {
-    const ports = await spawnPorts(args.command, args);
-    return { channel: ports.stdout, info: { pid: ports.pid }, signal: (name) => ports.signal(name) };
-  },
+  open: (args) => spawnPort(args.command, args),
 });
 
-/** The same child, cut into lines. */
-export const Utf8Port = portActor<ProcessPortArgs, string, ProcessEnd, ProcessInfo>({
+/** The same child cut into lines: the facts come with it, because the medium is the same one. */
+export const Utf8Port = portActor<ProcessPortArgs, string, ProcessEnd>({
   name: "utf8-port",
-  open: async (args) => {
-    const ports = await spawnPorts(args.command, args);
-    return {
-      channel: lines(splitChannel(ports.stdout)),
-      info: { pid: ports.pid },
-      signal: (name) => ports.signal(name),
-    };
-  },
+  open: async (args) => lines(splitChannel(await spawnPort(args.command, args))),
 });

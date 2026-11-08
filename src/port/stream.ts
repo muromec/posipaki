@@ -156,5 +156,7 @@ export function streamChannel(pair: StreamPair): Channel<Uint8Array> {
       shut();
       return Promise.resolve();
     },
+    info: {},
+    control: () => {},
   };
 }

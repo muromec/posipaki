@@ -53,6 +53,15 @@ export interface Channel<F, C = string> {
    * because they are the ones who asked.
    */
   close(reason?: string): Promise<void>;
+  /** What the medium knows about itself: a process its pid, a socket its peer.  Empty when it knows nothing. */
+  readonly info: Record<string, unknown>;
+  /**
+   * Ask the medium to act on what is behind the channel — signal a process, resize a terminal.
+   *
+   * A medium with nothing behind it does nothing.  The command is the medium's own vocabulary; the channel
+   * only carries it.
+   */
+  control(command: Record<string, unknown>): void;
 }
 
 /** What is thrown when a frame is sent on a channel that is over. */

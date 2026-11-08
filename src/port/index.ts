@@ -17,7 +17,6 @@ export { held } from "./held.js";
 export {
   portActor,
   type DataMessage,
-  type Opened,
   type PortActorSpec,
   type PortIn,
   type PortOut,

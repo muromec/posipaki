@@ -71,5 +71,7 @@ export function held<F, C>(inner: Channel<F, C>): Channel<F, C> {
       };
     },
     close: (reason) => inner.close(reason),
+    info: inner.info,
+    control: (command) => inner.control(command),
   };
 }

@@ -24,10 +24,6 @@ export interface SpawnPortOptions {
 export interface ProcessPorts {
   readonly stdout: Channel<Uint8Array, ProcessEnd>;
   readonly stderr: Channel<Uint8Array, ProcessEnd>;
-  /** The process's own id, or undefined when the spawn did not report one. */
-  readonly pid: number | undefined;
-  /** A signal to the process and to everything it started. */
-  signal(name: string): void;
 }
 const DEFAULT_KILL_AFTER_MS = 5_000;
 /** A command as a channel of bytes: stdout in, stdin out, and its exit when it closes. */
@@ -85,19 +81,31 @@ export async function spawnPorts(
       failers.delete(handler);
     };
   };
+  // What only a process knows, and the one command it takes: a signal for the process and its children.
+  const facts = {
+    info: { pid: child.pid },
+    control: (command: Record<string, unknown>): void => {
+      const signal = command.signal;
+      if (typeof signal === "string") signalGroup(child, signal as NodeJS.Signals);
+    },
+  };
   const stderr: Channel<Uint8Array, ProcessEnd> = {
     send: () => Promise.reject(new Error("stderr carries the process's output; it has no input")),
     onFrame: err.onFrame,
     onClose,
     onError,
     close,
+    ...facts,
   };
-  return {
-    stdout: { send: (frame) => write(child, frame), onFrame: out.onFrame, onClose, onError, close },
-    stderr,
-    pid: child.pid,
-    signal: (name) => signalGroup(child, name as NodeJS.Signals),
+  const stdout: Channel<Uint8Array, ProcessEnd> = {
+    send: (frame: Uint8Array) => write(child, frame),
+    onFrame: out.onFrame,
+    onClose,
+    onError,
+    close,
+    ...facts,
   };
+  return { stdout, stderr };
 }
 /** Resolves once the child exists, rejects when the command could not be started at all. */
 function started(child: ChildProcess, file: string): Promise<void> {
@@ -123,6 +131,8 @@ function bytesOf(stream: Readable | null, label: string): Channel<Uint8Array, Pr
     onClose: () => () => {},
     onError: () => () => {},
     close: () => Promise.resolve(),
+    info: {},
+    control: () => {},
   };
   stream?.on("data", (chunk: Buffer) => {
     const bytes = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);

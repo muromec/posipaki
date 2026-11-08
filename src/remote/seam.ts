@@ -213,6 +213,8 @@ export function partsOf(transport: StringTransport, announced: Announcement = se
       return () => {};
     },
     close: () => transport.close(),
+    info: {},
+    control: () => {},
   };
 }
 

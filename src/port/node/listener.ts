@@ -137,6 +137,8 @@ function requestPort(request: Request): Channel<Uint8Array, void> {
       await request.body?.cancel().catch(() => undefined);
       end();
     },
+    info: { method: request.method, url: request.url },
+    control: () => {},
   };
 
   const reader = request.body?.getReader();
@@ -213,6 +215,8 @@ function responsePort(): { channel: Channel<Uint8Array, void>; body: ReadableStr
     async close() {
       end();
     },
+    info: {},
+    control: () => {},
   };
 
   return { channel, body };

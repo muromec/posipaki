@@ -89,6 +89,8 @@ export function all<T extends string, F, C>(sources: Record<T, Channel<F, C>>): 
       ended = true;
       await Promise.all(names.map((name) => sources[name].close(reason)));
     },
+    info: {},
+    control: () => {},
   };
 }
 
@@ -159,5 +161,7 @@ export function settled<T extends string, F, C>(
       ended = true;
       await Promise.all(names.map((name) => sources[name].close(reason)));
     },
+    info: {},
+    control: () => {},
   };
 }
