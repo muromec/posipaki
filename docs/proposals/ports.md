@@ -1,7 +1,7 @@
 # Ports: a channel, a spawner, an adapter
 
 > **Status:** proposal, 2026-11-07; built in part, same day. The port entry, the process ports, the fetch client and the
-> HTTP listener ship as **0.49.0**; the seam moving onto ports (slice 5) is the next release.
+> HTTP listener ship as **0.48.0**; the seam moving onto ports (slice 5) is the next release.
 >
 > **Built:** `posipaki/port` — `Channel<F, C>` with its three endings, the memory pair, the splitter, the byte
 > channel over a stream pair, `held`, `all`/`settled`, `duplexChannel`, `portReactor`, `portActor`, and `fetchPort`
