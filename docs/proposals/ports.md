@@ -1,32 +1,38 @@
 # Ports: a channel, a spawner, an adapter
 
-> **Status:** proposal, 2026-11-07; built in part, same day. The port entry, the process ports, the fetch client and the
-> HTTP listener ship as **0.48.0**; the seam moving onto ports (slice 5) is the next release.
+> **Status:** built, and shipping as **0.50.0**.  The seam moving onto ports (slice 5) is still the next release.
 >
-> **Built:** `posipaki/port` — `Channel<F, C>` with its three endings, the memory pair, the splitter, the byte
-> channel over a stream pair, `held`, `all`/`settled`, `duplexChannel`, `portReactor`, `portActor`, and `fetchPort`
-> for a response body. Nothing in this entry knows a protocol.
+> **`posipaki/port`** — `Channel<F, C>` with its three endings, `info` and `control`; `memoryChannelPair`,
+> `streamChannel`, `splitChannel`, `held`, `all`/`settled`, `duplexChannel`, `portReactor`, `portActor`, and
+> `fetchPort`, whose `HttpRefusal` carries the status a peer answered with.  Nothing in this entry knows a
+> protocol.
 >
-> `posipaki/port/node` — `spawnPort`/`spawnPorts` and the two actors over them (`BinaryPort`, `Utf8Port`), and
-> `httpListener`, a `PortListener` whose requests arrive as pairs of ports.
+> **`posipaki/port/node`** — `spawnPort`/`spawnPorts` and the two actors over them (`BinaryPort`, `Utf8Port`), and
+> `httpListener` on `node:http`: a request arrives as a pair of ports, and its status and headers are a
+> `control({head})` on the outbound one.
+>
+> **Beside the port entry, where the medium is:** `unixSocketListener` and `connectUnixSocket`
+> (`src/remote/socket.ts`), and `webSocketListener` with its two structural adapters (`src/remote/websocket.ts`).
+> Each takes an `upgrade` or an accept that the library cannot own on every runtime, so they stay in the remote
+> until a package owns the server.
 >
 > json.v1 and the handshake are adapters only this library's remote uses, so they live with it:
 > `src/remote/protocols/json1.ts` and `src/remote/handshake.ts`, composed in `src/remote/seam.ts` as
-> `handshake(json1(split(port, announced)))`. The remote is on it: the payload's fifo pair is a byte channel, and
-> the serving half and every client spawner reach the protocol through the same chain. Both ends announce, which
+> `handshake(json1(split(port, announced)))`.  The remote is on it: the payload's fifo pair is a byte channel, and
+> the serving half and every client spawner reach the protocol through the same chain.  Both ends announce, which
 > is a **behaviour change**: a peer that used to only listen now has to say what it speaks, or the handshake it is
 > part of never finishes.
 >
-> **Not built, named as the next slice:** `Spawner` and `ClientSpawner` still name the frame channel — a
-> spawner is a port internally, but its type says `Promise<Channel>`. So `StringTransport` and `json1Channel`
-> survive inside the transports, the listeners still hand up a transport, and the seam composes over one
-> rather than over a port. Moving those three types is the breaking half, and it lands when `Listener`
-> returns a channel and `oneConnection` stops existing.
+> **Not built, named as the next slice:** `Spawner` and `ClientSpawner` still name the frame channel — a spawner
+> is a port internally, but its type says `Promise<Channel>`.  So `StringTransport` and `json1Channel` survive
+> inside the transports, the listeners still hand up a transport, and the seam composes over one rather than over
+> a port.  Moving those three types is the breaking half, and it lands when `Listener` returns a channel and
+> `oneConnection` stops existing.
 >
-> The rest of the plan below stands: the sixteen frames, the reactor and both wire versions do not change,
-> and this document supersedes the *Layers*, *Transport* and *Spawners* sections of
-> [Remote Actors](actor-remote.md). It is also the channel that [xfetch as a pipe](xfetch-as-a-pipe.md)
-> deferred when it said a stream wants one and called it "a different proposal".
+> The rest of the plan below stands: the sixteen frames, the reactor and both wire versions do not change, and
+> this document supersedes the *Layers*, *Transport* and *Spawners* sections of
+> [Remote Actors](actor-remote.md).  It is also the channel that [xfetch as a pipe](xfetch-as-a-pipe.md) deferred
+> when it said a stream wants one and called it "a different proposal".
 
 ## Terms
 
@@ -108,6 +114,10 @@ export interface Channel<F, C = string> {
   onError(handler: (error: unknown) => void): () => void;
   /** Close it from this side.  Idempotent; the reason is ours, so it is a sentence. */
   close(reason?: string): Promise<void>;
+  /** What the medium knows about itself: a process its pid, a request its method and url. */
+  readonly info: Record<string, unknown>;
+  /** Ask the medium to act on what is behind it.  A signal is the first command. */
+  control(command: Record<string, unknown>): void;
 }
 ```
 
@@ -124,6 +134,10 @@ export interface Listener<Meta, F> {
 /** What wraps a channel: another channel of a different frame type, over the same one. */
 export type Adapter<In, Out> = (inner: Channel<In>) => Channel<Out>;
 ```
+
+`Spawner` and `Listener` as drawn above are slice 5's target.  What ships today is `PortListener<In, Out, Meta>` —
+`accept()` gives a `PortPair`, the request's two channels and its meta — and `portReactor` over it; the spawners
+still hand up a frame channel, which is the other half of that slice.
 
 The unit above a byte channel is a **part**: one line of text, and the octets it announced.
 
@@ -149,24 +163,23 @@ Then the protocols are adapters, and each is one file that can be tested over a 
 ## What a composition looks like
 
 ```ts
-// the seam, over any medium: the server end
-const listener = await unixSocketListener({ path });          // Listener<Meta, Uint8Array>
-const connection = await listener.accept();
-const seam = handshake(json1(split(connection.channel)));     // Channel<Frame>
-serveOn(seam, actor);
+// the seam over any medium that hands up bytes: what jsonSeam composes
+const bytes = await fifoArgvSpawner(own)(args);   // Channel<Uint8Array>
+const seam = handshake(json1(split(bytes)));      // Channel<Frame>
 
-// the same seam, over ssh: a spawner, then the same two adapters
-const bytes = await spawnOverSsh(host)(args);                 // Channel<Uint8Array>
-const seam = handshake(json1(split(bytes)));                  // Channel<Frame>
+// the same chain with a name, for the spawners that ship
+serveRemoteActor(actor, jsonSeam(() => fifoArgvSpawner(own)));
 
-// MCP: three adapters on a byte channel, and the third knows no medium
-const server = mcp(jsonrpc(split(portChannel)));              // Channel<McpMessage>
+// a medium that already frames its own messages: no splitter under it
+const parts = await socketClientSpawner(path)(args);   // Channel<Part>
+const seam = jsonSeamParts(() => socketClientSpawner(path));
 
-// a port: a spawner, a channel, and the owner actor that holds one
-const port = await this.fork(ProcessPort, { spawner: command('bun x'), args: [] });
+// a process as a port: an actor over one channel, holding one life
+const port = await this.fork(BinaryPort, { command: ['bun', 'x'] });
 ```
-`json1` is today's `json1Channel`, and it is the only place the version string appears.
 
+`json1` is the only place the version string appears; `split` is skipped for a medium whose message boundary is
+already a part.
 
 ## Where remotes sit
 
@@ -188,6 +201,9 @@ Two consequences:
 - `StringTransport` goes, and the octet announcement it carried becomes the splitter's business: a part is
   a line plus the octets it announced, and `onBytes`/`sendBytes` have no counterpart.
 
+Both consequences are slice 5's, and neither has happened: `oneConnection` is still the listener a spawner is
+wrapped in, and `StringTransport` is still what the transports hand up.
+
 ## The owner
 
 A channel is not a process. Something must hold it, hear its death, and stop what is underneath: the child, the
@@ -195,20 +211,17 @@ socket, the request. That is an actor, and it is built: `portActor` in `src/port
 
 ```ts
 export interface PortPublic<C> {
-  alive: boolean;   // the channel is open
-  end: C | null;    // how it ended, and null until it has
+  alive: boolean;                 // the channel is open
+  end: C | null;                  // how it ended, and null until it has
+  info: Record<string, unknown>;  // what the medium said about itself
 }
 
-portActor<Args, F, C>({ name, open(args): Promise<Channel<F, C>>, signal? });
+portActor<Args, F, C>({ name, open(args): Promise<Channel<F, C>> });
 ```
 
-In `SEND {data}` writes to the channel and `SIGNAL` reaches the medium through the spec; out is `DATA {data}` for
-every frame. When the channel closes the actor writes `end`, clears `alive`, and stops — the ending is state, not
-a message, because a parent reads state anyway and the death of the port is the death of the actor.
-
-A spawner that starts a process closes over the kill in `channel.close()`, so the owner needs no second
-vocabulary: closing the channel is stopping the thing. `close()` from our side is silence; the far side's close
-arrives at `onClose`; a failure arrives at `onError` and then at `onClose`. Three endings, one channel.
+In `SEND {data}` writes to the channel, `SIGNAL {signal}` becomes `channel.control({signal})`, and out is `DATA
+{data}` for every frame.  When the channel closes the actor writes `end`, clears `alive`, and stops — the ending is
+state, not a message, because a parent reads state anyway and the death of the port is the death of the actor.
 
 The harness's process port is this: `BinaryPort` and `Utf8Port` in `src/port/node/process.ts`, over `spawnPort`.
 
@@ -218,6 +231,10 @@ A medium is not a place. `ssh` is an argv prefix over the same child-process med
 same with a container's lifetime around it, and `bwrap` the same inside a namespace. So the crossing is one
 implementation in the core — `RemoteWayIn { name, entry, run?, spawn? }` is already that interface — and a
 companion package is only what it alone can say: the argv, the spec, and the lifetime it owns.
+
+**Not built.**  What exists is the way-in interface above and the spawners that use it.  The store and the gateway
+below are the design for slice 9: `filesOver` and `gatewayPort` are not in the tree, and a package still stages a
+kit the way it always did.
 
 The primitive under all of it is a **file store over a way in**, and a gateway that is a function of what it
 is handed:
@@ -386,261 +403,76 @@ Each one is a red test first, and the suite stays green between them.
 
 ## As built
 
-Slices 1 and 2 of the list above, 2026-11-07:
+Where each piece lives, as it stands today.
 
-- `src/port/channel.ts` — `Channel<F>`, `Part`, `ChannelClosed`.
-- `src/port/memory.ts` — `memoryChannelPair()`, a channel with no medium, and the one ending a medium would
-  discover for it (`fail`).
-- `src/port/stream.ts` — `streamChannel({read, write})`, the byte channel a stdio pair, a fifo or a socket
-  gives. A send settles once the stream has flushed the chunk, so the write side resists a writer that runs
-  ahead of the reader.
-- `src/port/split.ts` — `splitChannel(inner, announced?)`, bytes into parts, with the announcement travelling
-  in as a question.
+**`src/port/channel.ts`** — `Channel<F, C>`: `send`, `onFrame`, `onClose`, `onError`, `close(reason?)`, plus
+`info: Record<string, unknown>` and `control(command)`.  `C` is what the far end says when it closes; `close()` from
+this side still takes a sentence, because that close is ours.  `Part = {line, bytes?}` is one line and the octets
+it announced, so a chunk of a stream is one value on the wire.
 
-The spawners still run the whole stack themselves at this point; the commit that changes that is further down.
+**`src/port/memory.ts`** — `memoryChannelPair()`: a channel with no medium, and the one ending a medium would
+discover for it.
 
-The encoding, 2026-11-07 (moved to `src/remote/protocols/json1.ts` when the remote came to use it):
+**`src/port/stream.ts`** — `streamChannel({read, write})`: the byte channel a stdio pair, a fifo or a socket gives.
+A send settles once the stream has flushed the chunk.
 
-- `src/remote/protocols/json1.ts` — the whole of json.v1 in one file: `json1(parts)`, a `Channel<Part>` as a
-  `Channel<Delivered>`, where `Delivered` is the frame a line decoded to and the octets that line announced; the
-  encoding both ways; and the `$bad` answer to a line nobody could read. One value rather than a frame plus a
-  callback, so a chunk of a stream is one thing on the wire and `sendBytes`/`onBytes` have no counterpart above
-  the splitter. `json1Channel` keeps the `StringTransport` path the stdio and gateway wires still use.
+**`src/port/split.ts`** — `splitChannel(inner, announced?)`: bytes into parts.  It is wrapped in `held`, because it
+drains its medium the moment it is made.
 
-The handshake and the composition, 2026-11-07:
+**`src/port/held.ts`** — `held(inner)`: frames that arrive while nobody is subscribed are kept, and every subscriber
+that arrives before the first delivery is given them; after that a later subscriber gets only what follows.  The
+kept frames are not bounded, because a bound depends on what a far end may say before anyone listens.
 
-- `src/remote/handshake.ts` — `handshake(inner, {version, timeoutMs, onEarly, ready})`, the one adapter that is
-  asynchronous: it resolves to the channel rather than returning one, because "the peer speaks what we speak"
-  is what the caller needs before it talks. Silence, a wrong version, a peer that talks out of turn and a peer
-  that leaves are rejections with a sentence each. Frames that arrive after the agreement and before anyone
-  reads are held and handed to the first reader.
-- `src/remote/pipeline.test.ts` — `handshake(json1(split(bytes, announced)))` on both ends of one pair of
-  streams, over a medium that delivers on a later turn: a frame each way, octets through and back out
-  unchanged, and the frame after a segment still in order. The announcement argument is the seam's
-  (`announcedOctets`), which is why the composition names it.
+**`src/port/combine.ts`** — `all(sources)` tags every frame with the channel it came from and ends with the first
+ending; `settled(sources)` delivers every ending and closes once all have.  Neither sends: a frame put on a
+combination has no destination, so `send` rejects and says so.
 
-The owner, and the spawners returning raw channels, are what is left.
+**`src/port/duplex.ts`** — `duplexChannel({inbound, outbound})`: a pair read as one channel, which is what an actor
+is written against.
 
-The stdio wire, 2026-11-08 (0.48.1):
+**`src/port/actor.ts`** — `portActor({name, open})`: one actor over one channel, whatever the medium behind it.  The
+channel is opened in `setup`, which the runtime awaits, so a ready port has one and a port that cannot open fails
+its start rather than its first frame.  `SEND {data}` writes, `SIGNAL {signal}` reaches the medium through
+`control`, and out is `DATA` per frame; the ending is state (`{alive, end, info}`), not a message.
 
-- `clientChannel` and `serverChannel` are one exchange now: both announce, and each arms its read before it sends.
-  0.48 gave the agreement to the seam and left the stdio pair asymmetric, so a payload behind a gateway — the
-  bwrap, podman and ssh ways in — waited for a `$proto` its client never sent, and refused the `$init` behind it
-  as a frame that came before the protocol was named.
-- `json1Channel` holds a frame that arrives before its reader, one list per kind, as `frameChannel` already did.
-  A first stage reads its connection from the first moment and has nowhere to put a frame until the payload it
-  relays to exists, which is exactly the window a client that speaks first opens.
-- the gateway offers the payload's output on the client's first frame *after* the agreement, not on the agreement
-  itself: the agreement says nothing about whether the client has a store to receive an announcement.
+**`src/port/reactor.ts`** — `portReactor(listener, handle, options)`: the loop over a `PortListener`, one handler
+per pair, `live` and `stop()`.
 
-The wrappers, and what the flip found, 2026-11-07:
+**`src/port/fetch.ts`** — `fetchPort(url, {init, connectMs})`: a response body as a channel.  Chunks as they
+arrive, `close()` aborts, the ending is `{status}`, and a non-2xx rejects with `HttpRefusal` before a channel
+exists — there is nowhere in a channel for "and then it did not start".
 
-- `src/remote/seam.ts` — `jsonSeam(spawner)` and `jsonSeamParts(spawner)`: a spawner that hands up a
-  `Channel<Uint8Array>` or a `Channel<Part>` comes back as the seam's `FrameChannel`, with splitting,
-  decoding and the agreement done above it. Two names rather than one that takes the frame type as an
-  argument, because the frame type is the only thing that differs — and a caller reading `jsonSeamParts` does
-  not have to work out what an argument would be. `frameChannel(delivered)` is the bridge: a close carries
-  no reason upward, and a wire error is heard as the close that follows it, which is the shape
-  `FrameChannel` has always had.
-- **The handshake cannot be one-sided.** The reactor's protocol step sends `$proto` and reads none
-  (`src/remote/reactor.ts:264`), while the port's handshake both announces and waits. A client that flipped
-  on its own would have its `$proto` arrive where the serve expects `$init`, and be refused. So the spawners
-  and `protocolStep` move in one commit, and slice 2 is one slice rather than two.
+**`src/port/node/spawn.ts`** — `spawnPort`/`spawnPorts`: the child runs `detached`, so it leads its own process
+group and `close()` ends that group after `killAfterMs` (5 s by default).  stdout is the channel's frames, stdin is
+what `send` writes, stderr is a channel of its own only in `spawnPorts`, and the ending is the OS's own fact:
+`{kind: "exit", code}` or `{kind: "signal", signal}`.
 
-Flipping the fifo medium, first attempt, 2026-11-07 — attempted, and taken back out. Superseded by the
-second attempt below; what it found is worth keeping:
+**`src/port/node/process.ts`** — `BinaryPort` and `Utf8Port`, both `portActor` over `spawnPort`, the second with
+`splitChannel` underneath so its frames are lines.
 
-- **The bridge has to fan out itself.** A subscription per kind is handed whatever the handshake held, and
-  the filter that does not want it throws it away: a connection's `$init` went missing that way, and the
-  payload answered `expected $init`. It is one reader on the port channel, a list per kind, and what
-  arrived before a reader of that kind is kept for it (`4a415b6`).
-- **Every consumer of a spawner flips with the spawner.** `serveRemoteActor(actor, fifoArgvSpawner)` is the
-  far end of the handshake, so a payload written that way never says what it speaks; three fixtures had to
-  become `serveRemoteActor(actor, () => jsonSeamParts(() => fifoArgvSpawner())(undefined))` before one real
-  connection came up.
-- **A hand-driven client announces too.** `server.integration.test.ts` drives a raw transport and sends no
-  `$proto` of its own, which was correct against a server that only spoke first.
+**`src/port/node/listener.ts`** — `httpListener`: a `PortListener` over `node:http`, where a request arrives as a
+pair of ports, `identify` runs before a pair exists, and a `HttpRefusal` becomes its status.
 
-With those fixed, eight of the twenty reflection-integration cases still failed — lost method
-announcements, one 20 s stall — which is the seam's reader timing rather than the medium. The flip was
-taken back to the bridge commit instead of being patched to green at the end of a session; the next
-attempt starts from `4a415b6`, with the reader order settled first.
+### The rules this cost
 
-The fifo flip, second attempt, 2026-11-07 — done for the payload path:
+- **Nothing may be lost between a medium and its reader**, and that includes an ending.  `held` dropped the ending
+  at first, so a channel that was over before anyone subscribed left every later reader waiting for a close that
+  had already happened.
+- **A send asked for while a channel is opening must not vanish.**  The fix was `setup`, not a promise held
+  somewhere until the open resolved.
+- **`open` returns a channel, period.**  The `Opened` union — `{channel, info?, signal?}` — was invented and
+  shipped for an hour: the facts belong to the object the medium produced, so they became `info` and `control` on
+  the channel itself.
+- **A spawned command leads its own process group.**  That is the same mechanism as being killable: without the
+  group there is nothing for `-pid` to name.
+- **A client's response head arrives with the first frame a handler writes**, because that is how HTTP works.
+  `await fetchPort(url)` therefore does not resolve until the server writes or closes, and a handler that waits for
+  the client before answering deadlocks.  That is the medium, not the port.
+- **A test double delivers on a later turn.**  A socket does, and a fake that delivers inside the subscription call
+  hides exactly the window the adapters exist to hold.
 
-- **The medium hands up bytes.** `src/remote/spawners/fifo-port.ts` opens the pair and gives a
-  `Channel<Uint8Array>` through `fifoByteChannel(readPath, writePath, "served" | "client")`.  Its one decision is
-  which end to open first: the served side blocks on its write, the client on its read, as the line transport
-  already did.
-- `src/remote/spawners/fifo-argv.ts` and `fifo-command.ts` now compose `jsonSeam(...)` over that channel and
-  build no frame themselves: no `json1Channel`, no `$proto` written by hand.
-- **The reader order was the blocker** (`d828b7b`): what arrived before any reader existed was handed to
-  whichever reader was there when the handshake let go, so the store got `$init` and `$r.methods` and dropped
-  them. With it fixed, all nineteen reflection-integration cases pass over the flipped fifo and the gate is
-  684 pass / 2 skip / 0 fail.
-- Two tests spoke with one end only: `fifo-argv.test.ts` read the payload's `$proto` and answered nothing, and
-  `server.integration.test.ts` sent `$init` without announcing. Both now announce, which is what a symmetric
-  handshake costs a hand-driven peer.
+### What is left
 
-Superseded by the next section: at this commit `fifoListener` and `fifoClientSpawner` still spoke with one end
-only — the served side said `$proto` and read none — so a listener paired with `fifoClientSpawner` and nothing
-else.  Every medium announces from both ends now.
-
-Every medium on the port stack, 2026-11-07 (`02ac1e2`):
-
-- `src/remote/seam.ts` gained `partsOf(transport)`: a line transport as `Channel<Part>`, holding a line until
-  the octets it announced arrive, because the transport reports those as two calls and a part is one value.
-  `seamOf(transport)` is the counterpart of `jsonSeam` for a medium that already frames itself.  It installs its
-  readers before awaiting anything, because a socket can deliver a frame in the same turn the seam is composed.
-- `handshake` gained `ready?: Promise<void>`, and the announcement waits for it.  A WebSocket needs it: the socket
-  exists before it can send.
-- `protocolStep` is a handshake, not a one-sided announcement. `fifoArgvSpawner`, `commandSpawner`,
-  `fifoClientSpawner`, `socketClientSpawner`, `wsClientSpawner` and `wsServerSpawner` all compose the seam.
-
-Two defects this shook out, both of the family of `d828b7b`: a frame lost between a medium becoming ready and a
-reader being installed.
-
-- composing the WebSocket seam *after* awaiting the open dropped the far end's `$proto`.  Fix: compose first, hold
-  the announcement behind `ready`.
-- `bunServerWebSocket` returned `readyState: ws.readyState`, a snapshot taken at the upgrade, so
-  `WebSocketTransport.send` could refuse for the life of the connection with "not open".  Now a getter.
-
-What it cost the tests: a hand-driven peer must announce.  `fifo-argv.test.ts`, `server.integration.test.ts`,
-`websocket.test.ts`, `ws.integration.test.ts` and the reactor's fake transport all send `$proto` now.  The two ws
-fakes deliver on a later turn, which is when a socket delivers.
-
-The process port, and the two combinators, 2026-11-07:
-
-- `src/port/channel.ts` — `Channel<F, C = string>`. `C` is what the far end says when it closes; `close()`
-  still takes a sentence from this side, because the close we ask for is ours. The default keeps every existing
-  channel as it was, and the adapters pass `C` through untouched: `splitChannel`, `json1`, `handshake`.
-- `src/port/combine.ts` — `all(sources)` and `settled(sources)`, named after the promise pair because the choice
-  is the same one. `all` tags every frame with the channel it came from and ends with the first ending; `settled`
-  delivers every ending as a frame of its own and closes once all have. Neither sends: a frame put on a
-  combination has no destination, so `send` rejects and says so.
-- `src/port/node/spawn.ts` — `spawnPort(command, options)` and `spawnPorts(command, options)`, in the node entry.
-  stdout is the channel's frames, stdin is what `send` writes, and `close()` ends stdin first and kills what is
-  still there after `killAfterMs` (5 s by default). The close reason is `ProcessExit` — code and signal — and
-  stderr is discarded unless `spawnPorts` was asked for, where it is a channel of its own that ends with the same
-  exit. Erlang's ports are the model: data is a stream, the exit is a separate fact, and a child's stderr belongs
-  to the child unless you ask for it.
-- The harness's `src/port/port.ts` (BinaryPort/Utf8Port) is what this replaces: `Utf8Port` becomes
-  `splitChannel(spawnPort(...))`, since the splitter already decodes. That move waits for this release to be
-  published and pinned.
-
-`held`, the one place that keeps frames, 2026-11-07:
-
-- `src/port/held.ts` — `held(inner)`: frames that arrive while nobody is subscribed are kept, and every
-  subscriber that arrives before the first delivery is given them. After the first delivery the channel is live
-  and a later subscriber gets only what follows. Three copies of that rule lived in `handshake`, the process
-  port and `frameChannel`; the first two now compose the adapter. `frameChannel` keeps its own because it holds
-  two kinds of value apart — a frame and the octets it announced — which this adapter cannot express.
-- The kept frames are not bounded: a bound depends on what the far end may say before anyone listens, which the
-  adapter cannot know.
-
-The port actor, 2026-11-07:
-
-- `src/port/actor.ts` — `portActor({name, open, exit, signal?})`: one actor over one channel. In `SEND {data}`
-  writes to the channel and `SIGNAL` reaches the medium through the spec; out `DATA {data}` per frame, and the
-  spec's `exit(reason)` message once, after which the actor ends. The channel is opened in `afterStart` and closed
-  in `beforeEnd`, so one life covers the other.
-- `src/port/node/process.ts` — `BinaryPort` and `Utf8Port`, both `portActor` over `spawnPort`; the second puts
-  `splitChannel` underneath so its frames are lines. Their exit message is `ENDED {code, signal}`, not `EXIT`:
-  posipaki's own `EXIT` is the runtime's message about the actor ending, and two messages of one name on one
-  stream is a trap the harness already paid for.
-- `signal` was not wired in the two process ports: `spawnPort`'s channel has no way to reach the process, and
-  stopping them was `close()` — stdin's end, then SIGKILL after the grace. *(Superseded 2026-11-08: a channel
-  carries `info` and `control`, so a process port answers its pid and takes a signal — see below.)*
-
-What a medium can say about itself, 2026-11-08:
-
-A port is one abstraction over every medium, so what only one medium can do arrives on the channel itself
-rather than as a shape beside it.
-
-- `Channel<F, C>` gained two members. `info: Record<string, unknown>` is what the medium knows about itself —
-  a process its `pid`, an HTTP request its `method` and `url` — and `control(command: Record<string, unknown>)`
-  is how it is asked to act on what is behind it, a signal being the first command. A medium with nothing
-  behind it answers `{}` and does nothing.
-- Every adapter forwards both, as it already forwards `C`: a wrapper is the same medium.
-- That leaves `PortActorSpec` as `{name, open}`. `SIGNAL {signal}` becomes `channel.control({signal})`, and
-  `state.info` is the channel's own record, so a parent reads one place. An earlier attempt answered an
-  `Opened` — `{channel, info?, signal?}` — from `open` and gave the spec `info`/`signal` hooks; it is
-  withdrawn, because the facts belong to the object the medium produced and not to a shape beside it.
-- A spawned command is `detached`, which is what gives it a process group, and closing the port kills that
-  group after the grace — so a shell's children end with the shell. Without the group there is nothing for
-  `-pid` to name: the two are one mechanism. `close()` stays the polite half (stdin's end, then the group),
-  and a caller that wants to ask before insisting sends `control({signal})`.
-
-The ending is state, 2026-11-07:
-
-- The port's ending is not a message. `PortPublic<C> = { alive, end: C | null, info }`: when the channel closes
-  the actor writes `end`, clears `alive` and stops, so a parent reads it where it reads everything else; `info`
-  is the record the channel carried.
-- `portActor` therefore lost `exit()` and its message generic: the spec is `{name, open}`, and out is `DATA` only.
-- `ProcessEnd` is two shapes, both of them the OS's own: `{kind: "exit", code}` or `{kind: "signal", signal}`.
-  Measured: `kill -9` on a child gives `code: null, signal: "SIGKILL"`, `exit 7` gives `code: 7, signal: null`,
-  and a kill we send after the grace is indistinguishable from a stranger's — so "we stopped it" could only
-  come from our own bookkeeping, and was dropped.
-
-The reactor at the port level, agreed 2026-11-07:
-
-The connection reactor is a loop parameterised by a listener. The same loop belongs one level down, where the
-medium is not a protocol but a pair of ports:
-
-```ts
-interface PortPair<In, Out, Meta> {
-  readonly inbound: Channel<In, void>;    // what the far side sends
-  readonly outbound: Channel<Out, void>;  // what we send back
-  readonly meta: Meta;
-}
-
-interface PortListener<In, Out, Meta> {
-  accept(): Promise<PortPair<In, Out, Meta>>;
-  close(): Promise<void>;
-}
-
-portReactor(listener, handle, { onSession, onClosed, onError }): { live, stop() }
-```
-
-A pair is the general form, and every medium fits it: a WebSocket's inbound is its `onmessage` and its outbound is
-`send`; an HTTP request's inbound is the request body and its outbound is the response body; a fifo is the same
-pair over bytes. What differs is what a frame is, which is the adapter's business:
-
-| Medium | inbound/outbound frame | Adapter above it |
-| --- | --- | --- |
-| WebSocket | `string`, already a line | `json1` (no splitter) |
-| fifo, socket, HTTP body | `Uint8Array` | `splitChannel`, then `json1` |
-| no protocol at all | whatever the handler wants | none |
-
-Three levels, and each owns one thing:
-
-1. the **listener**: admission before anything is created, refusal in the medium's words, one accept at a time;
-2. the **port reactor**: the loop, one handler per pair, the live set, `stop()`;
-3. the **actor reactor**: one actor per accept, reported as a session, stopped with the pair — and it takes the
-   adapter as a parameter rather than building one, so `serveRemoteActor` is this reactor with `jsonSeam` and an
-   HTTP handler is the same reactor with nothing.
-
-The client side is the same sentence the other way round: a spawner gives a channel and `remoteClient` puts an
-actor on it; a listener gives a pair and the actor reactor puts an actor on it.
-
-Built after this section was written: `httpListener` hands `{request, meta, response}` today, which is the pair
-minus the request body; the refit gives it an inbound port and moves the loop into `portReactor`.
-
-The HTTP pair and the duplex adapter, 2026-11-07:
-
-- `src/port/fetch.ts` — `fetchPort(url, options)`: a response body as a channel.  Chunks as they arrive, `close()`
-  aborts (the far side hears it), the ending is `{status}`, and a non-2xx or a dead connection rejects before a
-  channel exists.  `connectMs` bounds the response head and nothing else; a stream may be long.
-- `src/port/node/listener.ts` — `httpListener` is a `PortListener<Uint8Array, Uint8Array, Meta>`: a request arrives
-  as a pair, its body inbound and its answer outbound, and the `Response` is built in the listener.  `identify`
-  runs before a pair exists, so a refusal is a 401 with the sentence and costs no stream.
-- `src/port/reactor.ts` — `portReactor(listener, handle, options)`: the loop, one handler per pair, `live` and
-  `stop()`.  The listener keeps admission and the medium; the launch of a handler and its reporting are the
-  reactor's, as they are for connections.
-- `src/port/duplex.ts` — `duplexChannel({inbound, outbound})`: a pair read as one channel, which is what an actor
-  is written against.  The composition above a pair is `duplexChannel` → `splitChannel` (only for byte media) →
-  `json1` → `handshake` → an actor; `seamOf` is that with one line in front of it.
-
-One fact the tests forced out: a client's response head arrives with the first frame the handler writes, because
-that is how HTTP works.  `await fetchPort(url)` therefore does not resolve until the server writes or closes, and
-a handler that waits for the client before answering deadlocks.  That is the medium, not the port.
+Slice 5, as the status line says: `Spawner` and `ClientSpawner` still name the frame channel, `oneConnection`
+still exists, and `fromSpawner` is the shim that keeps it that way.  Nothing above the seam has to change when it
+lands, which is what the port entry was for.
