@@ -22,8 +22,14 @@ export interface RecordSpec<S, R, Q, E = string> {
   map(state: S, request: Q): R;
   /** One record onto the fold.  `null` is a fold with nothing in it yet. */
   reduce(state: S | null, record: R): S;
-  /** The record that takes `before` to `after`: `reduce` inverted for one step. */
-  diff(before: S | null, after: S): R;
+  /**
+   * The records that take `before` to `after`.
+   *
+   * One step of `reduce`, inverted — usually one record, because a fold step is one record.  With `null` for
+   * `before` it is every record needed to build the state from nothing, which is what a source starts a reader
+   * with: a list, so a vocabulary needs no special "the whole thing" record.
+   */
+  diff(before: S | null, after: S): R[];
 }
 
 /** What a process publishes: the fold, and how many are keeping it up. */

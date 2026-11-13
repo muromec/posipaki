@@ -24,8 +24,6 @@ export type ShapesRecord =
   | { type: 'LIFT'; at: number; by: string; cell: number }
   /** Two of a figure on one board: the board is cleared, and the record says so. */
   | { type: 'CLEAR'; at: number; by: string }
-  /** Where a board stands, whole: what a follower arriving is told, as `diff(null, state)`. */
-  | { type: 'SET'; at: number; by: string; cells: readonly (Figure | null)[] };
 
 export type ShapesAsk = {
   by: string;
@@ -63,9 +61,6 @@ export const shapesSpec: RecordSpec<Board, ShapesRecord, ShapesAsk> = {
 
   reduce(board: Board | null, record: ShapesRecord): Board {
     const base: Board = board ?? { cells: Array(CELLS).fill(null), by: '', at: 0, moves: 0 };
-    if (record.type === 'SET') {
-      return { cells: [...record.cells], by: record.by, at: record.at, moves: base.moves + 1 };
-    }
     if (record.type === 'CLEAR') {
       return {
         cells: Array(CELLS).fill(null),
@@ -92,21 +87,26 @@ export const shapesSpec: RecordSpec<Board, ShapesRecord, ShapesAsk> = {
     };
   },
 
-  diff(before: Board | null, after: Board): ShapesRecord {
-    // From nothing: the board whole, or a follower could not start where it stands.
+  diff(before: Board | null, after: Board): ShapesRecord[] {
+    // From nothing: one PLACE per figure that stands — and a CLEAR when nothing stands, because a follower has to
+    // hear something to know the source has spoken.
     if (before === null) {
-      return { type: 'SET', at: after.at, by: after.by, cells: [...after.cells] };
+      const places = after.cells.flatMap((figure, cell): ShapesRecord[] =>
+        figure === null ? [] : [{ type: 'PLACE', at: after.at, by: after.by, cell, figure }],
+      );
+      return places.length === 0 ? [{ type: 'CLEAR', at: after.at, by: after.by }] : places;
     }
-    const filled = after.cells.every((cell) => cell === null);
-    const wasFilled = before.cells.some((cell) => cell !== null);
-    if (filled && wasFilled) return { type: 'CLEAR', at: after.at, by: after.by };
+    const empty = after.cells.every((cell) => cell === null);
+    const was = before.cells.some((cell) => cell !== null);
+    if (empty && was) return [{ type: 'CLEAR', at: after.at, by: after.by }];
     for (let cell = 0; cell < CELLS; cell += 1) {
-      const was = before.cells[cell] ?? null;
-      const now = after.cells[cell] ?? null;
-      if (was === null && now !== null)
-        return { type: 'PLACE', at: after.at, by: after.by, cell, figure: now };
-      if (was !== null && now === null) return { type: 'LIFT', at: after.at, by: after.by, cell };
+      const had = before.cells[cell] ?? null;
+      const has = after.cells[cell] ?? null;
+      if (had === null && has !== null) {
+        return [{ type: 'PLACE', at: after.at, by: after.by, cell, figure: has }];
+      }
+      if (had !== null && has === null) return [{ type: 'LIFT', at: after.at, by: after.by, cell }];
     }
-    return { type: 'CLEAR', at: after.at, by: after.by };
+    return [{ type: 'CLEAR', at: after.at, by: after.by }];
   },
 };

@@ -44,9 +44,9 @@ export function mirrorChannel<S, R, Q, E>(
     watching = authority.subscribe('state', () => {
       const now = authority.state?.state ?? null;
       if (now === null || same(known, now)) return;
-      const record = spec.diff(known, now);
+      const records = spec.diff(known, now);
       known = now;
-      emit(record);
+      for (const record of records) emit(record);
     });
   };
 
@@ -61,9 +61,9 @@ export function mirrorChannel<S, R, Q, E>(
       throw new ChannelClosed('this channel is the authority’s: it is written where the log is');
     },
     onFrame(handler) {
-      // Where it stands, said as one record, then every change after it.
+      // Where it stands, as the records that build it, then every change after it.
       const now = authority.state?.state ?? null;
-      if (now !== null) handler(spec.diff(null, now));
+      if (now !== null) for (const record of spec.diff(null, now)) handler(record);
       readers.add(handler);
       follow();
       return () => {

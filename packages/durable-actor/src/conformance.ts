@@ -63,14 +63,22 @@ export function runLaw<S, R, Q, E>(law: LawName, one: LawCase<S, R, Q, E>): LawF
     }
     case 'diff': {
       const states = walked(one);
-      // From the first pair on: `diff(null, state)` is not a step, it is the one record that says where a
-      // follower stands, so it answers whatever record the spec has for a whole state.
+      // A step is one record, so a pair of adjacent states diffs to a list of one.
       for (let at = 1; at < one.journal.length; at += 1) {
         const back = one.spec.diff(states[at] as S, states[at + 1] as S);
-        if (!same(back, one.journal[at])) {
+        if (!same(back, [one.journal[at]])) {
           return fail(
-            `${one.name}: diff did not recover record ${at}: ${JSON.stringify(back)} for ${JSON.stringify(one.journal[at])}`,
+            `${one.name}: diff did not recover record ${at}: ${JSON.stringify(back)} for ${JSON.stringify([one.journal[at]])}`,
           );
+        }
+      }
+      // From nothing it rebuilds the state, record by record: this is what a source starts a reader with.
+      for (const state of states) {
+        if (state === null) continue;
+        let rebuilt: S | null = null;
+        for (const record of one.spec.diff(null, state)) rebuilt = one.spec.reduce(rebuilt, record);
+        if (!same(rebuilt, state)) {
+          return fail(`${one.name}: diff(null, state) did not rebuild the state: ${JSON.stringify(rebuilt)}`);
         }
       }
       return [];
@@ -102,7 +110,7 @@ export function runLaw<S, R, Q, E>(law: LawName, one: LawCase<S, R, Q, E>): LawF
       const after = one.spec.reduce(state, record);
       if (same(after, state))
         return fail(`${one.name}: an allowed request left the state where it was`);
-      return same(one.spec.diff(state, after), record)
+      return same(one.spec.diff(state, after), [record])
         ? []
         : fail(`${one.name}: diff does not name the record that moved the state`);
     }

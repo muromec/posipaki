@@ -40,11 +40,11 @@ export const counterSpec: RecordSpec<Counter, CounterRecord, CounterAsk> = {
     return { total: state.total + record.n, added: state.added + 1, by: record.by };
   },
 
-  diff(before: Counter | null, after: Counter): CounterRecord {
-    // From nothing: the counter whole, or a follower could not start where it stands.
+  diff(before: Counter | null, after: Counter): CounterRecord[] {
+    // From nothing: the counter whole, one record that states it.
     if (before === null) {
-      return { type: 'COUNTED', by: after.by, total: after.total, added: after.added };
+      return [{ type: 'COUNTED', by: after.by, total: after.total, added: after.added }];
     }
-    return { type: 'ADD', by: after.by, n: after.total - before.total };
+    return [{ type: 'ADD', by: after.by, n: after.total - before.total }];
   },
 };

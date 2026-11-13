@@ -99,9 +99,9 @@ describe('an authoritative actor', () => {
   it('diffs two states back into the record that made the second', () => {
     const before: Counter = { total: 1, added: 1, by: 'me' };
     const after: Counter = { total: 5, added: 2, by: 'you' };
-    expect(counterSpec.diff(before, after)).toEqual({ type: 'ADD', by: 'you', n: 4 });
+    expect(counterSpec.diff(before, after)).toEqual([{ type: 'ADD', by: 'you', n: 4 }]);
     // From no state at all: the counter whole, because that is what a follower arriving is told.
-    expect(counterSpec.diff(null, before)).toEqual({ type: 'COUNTED', by: 'me', total: 1, added: 1 });
+    expect(counterSpec.diff(null, before)).toEqual([{ type: 'COUNTED', by: 'me', total: 1, added: 1 }]);
   });
 
   it('goes down when the last watcher leaves', async () => {

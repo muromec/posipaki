@@ -5,10 +5,9 @@
 // it passes, which is why `map` is pure and a replay builds the same record twice.  And `diff` needs the state to
 // remember who moved it (`movedBy`), because a fold that dropped it could not say.
 //
-// One thing it does not do: `diff(null, state)` returns the opening record alone, so a follower arriving at a
-// ticket mid-life would see one comment and no history.  A real ticket vocabulary needs a record that states the
-// ticket whole — the shapes demo's `SET` and the counter's `COUNTED` are the same idea.
+// `diff` answers a list, which is what lets `diff(null, ticket)` rebuild a ticket mid-life: its opening word, then
 
+// every comment after it.  A vocabulary with one record per step needs no special "the whole thing" record.
 import type { FilterResult, RecordSpec } from '../src/interface';
 
 export type TicketState = 'SUBMITTED' | 'WORKING' | 'COMPLETED' | 'CANCELED';
@@ -85,10 +84,12 @@ export const ticketSpec: RecordSpec<Ticket, TicketRecord, TicketAsk> = {
     return { ...state, state: record.state, movedAt: record.at, movedBy: record.by };
   },
 
-  diff(before: Ticket | null, after: Ticket): TicketRecord {
+  diff(before: Ticket | null, after: Ticket): TicketRecord[] {
     const opening = after.comments[0];
+    // From nothing: the opening word, then every comment and move since — the ticket rebuilt in the records it
+    // has, which is what a follower arriving mid-life is told.
     if (before === null) {
-      return {
+      const opened: TicketRecord = {
         type: 'TASK_OPENED',
         id: after.id,
         at: after.openedAt,
@@ -96,16 +97,29 @@ export const ticketSpec: RecordSpec<Ticket, TicketRecord, TicketAsk> = {
         by: opening?.by ?? null,
         text: opening?.text ?? '',
       };
+      const rest = after.comments.slice(1).map((said): TicketRecord => ({
+        type: 'TASK_COMMENT',
+        at: said.at,
+        by: said.by ?? after.owner,
+        text: said.text,
+      }));
+      const moved: TicketRecord[] =
+        after.movedBy === null
+          ? []
+          : [{ type: 'TASK_MOVED', at: after.movedAt, by: after.movedBy, state: after.state }];
+      return [opened, ...rest, ...moved];
     }
     if (after.comments.length > before.comments.length) {
       const said = after.comments[after.comments.length - 1] as Comment;
-      return { type: 'TASK_COMMENT', at: said.at, by: said.by ?? after.owner, text: said.text };
+      return [{ type: 'TASK_COMMENT', at: said.at, by: said.by ?? after.owner, text: said.text }];
     }
-    return {
-      type: 'TASK_MOVED',
-      at: after.movedAt,
-      by: after.movedBy ?? after.owner,
-      state: after.state,
-    };
+    return [
+      {
+        type: 'TASK_MOVED',
+        at: after.movedAt,
+        by: after.movedBy ?? after.owner,
+        state: after.state,
+      },
+    ];
   },
 };
