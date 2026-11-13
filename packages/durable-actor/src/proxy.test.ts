@@ -11,12 +11,12 @@ import { afterEach, describe, expect, it } from 'vitest';
 import { counterSpec, type Counter, type CounterAsk, type CounterRecord } from './counter';
 import { openLog } from './log';
 import { mirrorChannel } from './mirror';
-import { proxy } from './proxy';
-import { authoritative, type RecordOutMessage } from './record';
+import { makeDurableProxyActor } from './proxy';
+import { makeDurableActor, type RecordOutMessage } from './record';
 
-const counter = authoritative(counterSpec);
-const follower = proxy(counterSpec);
-const optimistic = proxy(counterSpec, { mode: 'optimistic' });
+const counter = makeDurableActor(counterSpec);
+const follower = makeDurableProxyActor(counterSpec);
+const optimistic = makeDurableProxyActor(counterSpec, { mode: 'optimistic' });
 
 type AuthorityProc = Awaited<ReturnType<typeof counter.spawn>>;
 type ProxyProc = Awaited<ReturnType<typeof follower.spawn>>;

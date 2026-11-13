@@ -7,9 +7,8 @@
 // One log can have many channels — that is what makes it the shared thing two followers read while one writer
 // appends.
 
-import type { Channel } from 'posipaki/port';
+import { ChannelClosed, type Channel } from 'posipaki/port';
 
-import { ChannelClosed } from './closed';
 
 /** One log: what it holds, who reads it, and the writers' door. */
 export interface Log<R> {

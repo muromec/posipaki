@@ -2,15 +2,15 @@
 //
 // An actor whose state is the fold of a durable record log, and whose only words are whether it took a request.
 //
-//   const counter = authoritative(counterSpec);     // owns the log, filters and writes
-//   const follower = proxy(counterSpec);            // follows it, forwards requests
+//   const counter = makeDurableActor(counterSpec);     // owns the log, filters and writes
+//   const follower = makeDurableProxyActor(counterSpec);            // follows it, forwards requests
 //
 // Both answer the same `RecordHandle`, so a caller cannot tell which it was given.  `conformance` is the suite a
 // spec has to pass; `mirrorChannel` is how an authority tells its followers what changed; `logChannel` is a log
 // for tests and demos.
 
 export {
-  authoritative,
+  makeDurableActor,
   type AuthoritativeArgs,
   type AuthoritativeProc,
   type FilterResult,
@@ -24,7 +24,7 @@ export {
 } from './record';
 
 export {
-  proxy,
+  makeDurableProxyActor,
   type ProxyArgs,
   type ProxyMode,
   type ProxyOptions,
@@ -35,7 +35,6 @@ export { mirrorChannel, type Stateful } from './mirror';
 
 export { logChannel, openLog, type Log } from './log';
 
-export { ChannelClosed } from './closed';
 
 export {
   conformance,

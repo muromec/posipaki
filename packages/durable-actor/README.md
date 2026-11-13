@@ -3,8 +3,8 @@
 An actor whose state is the fold of a durable record log, and whose only words are whether it took a request.
 
 ```ts
-const counter = authoritative(counterSpec);  // owns the log: filters, writes, folds
-const follower = proxy(counterSpec);         // follows it: folds its records, forwards requests
+const counter = makeDurableActor(counterSpec);  // owns the log: filters, writes, folds
+const follower = makeDurableProxyActor(counterSpec);  // follows it, forwards requests
 ```
 
 Both answer the same `RecordHandle`, so a caller cannot tell which it was given.

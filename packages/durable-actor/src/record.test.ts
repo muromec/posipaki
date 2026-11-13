@@ -9,9 +9,9 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { counterSpec, type Counter, type CounterAsk, type CounterRecord } from './counter';
 import { logChannel } from './log';
-import { authoritative, type RecordOutMessage } from './record';
+import { makeDurableActor, type RecordOutMessage } from './record';
 
-const counter = authoritative(counterSpec);
+const counter = makeDurableActor(counterSpec);
 
 type Proc = Awaited<ReturnType<typeof counter.spawn>>;
 

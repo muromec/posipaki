@@ -72,7 +72,7 @@ interface Private<S, R, Q, E> {
  * refuse with — except in optimistic mode, where it applies the spec's own `filter` and `map` to guess, and says
  * so if the guess was wrong.
  */
-export function proxy<S, R, Q, E = string>(
+export function makeDurableProxyActor<S, R, Q, E = string>(
   spec: RecordSpec<S, R, Q, E>,
   options: ProxyOptions = {},
 ) {
@@ -197,4 +197,4 @@ export function proxy<S, R, Q, E = string>(
 }
 
 /** A running proxy. */
-export type ProxyProc<S, R, Q, E = string> = SpawnedFrom<ReturnType<typeof proxy<S, R, Q, E>>>;
+export type ProxyProc<S, R, Q, E = string> = SpawnedFrom<ReturnType<typeof makeDurableProxyActor<S, R, Q, E>>>;

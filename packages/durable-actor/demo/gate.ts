@@ -2,7 +2,7 @@
 
 import type { Channel } from 'posipaki/port';
 
-import { ChannelClosed } from '../src/closed';
+import { ChannelClosed } from 'posipaki/port';
 
 /** A channel, and the switch that stops what it carries. */
 export interface Gate<R> {

@@ -7,9 +7,8 @@
 // What it does not carry is a starting point: the fold as it stands is a state, and a follower is given it as one
 // (`authority.state`), not squeezed through the record vocabulary.  A record is a change; a snapshot is not.
 
-import type { Channel } from 'posipaki/port';
+import { ChannelClosed, type Channel } from 'posipaki/port';
 
-import { ChannelClosed } from './closed';
 
 import type { RecordSpec } from './record';
 

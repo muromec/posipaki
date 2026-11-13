@@ -103,7 +103,7 @@ export function reasonOf(error: unknown): string {
  *
  * A proxy is the same fold and the same messages over a channel it may not write — see `proxy.ts`.
  */
-export function authoritative<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, E>) {
+export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, E>) {
   return defineActor({
     name: 'durable',
     inMessages: defineMessages<RecordInMessage<Q>>(),
@@ -216,5 +216,5 @@ export function authoritative<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, E>)
 
 /** A running authoritative process. */
 export type AuthoritativeProc<S, R, Q, E = string> = SpawnedFrom<
-  ReturnType<typeof authoritative<S, R, Q, E>>
+  ReturnType<typeof makeDurableActor<S, R, Q, E>>
 >;

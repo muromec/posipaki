@@ -10,14 +10,14 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { mirrorChannel } from '../src/mirror';
 import { openLog } from '../src/log';
-import { proxy } from '../src/proxy';
-import { authoritative } from '../src/record';
+import { makeDurableProxyActor } from '../src/proxy';
+import { makeDurableActor } from '../src/record';
 import { gateChannel } from './gate';
 import { shapesSpec, type Board, type ShapesRecord } from './shapes';
 
-const Authority = authoritative(shapesSpec);
-const Follower = proxy(shapesSpec);
-const Guesser = proxy(shapesSpec, { mode: 'optimistic' });
+const Authority = makeDurableActor(shapesSpec);
+const Follower = makeDurableProxyActor(shapesSpec);
+const Guesser = makeDurableProxyActor(shapesSpec, { mode: 'optimistic' });
 
 const sealed: Array<() => Promise<void> | void> = [];
 

@@ -2,17 +2,11 @@
 //
 // Cuts a stream of bytes on 0x0a; what lies between two cuts is a line.  Every byte medium does this: a stdio pair,
 // a socket, an HTTP body.
-
+//
 // Splitting on the byte is safe for UTF-8: a continuation byte is never 0x0a, so a character cannot be cut in
-// half.  A character that straddles two chunks waits in the buffer until the rest arrives.
-//
-// Text is decoded by a StringDecoder for the same reason: half a character waits rather than becoming two
-// replacement marks.
-//
-// A line may announce octets after it.  The splitter does not know that rule, so it is passed in: given a line,
-// how many raw octets follow it?  The seam answers with `$chunk`; a medium with no such thing answers none.
-
-import { StringDecoder } from "node:string_decoder";
+// half, and a line is decoded only when all of its octets are in hand.  A character that straddles two chunks
+// waits in the buffer, which is why this file needs no decoder of its own — and no `node:` import, because
+// `posipaki/port` is the entry a browser takes.
 
 import type { Channel, Part } from "./channel.js";
 import { held } from "./held.js";
@@ -20,6 +14,18 @@ import { held } from "./held.js";
 const NL = 0x0a;
 const CR = 0x0d;
 
+const EMPTY = new Uint8Array(0);
+const decoder = new TextDecoder();
+
+/** Two octet strings as one: the one place this file would otherwise reach for `Buffer`. */
+function joined(first: Uint8Array, second: Uint8Array): Uint8Array {
+  if (first.length === 0) return second;
+  if (second.length === 0) return first;
+  const whole = new Uint8Array(first.length + second.length);
+  whole.set(first, 0);
+  whole.set(second, first.length);
+  return whole;
+}
 /** Given a line, how many raw octets follow it.  Default: none, this is a plain line. */
 export type Announcement = (line: string) => number | null;
 
@@ -38,9 +44,9 @@ export function splitChannel<C = string>(
   const readers = new Set<(part: Part) => void>();
   const closers = new Set<(reason: C) => void>();
   const failers = new Set<(error: unknown) => void>();
-  const decoder = new StringDecoder("utf8");
+
   /** Bytes that are not yet a frame: a line, or the octets a line announced. */
-  let buffered = Buffer.alloc(0);
+  let buffered: Uint8Array = EMPTY;
   /** The line whose announced octets are still arriving. */
   let pending: { line: string; bytes: number } | null = null;
   let ended = false;
@@ -84,7 +90,7 @@ export function splitChannel<C = string>(
       const raw = buffered.subarray(0, cut);
       buffered = buffered.subarray(cut + 1);
       const line = raw.length > 0 && raw[raw.length - 1] === CR ? raw.subarray(0, raw.length - 1) : raw;
-      const text = decoder.write(line);
+      const text = decoder.decode(line);
       const count = announced(text);
       if (count === null) {
         emit({ line: text, bytes: null });
@@ -103,9 +109,8 @@ export function splitChannel<C = string>(
   // wire's to lose.
   const parts: Channel<Part, C> = held<Part, C>({
     send: async (part: Part) => {
-      const head = Buffer.from(`${part.line}\n`, "utf8");
-      const body = part.bytes === null ? head : Buffer.concat([head, Buffer.from(part.bytes)]);
-      await inner.send(new Uint8Array(body));
+      const head = new TextEncoder().encode(`${part.line}\n`);
+      await inner.send(part.bytes === null ? head : joined(head, part.bytes));
     },
     onFrame: (handler) => {
       readers.add(handler);
@@ -139,7 +144,7 @@ export function splitChannel<C = string>(
 
   inner.onFrame((chunk) => {
     if (ended) return;
-    buffered = buffered.length === 0 ? Buffer.from(chunk) : Buffer.concat([buffered, Buffer.from(chunk)]);
+    buffered = joined(buffered, chunk);
     drain();
   });
   inner.onError((error) => {
@@ -151,10 +156,8 @@ export function splitChannel<C = string>(
     // something, and dropping it would be the framing deciding to lose the last word.
     if (pending === null && buffered.length > 0) {
       const rest = buffered;
-      buffered = Buffer.alloc(0);
-      emit({ line: decoder.write(rest) + decoder.end(), bytes: null });
-    } else {
-      decoder.end();
+      buffered = EMPTY;
+      emit({ line: decoder.decode(rest), bytes: null });
     }
     close(why);
   });

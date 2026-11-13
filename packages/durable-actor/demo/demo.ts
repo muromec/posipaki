@@ -8,8 +8,8 @@
 
 import { mirrorChannel } from '../src/mirror';
 import { openLog } from '../src/log';
-import { proxy } from '../src/proxy';
-import { authoritative, type RecordHandle, type RecordOutMessage } from '../src/record';
+import { makeDurableProxyActor } from '../src/proxy';
+import { makeDurableActor, type RecordHandle, type RecordOutMessage } from '../src/record';
 import { gateChannel, type Gate } from './gate';
 import {
   shapesSpec,
@@ -100,9 +100,9 @@ function paint(cells: HTMLElement[], board: Board | null): void {
 
 // A board begins cleared: the log has no empty state, only a first record.
 const log = openLog<ShapesRecord>([{ type: 'CLEAR', at: 0, by: 'system' }]);
-const Authority = authoritative(shapesSpec);
-const Follower = proxy(shapesSpec);
-const Guesser = proxy(shapesSpec, { mode: 'optimistic' });
+const Authority = makeDurableActor(shapesSpec);
+const Follower = makeDurableProxyActor(shapesSpec);
+const Guesser = makeDurableProxyActor(shapesSpec, { mode: 'optimistic' });
 
 const panels = LABELS.map((label, index) => {
   const { element, grid } = panel(label, (cell) => place(index, cell));
