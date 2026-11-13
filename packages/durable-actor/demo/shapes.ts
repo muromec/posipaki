@@ -1,4 +1,4 @@
-// ── the demo's spec: four figures on a 2×2 board ────────────────────────────
+// ── the demo's spec: four shapes on a 2×2 board ────────────────────────────
 
 import type { FilterResult, RecordSpec } from '../src/interface';
 
@@ -16,7 +16,7 @@ export interface Board {
 export type ShapesRecord =
   | { type: 'PLACE'; cell: number; shape: Shape }
   | { type: 'LIFT'; cell: number }
-  /** Two of a figure on one board: the board is cleared, and the record says so. */
+  /** Two of a shape on one board: the board is cleared, and the record says so. */
   | { type: 'CLEAR' };
 
 export type ShapesAsk = { cell: number; shape: Shape | null };
@@ -60,7 +60,7 @@ export const shapesSpec: RecordSpec<Board, ShapesRecord, ShapesAsk> = {
   },
 
   diff(before: Board | null, after: Board): ShapesRecord[] {
-    // From nothing: one PLACE per figure that stands — and a CLEAR when none does, because a follower has to hear
+    // From nothing: one PLACE per shape that stands — and a CLEAR when none does, because a follower has to hear
     // something to know the source has spoken.
     if (before === null) {
       const places = after.cells.flatMap((shape, cell): ShapesRecord[] =>

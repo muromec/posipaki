@@ -34,7 +34,7 @@ async function until(condition: () => boolean, what: string): Promise<void> {
   throw new Error(`${what} did not happen`);
 }
 
-/** A board as the page draws it: which box holds which figure. */
+/** A board as the page draws it: which box holds which shape. */
 function drawn(board: Board | null | undefined): string[] {
   return (board?.cells ?? []).map((cell) =>
     cell === null ? '.' : cell[0],
@@ -73,7 +73,7 @@ async function world() {
 describe('three boards in a chain', () => {
   it('carries a request from the far end to the log, and back to every board', async () => {
     const { a, b, c } = await world();
-    // A figure placed through the optimistic board: it shows at once, and the others follow when the log has it.
+    // A shape placed through the optimistic board: it shows at once, and the others follow when the log has it.
     c.send({
       type: 'ADD_RECORD',
       requestId: 'c-1',
@@ -115,7 +115,7 @@ describe('three boards in a chain', () => {
     expect(drawn(again.state?.state)).toEqual(drawn(b.state?.state));
   });
 
-  it('refuses a figure in a box that is taken, and says where', async () => {
+  it('refuses a shape in a box that is taken, and says where', async () => {
     const { a, c } = await world();
     a.send({
       type: 'ADD_RECORD',
@@ -136,14 +136,14 @@ describe('three boards in a chain', () => {
     expect(heard[0]).toBe('box 2 is taken');
   });
 
-  it('clears the board when a second figure of the same shape arrives', async () => {
+  it('clears the board when a second shape of the same shape arrives', async () => {
     const { a } = await world();
     a.send({
       type: 'ADD_RECORD',
       requestId: 'a-1',
       request: { cell: 0, shape: 'triangle' },
     });
-    await until(() => drawn(a.state?.state)[0] === 't', 'the first figure');
+    await until(() => drawn(a.state?.state)[0] === 't', 'the first shape');
     a.send({
       type: 'ADD_RECORD',
       requestId: 'a-2',
