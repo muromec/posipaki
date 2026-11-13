@@ -58,16 +58,13 @@ state move:
 
 A proxy follows anything with a state and a `send` — an authority, or another proxy. A chain of them is the demo.
 
-## The demo
-
-`demo/index.html` is three 2×2 boards: the first owns the log, the second defers to it, the third guesses. Pick a
-figure, click a box; click a filled box to lift it; two figures of the same shape and colour clear the board. The
-channels between the boards can be cut, which is what makes the shape visible: a cut board stops moving, and a
-healed one is re-attached from the state where it finds the board.
+The live one is the docs page: three 2×2 boards, one owning the log and a follower either side, four wires between
+them that can be carried, slowed or cut.  It lives in the docs tree (posipaki-docs, `src/durable.js`); what is here
+is the spec it runs (`demo/shapes.ts`) and the test that drives the same chain without a browser
+(`demo/chain.test.ts`).
 
 ```sh
-bash demo/build.sh    # one bundle, no dev server
-open demo/index.html
+bun test demo/chain.test.ts
 ```
 
 ## What this is not

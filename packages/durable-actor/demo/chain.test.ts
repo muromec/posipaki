@@ -37,7 +37,7 @@ async function until(condition: () => boolean, what: string): Promise<void> {
 /** A board as the page draws it: which box holds which figure. */
 function drawn(board: Board | null | undefined): string[] {
   return (board?.cells ?? []).map((cell) =>
-    cell === null ? '.' : `${cell.colour[0]}${cell.shape[0]}`,
+    cell === null ? '.' : cell[0],
   );
 }
 
@@ -77,12 +77,12 @@ describe('three boards in a chain', () => {
     c.send({
       type: 'ADD_RECORD',
       requestId: 'c-1',
-      request: { cell: 0, figure: { shape: 'triangle', colour: 'red' } },
+      request: { cell: 0, shape: 'triangle' },
     });
     // The guess is reduced here a tick after the ask: the board shows it before the log has heard about it.
-    await until(() => drawn(c.state?.state)[0] === 'rt', 'the optimistic board');
-    await until(() => drawn(a.state?.state)[0] === 'rt', 'the log');
-    await until(() => drawn(b.state?.state)[0] === 'rt', 'the deferred follower');
+    await until(() => drawn(c.state?.state)[0] === 't', 'the optimistic board');
+    await until(() => drawn(a.state?.state)[0] === 't', 'the log');
+    await until(() => drawn(b.state?.state)[0] === 't', 'the deferred follower');
     expect(drawn(c.state?.state)).toEqual(drawn(a.state?.state));
   });
 
@@ -93,10 +93,10 @@ describe('three boards in a chain', () => {
     a.send({
       type: 'ADD_RECORD',
       requestId: 'a-1',
-      request: { cell: 1, figure: { shape: 'circle', colour: 'yellow' } },
+      request: { cell: 1, shape: 'circle' },
     });
-    await until(() => drawn(a.state?.state)[1] === 'yc', 'the log');
-    await until(() => drawn(b.state?.state)[1] === 'yc', 'the deferred follower');
+    await until(() => drawn(a.state?.state)[1] === 'c', 'the log');
+    await until(() => drawn(b.state?.state)[1] === 'c', 'the deferred follower');
     // The cut one has heard nothing: a partition is not a pause.
     expect(drawn(c.state?.state)).toEqual(before);
 
@@ -120,9 +120,9 @@ describe('three boards in a chain', () => {
     a.send({
       type: 'ADD_RECORD',
       requestId: 'a-1',
-      request: { cell: 2, figure: { shape: 'diamond', colour: 'blue' } },
+      request: { cell: 2, shape: 'diamond' },
     });
-    await until(() => drawn(c.state?.state)[2] === 'bd', 'the far board');
+    await until(() => drawn(c.state?.state)[2] === 'd', 'the far board');
     const heard: string[] = [];
     c.subscribe('message', (message) => {
       if (message.type === 'RECORD_REJECTED') heard.push(message.reason);
@@ -130,24 +130,24 @@ describe('three boards in a chain', () => {
     c.send({
       type: 'ADD_RECORD',
       requestId: 'c-2',
-      request: { cell: 2, figure: { shape: 'circle', colour: 'yellow' } },
+      request: { cell: 2, shape: 'circle' },
     });
     await until(() => heard.length > 0, 'the refusal');
     expect(heard[0]).toBe('box 2 is taken');
   });
 
-  it('clears the board when a second figure of the same shape and colour arrives', async () => {
+  it('clears the board when a second figure of the same shape arrives', async () => {
     const { a } = await world();
     a.send({
       type: 'ADD_RECORD',
       requestId: 'a-1',
-      request: { cell: 0, figure: { shape: 'triangle', colour: 'red' } },
+      request: { cell: 0, shape: 'triangle' },
     });
-    await until(() => drawn(a.state?.state)[0] === 'rt', 'the first figure');
+    await until(() => drawn(a.state?.state)[0] === 't', 'the first figure');
     a.send({
       type: 'ADD_RECORD',
       requestId: 'a-2',
-      request: { cell: 3, figure: { shape: 'triangle', colour: 'red' } },
+      request: { cell: 3, shape: 'triangle' },
     });
     await until(() => drawn(a.state?.state).every((box) => box === '.'), 'the cleared board');
     expect(drawn(a.state?.state)).toEqual(['.', '.', '.', '.']);

@@ -1,35 +1,31 @@
-// ── the demo's spec: three figures on a 2×2 board ───────────────────────────
+// ── the demo's spec: four figures on a 2×2 board ────────────────────────────
 
 import type { FilterResult, RecordSpec } from '../src/interface';
 
+/**
+ * What stands in a box.  A shape and nothing else: a colour is how a shape is *drawn*, so it belongs to the page,
+ * not to the record — the same board renders the same either way.
+ */
 export type Shape = 'triangle' | 'diamond' | 'circle' | 'square';
-export type Colour = 'red' | 'blue' | 'yellow' | 'green';
-
-export interface Figure {
-  shape: Shape;
-  colour: Colour;
-}
 
 /** A 2×2 board: what stands in each box.  Nothing else — the demo has no use for a moment or an author. */
 export interface Board {
-  cells: (Figure | null)[];
+  cells: (Shape | null)[];
 }
 
 export type ShapesRecord =
-  | { type: 'PLACE'; cell: number; figure: Figure }
+  | { type: 'PLACE'; cell: number; shape: Shape }
   | { type: 'LIFT'; cell: number }
   /** Two of a figure on one board: the board is cleared, and the record says so. */
   | { type: 'CLEAR' };
 
-export type ShapesAsk = { cell: number; figure: Figure | null };
+export type ShapesAsk = { cell: number; shape: Shape | null };
 
 const CELLS = 4;
 
-/** The figure that already stands on the board with this shape and colour, if any. */
-function twin(board: Board, figure: Figure): number | null {
-  const at = board.cells.findIndex(
-    (cell) => cell !== null && cell.shape === figure.shape && cell.colour === figure.colour,
-  );
+/** The box that already holds this shape, if any. */
+function twin(board: Board, shape: Shape): number | null {
+  const at = board.cells.findIndex((cell) => cell === shape);
   return at === -1 ? null : at;
 }
 
@@ -39,35 +35,36 @@ export const shapesSpec: RecordSpec<Board, ShapesRecord, ShapesAsk> = {
       return { refuse: `${ask.cell} is not a box on this board` };
     }
     const taken = board.cells[ask.cell] !== null;
-    if (ask.figure === null && !taken) return { refuse: `box ${ask.cell} is empty` };
-    if (ask.figure !== null && taken) return { refuse: `box ${ask.cell} is taken` };
+    if (ask.shape === null && !taken) return { refuse: `box ${ask.cell} is empty` };
+    if (ask.shape !== null && taken) return { refuse: `box ${ask.cell} is taken` };
     return { pass: true };
   },
 
   map(_board: Board, ask: ShapesAsk): ShapesRecord {
-    if (ask.figure === null) return { type: 'LIFT', cell: ask.cell };
-    return { type: 'PLACE', cell: ask.cell, figure: ask.figure };
+    if (ask.shape === null) return { type: 'LIFT', cell: ask.cell };
+    return { type: 'PLACE', cell: ask.cell, shape: ask.shape };
   },
 
   reduce(board: Board | null, record: ShapesRecord): Board {
-    const cells = [...(board?.cells ?? Array<Figure | null>(CELLS).fill(null))];
-    if (record.type === 'CLEAR') return { cells: Array<Figure | null>(CELLS).fill(null) };
+    const empty = (): Board => ({ cells: Array<Shape | null>(CELLS).fill(null) });
+    if (record.type === 'CLEAR') return empty();
+    const cells = [...(board?.cells ?? empty().cells)];
     if (record.type === 'LIFT') {
       cells[record.cell] = null;
       return { cells };
     }
-    cells[record.cell] = record.figure;
-    // Two of a figure do not stand: the second clears the board, which is the rule the demo shows.
-    const pair = twin({ cells }, record.figure);
-    return { cells: pair !== null && pair !== record.cell ? Array<Figure | null>(CELLS).fill(null) : cells };
+    cells[record.cell] = record.shape;
+    // Two of a shape do not stand: the second one clears the board, which is the rule the demo shows.
+    const pair = twin({ cells }, record.shape);
+    return pair !== null && pair !== record.cell ? empty() : { cells };
   },
 
   diff(before: Board | null, after: Board): ShapesRecord[] {
     // From nothing: one PLACE per figure that stands — and a CLEAR when none does, because a follower has to hear
     // something to know the source has spoken.
     if (before === null) {
-      const places = after.cells.flatMap((figure, cell): ShapesRecord[] =>
-        figure === null ? [] : [{ type: 'PLACE', cell, figure }],
+      const places = after.cells.flatMap((shape, cell): ShapesRecord[] =>
+        shape === null ? [] : [{ type: 'PLACE', cell, shape }],
       );
       return places.length === 0 ? [{ type: 'CLEAR' }] : places;
     }
@@ -77,7 +74,7 @@ export const shapesSpec: RecordSpec<Board, ShapesRecord, ShapesAsk> = {
     for (let cell = 0; cell < CELLS; cell += 1) {
       const had = before.cells[cell] ?? null;
       const has = after.cells[cell] ?? null;
-      if (had === null && has !== null) return [{ type: 'PLACE', cell, figure: has }];
+      if (had === null && has !== null) return [{ type: 'PLACE', cell, shape: has }];
       if (had !== null && has === null) return [{ type: 'LIFT', cell }];
     }
     return [{ type: 'CLEAR' }];
