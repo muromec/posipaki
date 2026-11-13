@@ -64,7 +64,6 @@ export type RecordInMessage<Q> = AddRecord<Q> | AttachProcess | DetachProcess;
  * A follower has no log of its own — the difference it is told needs something to be different from — so the
  * state it starts at travels with the records rather than beside them.
  */
-export type RecordFeed<S, R> = { snapshot: S | null } | { record: R };
 // ── what a process says ─────────────────────────────────────────────────────
 
 /** The record was written and has come back reduced: the state holds it. */

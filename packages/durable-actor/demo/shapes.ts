@@ -23,7 +23,9 @@ export type ShapesRecord =
   | { type: 'PLACE'; at: number; by: string; cell: number; figure: Figure }
   | { type: 'LIFT'; at: number; by: string; cell: number }
   /** Two of a figure on one board: the board is cleared, and the record says so. */
-  | { type: 'CLEAR'; at: number; by: string };
+  | { type: 'CLEAR'; at: number; by: string }
+  /** Where a board stands, whole: what a follower arriving is told, as `diff(null, state)`. */
+  | { type: 'SET'; at: number; by: string; cells: readonly (Figure | null)[] };
 
 export type ShapesAsk = {
   by: string;
@@ -61,6 +63,9 @@ export const shapesSpec: RecordSpec<Board, ShapesRecord, ShapesAsk> = {
 
   reduce(board: Board | null, record: ShapesRecord): Board {
     const base: Board = board ?? { cells: Array(CELLS).fill(null), by: '', at: 0, moves: 0 };
+    if (record.type === 'SET') {
+      return { cells: [...record.cells], by: record.by, at: record.at, moves: base.moves + 1 };
+    }
     if (record.type === 'CLEAR') {
       return {
         cells: Array(CELLS).fill(null),
@@ -88,12 +93,15 @@ export const shapesSpec: RecordSpec<Board, ShapesRecord, ShapesAsk> = {
   },
 
   diff(before: Board | null, after: Board): ShapesRecord {
-    const said: Board = before ?? { cells: Array(CELLS).fill(null), by: '', at: 0, moves: 0 };
+    // From nothing: the board whole, or a follower could not start where it stands.
+    if (before === null) {
+      return { type: 'SET', at: after.at, by: after.by, cells: [...after.cells] };
+    }
     const filled = after.cells.every((cell) => cell === null);
-    const wasFilled = said.cells.some((cell) => cell !== null);
+    const wasFilled = before.cells.some((cell) => cell !== null);
     if (filled && wasFilled) return { type: 'CLEAR', at: after.at, by: after.by };
     for (let cell = 0; cell < CELLS; cell += 1) {
-      const was = said.cells[cell] ?? null;
+      const was = before.cells[cell] ?? null;
       const now = after.cells[cell] ?? null;
       if (was === null && now !== null)
         return { type: 'PLACE', at: after.at, by: after.by, cell, figure: now };

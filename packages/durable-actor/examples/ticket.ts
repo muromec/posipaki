@@ -1,11 +1,13 @@
 // ── the ticket, as a record spec ────────────────────────────────────────────
 //
-// The case the generic actor was cut from: a ticket opened with a word, moved by its owner, commented on.  Three
-// of the five record kinds, enough to see that nothing ticket-shaped leaks into the actor.
-//
+// The case the generic actor was cut from: a ticket opened with a word, moved by its owner, commented on.
 // Two things the four words make explicit here.  `filter` is where the *clock* lives — it stamps `at` on the ask
 // it passes, which is why `map` is pure and a replay builds the same record twice.  And `diff` needs the state to
 // remember who moved it (`movedBy`), because a fold that dropped it could not say.
+//
+// One thing it does not do: `diff(null, state)` returns the opening record alone, so a follower arriving at a
+// ticket mid-life would see one comment and no history.  A real ticket vocabulary needs a record that states the
+// ticket whole — the shapes demo's `SET` and the counter's `COUNTED` are the same idea.
 
 import type { FilterResult, RecordSpec } from '../src/interface';
 

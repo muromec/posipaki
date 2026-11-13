@@ -68,14 +68,9 @@ async function world(): Promise<World> {
   const told: Record<string, CounterRecord[]> = { a: [], b: [] };
   const mirrorA = mirrorChannel(authority, counterSpec);
   const mirrorB = mirrorChannel(authority, counterSpec);
-  // What a follower is told: the fold where it arrives, then one record per change.
-  mirrorA.onFrame((feed) => {
-    if ('record' in feed) told.a?.push(feed.record);
-  });
-  mirrorB.onFrame((feed) => {
-    if ('record' in feed) told.b?.push(feed.record);
-  });
-
+  // What a follower is told: the state where it arrives, as one record, then one per change.
+  mirrorA.onFrame((record) => told.a?.push(record));
+  mirrorB.onFrame((record) => told.b?.push(record));
   const a = await follower.spawn({ authority, source: mirrorA }, { name: 'proxy-a' });
   const b = await follower.spawn({ authority, source: mirrorB }, { name: 'proxy-b' });
   for (const proc of [a, b]) {
@@ -89,13 +84,13 @@ async function world(): Promise<World> {
 }
 
 describe('one authority, two proxies', () => {
-  it('starts both followers on the authority fold, and the mirrors have said nothing yet', async () => {
+  it("starts both followers on the authority fold, and says where it stands once", async () => {
     const { authority, a, b, told } = await world();
     expect(a.state?.state).toEqual({ total: 1, added: 1, by: 'me' });
     expect(b.state?.state).toEqual({ total: 1, added: 1, by: 'me' });
     expect(authority.state?.state).toEqual({ total: 1, added: 1, by: 'me' });
-    // A snapshot is a state, not a record: nothing has changed, so no record has been sent.
-    expect(told.a).toEqual([]);
+    // Where it stands arrives as one record (`diff(null, state)`); nothing has changed since, so nothing else.
+    expect(told.a).toEqual([{ type: 'COUNTED', by: 'me', total: 1, added: 1 }]);
   });
 
   it('takes a request from the first proxy, and both followers see it', async () => {
@@ -125,7 +120,7 @@ describe('one authority, two proxies', () => {
     expect(a.state?.state?.total).toBe(1);
     expect(b.state?.state?.total).toBe(1);
     // A refusal is not a record: nobody was told anything.
-    expect(told.a).toHaveLength(0);
+    expect(told.a).toHaveLength(1);
   });
 
   it('shows an optimistic guess at once, and keeps it when the authority takes it', async () => {

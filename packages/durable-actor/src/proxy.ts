@@ -3,7 +3,6 @@ import type { Channel } from 'posipaki/port';
 
 import type { Followed } from './followed';
 import type {
-  RecordFeed,
   RecordInMessage,
   RecordOutMessage,
   RecordPublic,
@@ -23,7 +22,7 @@ export interface ProxyArgs<S, R, Q, E = string> {
   /** The process that owns the log and filters: what answers a request. */
   authority: Followed<S, Q, E>;
   /** What it is fed: the fold where it arrives, then one record per change — `mirrorChannel` over the authority. */
-  source: Channel<RecordFeed<S, R>, string>;
+  source: Channel<R, string>;
 }
 
 /** One guess in flight: what it would have been, what the state was, and who is waiting to hear about it. */
@@ -37,7 +36,7 @@ interface Guess<S, R, Q> {
 
 interface Private<S, R, Q, E> {
   authority: Followed<S, Q, E>;
-  source: Channel<RecordFeed<S, R>, string>;
+  source: Channel<R, string>;
   stopReading: () => void;
   mode: ProxyMode;
   /** Guesses in flight, by the id this proxy asked the authority under. */
@@ -85,7 +84,7 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
     afterStart() {
       const mine = this.state.private;
       // The records are the authority's; so are the answers to what this proxy forwards.
-      mine.stopReading = mine.source.onFrame((feed) => this.receive(feed));
+      mine.stopReading = mine.source.onFrame((record) => this.receive(record));
       mine.authority.subscribe('message', (message) =>
         this.relayed(message as RecordOutMessage<E>),
       );
@@ -159,21 +158,15 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
         this.emit({ ...answer, requestId: callerId } satisfies RecordOutMessage<E>);
       },
 
-      /** One record from the authority: reduced with the same spec — unless this proxy already guessed it. */
-      /** One frame from the authority: where it stands, or a record — reduced with the same spec. */
-      receive(feed: RecordFeed<S, R>): void {
+      /** One record from the source: reduced with the same spec — unless this proxy already guessed it. */
+      receive(record: R): void {
         const mine = this.state.private;
-        if ('snapshot' in feed) {
-          this.state.public.state = feed.snapshot;
-          this.self.notify();
-          return;
-        }
-        if (mine.guessed.has(written(feed.record))) {
-          mine.guessed.delete(written(feed.record));
+        if (mine.guessed.has(written(record))) {
+          mine.guessed.delete(written(record));
           return;
         }
         // A record this spec cannot reduce is the end of the process, the same as on the authority's side.
-        this.state.public.state = spec.reduce(this.state.public.state, feed.record);
+        this.state.public.state = spec.reduce(this.state.public.state, record);
         this.self.notify();
       },
 

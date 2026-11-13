@@ -63,8 +63,10 @@ export function runLaw<S, R, Q, E>(law: LawName, one: LawCase<S, R, Q, E>): LawF
     }
     case 'diff': {
       const states = walked(one);
-      for (let at = 0; at < one.journal.length; at += 1) {
-        const back = one.spec.diff(states[at] ?? null, states[at + 1] as S);
+      // From the first pair on: `diff(null, state)` is not a step, it is the one record that says where a
+      // follower stands, so it answers whatever record the spec has for a whole state.
+      for (let at = 1; at < one.journal.length; at += 1) {
+        const back = one.spec.diff(states[at] as S, states[at + 1] as S);
         if (!same(back, one.journal[at])) {
           return fail(
             `${one.name}: diff did not recover record ${at}: ${JSON.stringify(back)} for ${JSON.stringify(one.journal[at])}`,

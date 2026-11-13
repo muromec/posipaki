@@ -15,7 +15,6 @@ export {
   type DetachProcess,
   type FilterResult,
   type RecordAccepted,
-  type RecordFeed,
   type RecordHandle,
   type RecordInMessage,
   type RecordOutMessage,
