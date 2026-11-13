@@ -100,7 +100,7 @@ function paint(cells: HTMLElement[], board: Board | null): void {
 // ── the three processes ─────────────────────────────────────────────────────
 
 // A board begins cleared: the log has no empty state, only a first record.
-const log = openLog<ShapesRecord>([{ type: 'CLEAR', at: 0, by: 'system' }]);
+const log = openLog<ShapesRecord>([{ type: 'CLEAR' }]);
 const Authority = makeDurableActor(shapesSpec);
 const Follower = makeDurableProxyActor(shapesSpec);
 const Guesser = makeDurableProxyActor(shapesSpec, { mode: 'optimistic' });
@@ -154,8 +154,6 @@ function place(index: number, cell: number): void {
   const board = proc.state?.state ?? null;
   const occupied = board?.cells[cell] !== null && board?.cells[cell] !== undefined;
   const ask: ShapesAsk = {
-    by: LABELS[index] ?? 'somebody',
-    at: Date.now(),
     cell,
     figure: occupied || selected === null ? null : selected,
   };

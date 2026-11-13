@@ -2,36 +2,26 @@
 
 import type { FilterResult, RecordSpec } from '../src/interface';
 
-export type Shape = 'triangle' | 'diamond' | 'circle';
-export type Colour = 'red' | 'blue' | 'yellow';
+export type Shape = 'triangle' | 'diamond' | 'circle' | 'square';
+export type Colour = 'red' | 'blue' | 'yellow' | 'green';
 
 export interface Figure {
   shape: Shape;
   colour: Colour;
 }
 
-/** A 2×2 board.  `cells[i]` is what stands in box `i`, or nothing. */
+/** A 2×2 board: what stands in each box.  Nothing else — the demo has no use for a moment or an author. */
 export interface Board {
   cells: (Figure | null)[];
-  /** Who made the last change, and when: kept so `diff` can name the record that made it. */
-  by: string;
-  at: number;
-  moves: number;
 }
 
 export type ShapesRecord =
-  | { type: 'PLACE'; at: number; by: string; cell: number; figure: Figure }
-  | { type: 'LIFT'; at: number; by: string; cell: number }
+  | { type: 'PLACE'; cell: number; figure: Figure }
+  | { type: 'LIFT'; cell: number }
   /** Two of a figure on one board: the board is cleared, and the record says so. */
-  | { type: 'CLEAR'; at: number; by: string }
+  | { type: 'CLEAR' };
 
-export type ShapesAsk = {
-  by: string;
-  cell: number;
-  figure: Figure | null;
-  /** When it was asked: the caller stamps it. */
-  at: number;
-};
+export type ShapesAsk = { cell: number; figure: Figure | null };
 
 const CELLS = 4;
 
@@ -55,58 +45,41 @@ export const shapesSpec: RecordSpec<Board, ShapesRecord, ShapesAsk> = {
   },
 
   map(_board: Board, ask: ShapesAsk): ShapesRecord {
-    if (ask.figure === null) return { type: 'LIFT', at: ask.at, by: ask.by, cell: ask.cell };
-    return { type: 'PLACE', at: ask.at, by: ask.by, cell: ask.cell, figure: ask.figure };
+    if (ask.figure === null) return { type: 'LIFT', cell: ask.cell };
+    return { type: 'PLACE', cell: ask.cell, figure: ask.figure };
   },
 
   reduce(board: Board | null, record: ShapesRecord): Board {
-    const base: Board = board ?? { cells: Array(CELLS).fill(null), by: '', at: 0, moves: 0 };
-    if (record.type === 'CLEAR') {
-      return {
-        cells: Array(CELLS).fill(null),
-        by: record.by,
-        at: record.at,
-        moves: base.moves + 1,
-      };
-    }
+    const cells = [...(board?.cells ?? Array<Figure | null>(CELLS).fill(null))];
+    if (record.type === 'CLEAR') return { cells: Array<Figure | null>(CELLS).fill(null) };
     if (record.type === 'LIFT') {
-      const cells = [...base.cells];
       cells[record.cell] = null;
-      return { cells, by: record.by, at: record.at, moves: base.moves + 1 };
+      return { cells };
     }
-    // Two of a figure do not stand: the second clears the board, which is the rule the demo shows.
-    const cells: (Figure | null)[] = [...base.cells];
     cells[record.cell] = record.figure;
-    const pair = twin({ ...base, cells }, record.figure);
-    const cleared = pair !== null && pair !== record.cell;
-    return {
-      cells: cleared ? Array(CELLS).fill(null) : cells,
-      by: record.by,
-      at: record.at,
-      moves: base.moves + 1,
-    };
+    // Two of a figure do not stand: the second clears the board, which is the rule the demo shows.
+    const pair = twin({ cells }, record.figure);
+    return { cells: pair !== null && pair !== record.cell ? Array<Figure | null>(CELLS).fill(null) : cells };
   },
 
   diff(before: Board | null, after: Board): ShapesRecord[] {
-    // From nothing: one PLACE per figure that stands — and a CLEAR when nothing stands, because a follower has to
-    // hear something to know the source has spoken.
+    // From nothing: one PLACE per figure that stands — and a CLEAR when none does, because a follower has to hear
+    // something to know the source has spoken.
     if (before === null) {
       const places = after.cells.flatMap((figure, cell): ShapesRecord[] =>
-        figure === null ? [] : [{ type: 'PLACE', at: after.at, by: after.by, cell, figure }],
+        figure === null ? [] : [{ type: 'PLACE', cell, figure }],
       );
-      return places.length === 0 ? [{ type: 'CLEAR', at: after.at, by: after.by }] : places;
+      return places.length === 0 ? [{ type: 'CLEAR' }] : places;
     }
     const empty = after.cells.every((cell) => cell === null);
     const was = before.cells.some((cell) => cell !== null);
-    if (empty && was) return [{ type: 'CLEAR', at: after.at, by: after.by }];
+    if (empty && was) return [{ type: 'CLEAR' }];
     for (let cell = 0; cell < CELLS; cell += 1) {
       const had = before.cells[cell] ?? null;
       const has = after.cells[cell] ?? null;
-      if (had === null && has !== null) {
-        return [{ type: 'PLACE', at: after.at, by: after.by, cell, figure: has }];
-      }
-      if (had !== null && has === null) return [{ type: 'LIFT', at: after.at, by: after.by, cell }];
+      if (had === null && has !== null) return [{ type: 'PLACE', cell, figure: has }];
+      if (had !== null && has === null) return [{ type: 'LIFT', cell }];
     }
-    return [{ type: 'CLEAR', at: after.at, by: after.by }];
+    return [{ type: 'CLEAR' }];
   },
 };
