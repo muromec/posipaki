@@ -15,7 +15,8 @@
       "posipaki": ["./src/index.ts"],
       "posipaki/remote": ["./src/remote/index.ts"],
       "posipaki/remote/node": ["./src/remote/node.ts"],
-      "posipaki/testing": ["./src/testing/index.ts"]
+      "posipaki/testing": ["./src/testing/index.ts"],
+      "posipaki/port": ["./src/port/index.ts"]
     }
   },
   "include": ["src"],

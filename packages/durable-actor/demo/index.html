@@ -1,0 +1,137 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>posipaki-durable-actor</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --ink: #e7e7ea;
+        --dim: #9a9aa5;
+        --line: #33333a;
+        --panel: #1b1b20;
+      }
+      body {
+        margin: 0;
+        padding: 24px;
+        background: #111114;
+        color: var(--ink);
+        font: 15px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace;
+      }
+      h1 {
+        font-size: 16px;
+        font-weight: 600;
+        margin: 0 0 4px;
+      }
+      p.lead {
+        color: var(--dim);
+        margin: 0 0 20px;
+      }
+      #palette {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 16px;
+      }
+      .pick {
+        width: 44px;
+        height: 44px;
+        padding: 6px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        cursor: pointer;
+      }
+      .pick.picked {
+        border-color: var(--ink);
+      }
+      #cuts {
+        display: flex;
+        gap: 10px;
+        margin-bottom: 20px;
+      }
+      .cut {
+        padding: 6px 10px;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        color: var(--ink);
+        font: inherit;
+        cursor: pointer;
+      }
+      .cut.cut-now {
+        border-color: #e5484d;
+        color: #e5484d;
+      }
+      #demo {
+        display: flex;
+        flex-direction: column;
+        gap: 16px;
+      }
+      @media (min-width: 760px) {
+        #demo {
+          flex-direction: row;
+        }
+      }
+      .panel {
+        flex: 1;
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 12px;
+      }
+      .panel h2 {
+        margin: 0 0 10px;
+        font-size: 13px;
+        font-weight: 500;
+        color: var(--dim);
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 8px;
+      }
+      .cell {
+        aspect-ratio: 1;
+        display: grid;
+        place-items: center;
+        background: #14141a;
+        border: 1px dashed var(--line);
+        border-radius: 10px;
+        cursor: pointer;
+      }
+      .cell[data-filled='yes'] {
+        border-style: solid;
+      }
+      .figure {
+        width: 74%;
+        height: 74%;
+      }
+      #events {
+        margin: 24px 0 0;
+        padding: 12px;
+        min-height: 160px;
+        max-height: 240px;
+        overflow: hidden;
+        background: #0c0c0f;
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        color: var(--dim);
+        font-size: 13px;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <h1>posipaki-durable-actor</h1>
+    <p class="lead">
+      one board owns the log; the next follows it; the last follows that and guesses. Click a figure, then a box.
+      Click a filled box to lift it. Cut a channel and watch a board stop.
+    </p>
+    <div id="palette"></div>
+    <div id="cuts"></div>
+    <div id="demo"></div>
+    <pre id="events"></pre>
+    <script type="module" src="./dist/demo.js"></script>
+  </body>
+</html>

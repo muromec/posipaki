@@ -12,25 +12,32 @@
         "vitest": "^4.1.11",
       },
     },
+    "packages/durable-actor": {
+      "name": "posipaki-durable-actor",
+      "version": "0.1.0",
+      "dependencies": {
+        "posipaki": "^0.50.0",
+      },
+    },
     "packages/remote-bwrap": {
       "name": "posipaki-remote-bwrap",
-      "version": "0.38.0",
+      "version": "0.50.0",
       "dependencies": {
-        "posipaki": "^0.38.0",
+        "posipaki": "^0.50.0",
       },
     },
     "packages/remote-podman": {
       "name": "posipaki-remote-podman",
-      "version": "0.38.0",
+      "version": "0.50.0",
       "dependencies": {
-        "posipaki": "^0.38.0",
+        "posipaki": "^0.50.0",
       },
     },
     "packages/remote-ssh": {
       "name": "posipaki-remote-ssh",
-      "version": "0.38.0",
+      "version": "0.50.0",
       "dependencies": {
-        "posipaki": "^0.38.0",
+        "posipaki": "^0.50.0",
       },
     },
   },
@@ -313,6 +320,8 @@
     "picomatch": ["picomatch@4.0.7", "", {}, "sha512-qcJu88Q2IWqJsDD529JKMdwGm/dvInW4HvQnRwiH9JtihJvzGOscDtHE3x1pBKeUOTysQ8kVmLnJ2kJu7yhcGA=="],
 
     "posipaki": ["posipaki@root:", {}],
+
+    "posipaki-durable-actor": ["posipaki-durable-actor@workspace:packages/durable-actor"],
 
     "posipaki-remote-bwrap": ["posipaki-remote-bwrap@workspace:packages/remote-bwrap"],
 

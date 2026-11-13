@@ -1,0 +1,34 @@
+{
+  "name": "posipaki-durable-actor",
+  "version": "0.1.0",
+  "description": "An actor whose state is the fold of a durable record log",
+  "homepage": "https://posipaki-docs.muromec.nl/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muromec/posipaki.git"
+  },
+  "files": [
+    "dist"
+  ],
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    },
+    "./conformance": {
+      "types": "./dist/conformance.d.ts",
+      "default": "./dist/conformance.js"
+    }
+  },
+  "scripts": {
+    "build": "bash ../../scripts/package-build.sh",
+    "prepack": "bash ../../scripts/package-build.sh",
+    "test": "bash ../../scripts/test.sh"
+  },
+  "dependencies": {
+    "posipaki": "^0.50.0"
+  }
+}
