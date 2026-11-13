@@ -7,7 +7,7 @@
 // name who added; and `added`, the number of records, which is state here and not log metadata — a follower is
 // given the fold as a snapshot, so everything the state holds survives an attach, this included.
 
-import type { FilterResult, RecordSpec } from './record';
+import type { FilterResult, RecordSpec } from './interface';
 
 export interface Counter {
   total: number;

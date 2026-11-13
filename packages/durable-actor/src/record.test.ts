@@ -9,7 +9,8 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { counterSpec, type Counter, type CounterAsk, type CounterRecord } from './counter';
 import { logChannel } from './log';
-import { makeDurableActor, type RecordOutMessage } from './record';
+import { type RecordOutMessage } from './interface';
+import { makeDurableActor } from './record';
 
 const counter = makeDurableActor(counterSpec);
 
@@ -66,8 +67,8 @@ describe('an authoritative actor', () => {
   it('accepts a request once its record has come back, and the state holds it', async () => {
     const { proc } = await running([{ type: 'ADD', by: 'me', n: 1 }]);
     const answered = said(proc);
-    proc.send({ type: 'ASK', requestId: 'r-1', request: { n: 4, by: 'me' } });
-    expect(await answered).toEqual({ type: 'ACCEPTED', requestId: 'r-1' });
+    proc.send({ type: 'ADD_RECORD', requestId: 'r-1', request: { n: 4, by: 'me' } });
+    expect(await answered).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'r-1' });
     // The accept is sent after the fold, so the state it was accepted for is already the process's.
     expect(proc.state?.state).toEqual({ total: 5, added: 2, by: 'me' });
   });
@@ -75,9 +76,9 @@ describe('an authoritative actor', () => {
   it('refuses what the rules refuse, and writes nothing', async () => {
     const { log, proc } = await running([{ type: 'ADD', by: 'me', n: 1 }]);
     const answered = said(proc);
-    proc.send({ type: 'ASK', requestId: 'r-2', request: { n: -2, by: 'me' } });
+    proc.send({ type: 'ADD_RECORD', requestId: 'r-2', request: { n: -2, by: 'me' } });
     expect(await answered).toEqual({
-      type: 'REJECTED',
+      type: 'RECORD_REJECTED',
       requestId: 'r-2',
       reason: '1 and -2 is below zero',
     });

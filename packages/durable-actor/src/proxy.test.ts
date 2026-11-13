@@ -12,7 +12,8 @@ import { counterSpec, type Counter, type CounterAsk, type CounterRecord } from '
 import { openLog } from './log';
 import { mirrorChannel } from './mirror';
 import { makeDurableProxyActor } from './proxy';
-import { makeDurableActor, type RecordOutMessage } from './record';
+import { type RecordOutMessage } from './interface';
+import { makeDurableActor } from './record';
 
 const counter = makeDurableActor(counterSpec);
 const follower = makeDurableProxyActor(counterSpec);
@@ -67,12 +68,16 @@ async function world(): Promise<World> {
   const told: Record<string, CounterRecord[]> = { a: [], b: [] };
   const mirrorA = mirrorChannel(authority, counterSpec);
   const mirrorB = mirrorChannel(authority, counterSpec);
-  mirrorA.onFrame((record) => told.a?.push(record));
-  mirrorB.onFrame((record) => told.b?.push(record));
+  // What a follower is told: the fold where it arrives, then one record per change.
+  mirrorA.onFrame((feed) => {
+    if ('record' in feed) told.a?.push(feed.record);
+  });
+  mirrorB.onFrame((feed) => {
+    if ('record' in feed) told.b?.push(feed.record);
+  });
 
-  const snapshot = authority.state?.state ?? null;
-  const a = await follower.spawn({ authority, snapshot, source: mirrorA }, { name: 'proxy-a' });
-  const b = await follower.spawn({ authority, snapshot, source: mirrorB }, { name: 'proxy-b' });
+  const a = await follower.spawn({ authority, source: mirrorA }, { name: 'proxy-a' });
+  const b = await follower.spawn({ authority, source: mirrorB }, { name: 'proxy-b' });
   for (const proc of [a, b]) {
     sealed.push(async () => {
       proc.send({ type: 'STOP' });
@@ -96,9 +101,9 @@ describe('one authority, two proxies', () => {
   it('takes a request from the first proxy, and both followers see it', async () => {
     const { authority, a, b, told } = await world();
     const answered = said(a, 'from-a');
-    a.send({ type: 'ASK', requestId: 'from-a', request: { n: 4, by: 'caller-a' } });
+    a.send({ type: 'ADD_RECORD', requestId: 'from-a', request: { n: 4, by: 'caller-a' } });
     // The proxy answers under the caller's own id, not the one it asked the authority with.
-    expect(await answered).toEqual({ type: 'ACCEPTED', requestId: 'from-a' });
+    expect(await answered).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'from-a' });
     await until(() => b.state?.state?.total === 5, 'the second follower to catch up');
     expect(authority.state?.state).toEqual({ total: 5, added: 2, by: 'caller-a' });
     expect(b.state?.state).toEqual({ total: 5, added: 2, by: 'caller-a' });
@@ -110,9 +115,9 @@ describe('one authority, two proxies', () => {
   it('relays the authority refusal, and nothing is written', async () => {
     const { authority, a, b, told } = await world();
     const answered = said(a, 'too-much');
-    a.send({ type: 'ASK', requestId: 'too-much', request: { n: -5, by: 'caller-a' } });
+    a.send({ type: 'ADD_RECORD', requestId: 'too-much', request: { n: -5, by: 'caller-a' } });
     expect(await answered).toEqual({
-      type: 'REJECTED',
+      type: 'RECORD_REJECTED',
       requestId: 'too-much',
       reason: '1 and -5 is below zero',
     });
@@ -127,7 +132,7 @@ describe('one authority, two proxies', () => {
     const { authority } = await world();
     const mirror = mirrorChannel(authority, counterSpec);
     const guesser = await optimistic.spawn(
-      { authority, snapshot: authority.state?.state ?? null, source: mirror },
+      { authority, source: mirror },
       { name: 'guesser' },
     );
     sealed.push(async () => {
@@ -135,9 +140,9 @@ describe('one authority, two proxies', () => {
       await guesser.wait();
     });
     const answered = said(guesser, 'optimistic-1');
-    guesser.send({ type: 'ASK', requestId: 'optimistic-1', request: { n: 3, by: 'caller' } });
+    guesser.send({ type: 'ADD_RECORD', requestId: 'optimistic-1', request: { n: 3, by: 'caller' } });
     // The answer arrives before the authority has written anything: the guesser reduced it itself.
-    expect(await answered).toEqual({ type: 'ACCEPTED', requestId: 'optimistic-1' });
+    expect(await answered).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'optimistic-1' });
     expect(guesser.state?.state?.total).toBe(4);
     await until(() => authority.state?.state?.total === 4, 'the authority');
     expect(guesser.state?.state?.total).toBe(4);
@@ -147,7 +152,7 @@ describe('one authority, two proxies', () => {
     const { authority } = await world();
     const mirror = mirrorChannel(authority, counterSpec);
     const guesser = await optimistic.spawn(
-      { authority, snapshot: authority.state?.state ?? null, source: mirror },
+      { authority, source: mirror },
       { name: 'guesser' },
     );
     sealed.push(async () => {
@@ -155,16 +160,16 @@ describe('one authority, two proxies', () => {
       await guesser.wait();
     });
     const first = said(guesser, 'optimistic-1');
-    guesser.send({ type: 'ASK', requestId: 'optimistic-1', request: { n: 3, by: 'caller' } });
-    expect(await first).toEqual({ type: 'ACCEPTED', requestId: 'optimistic-1' });
+    guesser.send({ type: 'ADD_RECORD', requestId: 'optimistic-1', request: { n: 3, by: 'caller' } });
+    expect(await first).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'optimistic-1' });
     // The authority takes that one, then refuses a second that the guiltless proxy would never have shown.
     await until(() => authority.state?.state?.total === 4, 'the authority');
     await until(() => guesser.state?.state?.total === 4, 'the guesser');
     // A guess the authority refuses: the state goes back and the caller is told it was only a guess.
     const told = said(guesser, 'optimistic-2');
-    guesser.send({ type: 'ASK', requestId: 'optimistic-2', request: { n: -10, by: 'caller' } });
+    guesser.send({ type: 'ADD_RECORD', requestId: 'optimistic-2', request: { n: -10, by: 'caller' } });
     expect(await told).toEqual({
-      type: 'REJECTED',
+      type: 'RECORD_REJECTED',
       requestId: 'optimistic-2',
       reason: '4 and -10 is below zero',
     });

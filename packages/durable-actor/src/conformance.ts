@@ -7,7 +7,7 @@
 // Everything here is a function of a `LawCase`: the spec, a journal to fold, one request it allows and one it
 // refuses.  Nothing reaches for a clock, a socket or a fixture.
 
-import type { RecordSpec } from './record';
+import type { RecordSpec } from './interface';
 
 /** What the laws are checked against. */
 export interface LawCase<S, R, Q, E = string> {

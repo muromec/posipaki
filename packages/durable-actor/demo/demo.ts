@@ -9,7 +9,8 @@
 import { mirrorChannel } from '../src/mirror';
 import { openLog } from '../src/log';
 import { makeDurableProxyActor } from '../src/proxy';
-import { makeDurableActor, type RecordHandle, type RecordOutMessage } from '../src/record';
+import { makeDurableActor } from '../src/record';
+import type { RecordHandle, RecordOutMessage } from '../src/interface';
 import { gateChannel, type Gate } from './gate';
 import {
   shapesSpec,
@@ -138,10 +139,9 @@ const procs: RecordHandle<Board, ShapesAsk>[] = [authority, b, c];
 procs.forEach((proc, index) => {
   proc.subscribe('message', (message) => {
     const answer = message as RecordOutMessage;
-    if (answer.type === 'ACCEPTED') return;
-    if (answer.type === 'REJECTED') say(`${LABELS[index]} refused: ${answer.reason}`);
-    else say(`${LABELS[index]} — ${answer.reason}`);
-  });
+    if (answer.type === 'RECORD_ACCEPTED') return;
+    if (answer.type === 'RECORD_REJECTED') say(`${LABELS[index]} refused: ${answer.reason}`);
+
   proc.subscribe('state', () => {
     paint(panels[index]?.grid ?? [], proc.state?.state ?? null);
   });
@@ -159,7 +159,7 @@ function place(index: number, cell: number): void {
     cell,
     figure: occupied || selected === null ? null : selected,
   };
-  proc.send({ type: 'ASK', requestId: `ask-${Date.now()}-${cell}`, request: ask });
+  proc.send({ type: 'ADD_RECORD', requestId: `ask-${Date.now()}-${cell}`, request: ask });
 }
 
 // ── the figures to pick, and the channels to cut ────────────────────────────

@@ -7,7 +7,7 @@
 // it passes, which is why `map` is pure and a replay builds the same record twice.  And `diff` needs the state to
 // remember who moved it (`movedBy`), because a fold that dropped it could not say.
 
-import type { FilterResult, RecordSpec } from '../src/record';
+import type { FilterResult, RecordSpec } from '../src/interface';
 
 export type TicketState = 'SUBMITTED' | 'WORKING' | 'COMPLETED' | 'CANCELED';
 

@@ -1,6 +1,6 @@
 // ── the demo's spec: three figures on a 2×2 board ───────────────────────────
 
-import type { FilterResult, RecordSpec } from '../src/record';
+import type { FilterResult, RecordSpec } from '../src/interface';
 
 export type Shape = 'triangle' | 'diamond' | 'circle';
 export type Colour = 'red' | 'blue' | 'yellow';

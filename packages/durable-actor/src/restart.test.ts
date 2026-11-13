@@ -12,7 +12,8 @@ import { counterSpec, type CounterAsk, type CounterRecord } from './counter';
 import { openLog } from './log';
 import { mirrorChannel } from './mirror';
 import { makeDurableProxyActor } from './proxy';
-import { makeDurableActor, type RecordOutMessage } from './record';
+import { type RecordOutMessage } from './interface';
+import { makeDurableActor } from './record';
 
 const counter = makeDurableActor(counterSpec);
 const follower = makeDurableProxyActor(counterSpec);
@@ -56,13 +57,12 @@ interface World {
 async function spawnAll(log: Log): Promise<World> {
   const authority = await counter.spawn({ source: log.channel() }, { name: 'authority' });
   await authority.ready();
-  const snapshot = authority.state?.state ?? null;
   const a = await follower.spawn(
-    { authority, snapshot, source: mirrorChannel(authority, counterSpec) },
+    { authority, source: mirrorChannel(authority, counterSpec) },
     { name: 'proxy-a' },
   );
   const b = await follower.spawn(
-    { authority, snapshot, source: mirrorChannel(authority, counterSpec) },
+    { authority, source: mirrorChannel(authority, counterSpec) },
     { name: 'proxy-b' },
   );
   const world = { authority, a, b };
@@ -87,11 +87,11 @@ describe('three actors, restarted from the log', () => {
     const before = await spawnAll(log);
 
     const first = said(before.a, 'r-1');
-    before.a.send({ type: 'ASK', requestId: 'r-1', request: { n: 4, by: 'caller-a' } });
-    expect(await first).toEqual({ type: 'ACCEPTED', requestId: 'r-1' });
+    before.a.send({ type: 'ADD_RECORD', requestId: 'r-1', request: { n: 4, by: 'caller-a' } });
+    expect(await first).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'r-1' });
     const second = said(before.b, 'r-2');
-    before.b.send({ type: 'ASK', requestId: 'r-2', request: { n: 2, by: 'caller-b' } });
-    expect(await second).toEqual({ type: 'ACCEPTED', requestId: 'r-2' });
+    before.b.send({ type: 'ADD_RECORD', requestId: 'r-2', request: { n: 2, by: 'caller-b' } });
+    expect(await second).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'r-2' });
     await until(() => before.a.state?.state?.total === 7, 'both followers caught up');
 
     const was = {
@@ -115,15 +115,15 @@ describe('three actors, restarted from the log', () => {
     const log = openLog<CounterRecord>([{ type: 'ADD', by: 'me', n: 1 }]);
     const first = await spawnAll(log);
     const opening = said(first.a, 'r-1');
-    first.a.send({ type: 'ASK', requestId: 'r-1', request: { n: 1, by: 'caller-a' } });
-    expect(await opening).toEqual({ type: 'ACCEPTED', requestId: 'r-1' });
+    first.a.send({ type: 'ADD_RECORD', requestId: 'r-1', request: { n: 1, by: 'caller-a' } });
+    expect(await opening).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'r-1' });
     await stopAll(first);
 
     const second = await spawnAll(log);
     expect(second.authority.state?.state?.total).toBe(2);
     const next = said(second.b, 'r-2');
-    second.b.send({ type: 'ASK', requestId: 'r-2', request: { n: 3, by: 'caller-b' } });
-    expect(await next).toEqual({ type: 'ACCEPTED', requestId: 'r-2' });
+    second.b.send({ type: 'ADD_RECORD', requestId: 'r-2', request: { n: 3, by: 'caller-b' } });
+    expect(await next).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'r-2' });
     await until(() => second.a.state?.state?.total === 5, 'the other follower');
     // The log holds every record that ever moved it: two before the restart, one after.
     const records: CounterRecord[] = [];

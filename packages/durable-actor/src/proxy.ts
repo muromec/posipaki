@@ -1,28 +1,15 @@
-// ── a proxy over an authoritative process ───────────────────────────────────
-//
-// A process that follows another one and takes requests on its behalf.  It holds no log: the records it reduces
-// come from the authority (`mirrorChannel`), and the rules live with the log's writer, so a request it is given
-// goes there.
-//
-// Two modes, and the difference is when the caller sees the state move:
-//
-// - `deferred` says nothing until the authority has written the record and it has come back through the mirror,
-//   so an accept always means "the authority has it";
-// - `optimistic` reduces the record it would ask for at once and answers yes immediately, then forwards.  If the
-//   authority refuses, the answer is a second word (`rolled back: …`) and the fold returns to what it was before
-//   the guess.
 import { defineActor, defineMessages, type SpawnedFrom } from 'posipaki';
 import type { Channel } from 'posipaki/port';
 
 import type { Followed } from './followed';
-import {
-  type RecordInMessage,
-  type RecordOutMessage,
-  type RecordPublic,
-  type RecordSpec,
-  reasonOf,
-  written,
-} from './record';
+import type {
+  RecordFeed,
+  RecordInMessage,
+  RecordOutMessage,
+  RecordPublic,
+  RecordSpec,
+} from './interface';
+import { reasonOf, written } from './record';
 
 /** When a follower shows a change: after the authority has it, or at once and undone if it is refused. */
 export type ProxyMode = 'deferred' | 'optimistic';
@@ -32,14 +19,11 @@ export interface ProxyOptions {
   mode?: ProxyMode;
 }
 
-/** What a proxy is given: the process it follows, the state where it attaches, and the changes after it. */
 export interface ProxyArgs<S, R, Q, E = string> {
-  /** The process that owns the log and filters: what answers a request, and where the records come from. */
+  /** The process that owns the log and filters: what answers a request. */
   authority: Followed<S, Q, E>;
-  /** The fold as it stands where the follower attaches: a state, not a record. */
-  snapshot: S | null;
-  /** The changes after it: `mirrorChannel` over the authority, in the usual case. */
-  source: Channel<R, string>;
+  /** What it is fed: the fold where it arrives, then one record per change — `mirrorChannel` over the authority. */
+  source: Channel<RecordFeed<S, R>, string>;
 }
 
 /** One guess in flight: what it would have been, what the state was, and who is waiting to hear about it. */
@@ -53,7 +37,7 @@ interface Guess<S, R, Q> {
 
 interface Private<S, R, Q, E> {
   authority: Followed<S, Q, E>;
-  source: Channel<R, string>;
+  source: Channel<RecordFeed<S, R>, string>;
   stopReading: () => void;
   mode: ProxyMode;
   /** Guesses in flight, by the id this proxy asked the authority under. */
@@ -84,7 +68,7 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
     setup(args: ProxyArgs<S, R, Q, E>): { public: RecordPublic<S>; private: Private<S, R, Q, E> } {
       return {
         // The fold as it stands where this proxy attaches: a state, given as one.
-        public: { state: args.snapshot, watching: 0 },
+        public: { state: null, watching: 0 },
         private: {
           authority: args.authority,
           source: args.source,
@@ -101,7 +85,7 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
     afterStart() {
       const mine = this.state.private;
       // The records are the authority's; so are the answers to what this proxy forwards.
-      mine.stopReading = mine.source.onFrame((record) => this.receive(record));
+      mine.stopReading = mine.source.onFrame((feed) => this.receive(feed));
       mine.authority.subscribe('message', (message) =>
         this.relayed(message as RecordOutMessage<E>),
       );
@@ -115,7 +99,7 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
 
     handlers: {
       /** A request: answered from a guess, or forwarded and answered when the authority has spoken. */
-      ASK(request) {
+      ADD_RECORD(request) {
         const mine = this.state.private;
         const state = this.state.public.state;
         if (mine.mode === 'optimistic' && state !== null) {
@@ -127,7 +111,7 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
         }
         const asking = `p-${mine.next++}`;
         mine.asking.set(asking, request.requestId);
-        mine.authority.send({ type: 'ASK', requestId: asking, request: request.request });
+        mine.authority.send({ type: 'ADD_RECORD', requestId: asking, request: request.request });
       },
       ATTACH() {},
       DETACH() {},
@@ -140,10 +124,10 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
         const asking = `p-${mine.next++}`;
         this.state.public.state = spec.reduce(before, record);
         this.self.notify();
-        this.emit({ type: 'ACCEPTED', requestId: callerId } satisfies RecordOutMessage<E>);
+        this.emit({ type: 'RECORD_ACCEPTED', requestId: callerId } satisfies RecordOutMessage<E>);
         mine.guessed.add(written(record));
         mine.guessing.set(asking, { callerId, record, before, request });
-        mine.authority.send({ type: 'ASK', requestId: asking, request });
+        mine.authority.send({ type: 'ADD_RECORD', requestId: asking, request });
       },
 
       /** What the authority said, in the words of whoever asked this proxy. */
@@ -152,45 +136,49 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
         const guess = mine.guessing.get(answer.requestId);
         if (guess !== undefined) {
           mine.guessing.delete(answer.requestId);
-          if (answer.type === 'ACCEPTED') return;
-          // The guess was wrong: undo it, and tell the caller who was told yes a moment ago.
+          if (answer.type === 'RECORD_ACCEPTED') return;
+          // The guess was wrong: the fold goes back, and the caller who was told yes a moment ago is told no —
+          // the same answer the authority gave, arriving late.
           this.state.public.state = guess.before;
           this.self.notify();
           mine.guessed.delete(written(guess.record));
           this.emit({
-            type: 'FAILED',
+            type: 'RECORD_REJECTED',
             requestId: guess.callerId,
-            reason: `rolled back: ${typeof answer.reason === 'string' ? answer.reason : 'refused'}`,
+            reason: answer.reason,
           } satisfies RecordOutMessage<E>);
           return;
         }
         const callerId = mine.asking.get(answer.requestId);
         if (callerId === undefined) return;
         mine.asking.delete(answer.requestId);
-        if (answer.type === 'ACCEPTED') {
-          this.emit({ type: 'ACCEPTED', requestId: callerId } satisfies RecordOutMessage<E>);
+        if (answer.type === 'RECORD_ACCEPTED') {
+          this.emit({ type: 'RECORD_ACCEPTED', requestId: callerId } satisfies RecordOutMessage<E>);
           return;
         }
         this.emit({ ...answer, requestId: callerId } satisfies RecordOutMessage<E>);
       },
 
       /** One record from the authority: reduced with the same spec — unless this proxy already guessed it. */
-      receive(record: R): void {
+      /** One frame from the authority: where it stands, or a record — reduced with the same spec. */
+      receive(feed: RecordFeed<S, R>): void {
         const mine = this.state.private;
-        if (mine.guessed.has(written(record))) {
-          mine.guessed.delete(written(record));
+        if ('snapshot' in feed) {
+          this.state.public.state = feed.snapshot;
+          this.self.notify();
           return;
         }
-        try {
-          this.state.public.state = spec.reduce(this.state.public.state, record);
-          this.self.notify();
-        } catch (error) {
-          this.exit(reasonOf(error));
+        if (mine.guessed.has(written(feed.record))) {
+          mine.guessed.delete(written(feed.record));
+          return;
         }
+        // A record this spec cannot reduce is the end of the process, the same as on the authority's side.
+        this.state.public.state = spec.reduce(this.state.public.state, feed.record);
+        this.self.notify();
       },
 
       reject(requestId: string, reason: E): void {
-        this.emit({ type: 'REJECTED', requestId, reason } satisfies RecordOutMessage<E>);
+        this.emit({ type: 'RECORD_REJECTED', requestId, reason } satisfies RecordOutMessage<E>);
       },
     },
   });

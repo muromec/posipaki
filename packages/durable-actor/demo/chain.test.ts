@@ -51,14 +51,14 @@ async function world() {
   });
   const ab = gateChannel(mirrorChannel(a, shapesSpec));
   const b = await Follower.spawn(
-    { authority: a, snapshot: a.state?.state ?? null, source: ab.channel },
+    { authority: a, source: ab.channel },
     { name: 'board-b' },
   );
   // A follower attaches to a state, so it is spawned once the process it follows has one.
   await until(() => b.state?.state != null, 'the deferred follower to fold');
   const bc = gateChannel(mirrorChannel(b, shapesSpec));
   const c = await Guesser.spawn(
-    { authority: b, snapshot: b.state?.state ?? null, source: bc.channel },
+    { authority: b, source: bc.channel },
     { name: 'board-c' },
   );
   for (const proc of [b, c]) {
@@ -75,7 +75,7 @@ describe('three boards in a chain', () => {
     const { a, b, c } = await world();
     // A figure placed through the optimistic board: it shows at once, and the others follow when the log has it.
     c.send({
-      type: 'ASK',
+      type: 'ADD_RECORD',
       requestId: 'c-1',
       request: { by: 'C', at: 1, cell: 0, figure: { shape: 'triangle', colour: 'red' } },
     });
@@ -91,7 +91,7 @@ describe('three boards in a chain', () => {
     bc.cut();
     const before = drawn(c.state?.state);
     a.send({
-      type: 'ASK',
+      type: 'ADD_RECORD',
       requestId: 'a-1',
       request: { by: 'A', at: 2, cell: 1, figure: { shape: 'circle', colour: 'yellow' } },
     });
@@ -105,7 +105,7 @@ describe('three boards in a chain', () => {
     c.send({ type: 'STOP' });
     await c.wait();
     const again = await Guesser.spawn(
-      { authority: b, snapshot: b.state?.state ?? null, source: bc.channel },
+      { authority: b, source: bc.channel },
       { name: 'board-c2' },
     );
     sealed.push(async () => {
@@ -118,17 +118,17 @@ describe('three boards in a chain', () => {
   it('refuses a figure in a box that is taken, and says where', async () => {
     const { a, c } = await world();
     a.send({
-      type: 'ASK',
+      type: 'ADD_RECORD',
       requestId: 'a-1',
       request: { by: 'A', at: 3, cell: 2, figure: { shape: 'diamond', colour: 'blue' } },
     });
     await until(() => drawn(c.state?.state)[2] === 'bd', 'the far board');
     const heard: string[] = [];
     c.subscribe('message', (message) => {
-      if (message.type === 'REJECTED') heard.push(message.reason);
+      if (message.type === 'RECORD_REJECTED') heard.push(message.reason);
     });
     c.send({
-      type: 'ASK',
+      type: 'ADD_RECORD',
       requestId: 'c-2',
       request: { by: 'C', at: 4, cell: 2, figure: { shape: 'circle', colour: 'yellow' } },
     });
@@ -139,13 +139,13 @@ describe('three boards in a chain', () => {
   it('clears the board when a second figure of the same shape and colour arrives', async () => {
     const { a } = await world();
     a.send({
-      type: 'ASK',
+      type: 'ADD_RECORD',
       requestId: 'a-1',
       request: { by: 'A', at: 5, cell: 0, figure: { shape: 'triangle', colour: 'red' } },
     });
     await until(() => drawn(a.state?.state)[0] === 'rt', 'the first figure');
     a.send({
-      type: 'ASK',
+      type: 'ADD_RECORD',
       requestId: 'a-2',
       request: { by: 'A', at: 6, cell: 3, figure: { shape: 'triangle', colour: 'red' } },
     });

@@ -1,6 +1,6 @@
 // ── what one process needs of another ───────────────────────────────────────
 
-import type { RecordInMessage, RecordOutMessage } from './record';
+import type { RecordInMessage, RecordOutMessage } from './interface';
 
 /**
  * What a follower needs of the process it follows: a state, and somewhere to send the requests it is given.

@@ -12,7 +12,8 @@ import { counterSpec, type Counter, type CounterAsk, type CounterRecord } from '
 import { openLog } from './log';
 import { mirrorChannel } from './mirror';
 import { makeDurableProxyActor } from './proxy';
-import { makeDurableActor, type RecordHandle, type RecordOutMessage } from './record';
+import { type RecordHandle, type RecordOutMessage } from './interface';
+import { makeDurableActor } from './record';
 
 const counter = makeDurableActor(counterSpec);
 const follower = makeDurableProxyActor(counterSpec);
@@ -49,7 +50,7 @@ async function ask(
       resolve(message);
     });
   });
-  handle.send({ type: 'ASK', requestId, request: { n, by: 'a caller' } });
+  handle.send({ type: 'ADD_RECORD', requestId, request: { n, by: 'a caller' } });
   const answer = await answered;
   return { answer, total: handle.state?.state?.total ?? null };
 }
@@ -70,7 +71,6 @@ async function world(): Promise<{ authority: AuthorityProc; proxy: ProxyProc }> 
   const proxyProc = await follower.spawn(
     {
       authority,
-      snapshot: authority.state?.state ?? null,
       source: mirrorChannel(authority, counterSpec),
     },
     { name: 'proxy' },
@@ -96,8 +96,8 @@ describe('an authority and a proxy', () => {
     const { authority, proxy: proxyProc } = await world();
     const throughAuthority = await ask(asHandle(authority), 'r-1', 4);
     const throughProxy = await ask(asHandle(proxyProc), 'r-2', 4);
-    expect(throughAuthority.answer).toEqual({ type: 'ACCEPTED', requestId: 'r-1' });
-    expect(throughProxy.answer).toEqual({ type: 'ACCEPTED', requestId: 'r-2' });
+    expect(throughAuthority.answer).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'r-1' });
+    expect(throughProxy.answer).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'r-2' });
     expect(throughAuthority.total).toBe(5);
     expect(throughProxy.total).toBe(9);
   });
@@ -106,7 +106,7 @@ describe('an authority and a proxy', () => {
     const { authority, proxy: proxyProc } = await world();
     const refused = await ask(asHandle(proxyProc), 'r-3', -5);
     expect(refused.answer).toEqual({
-      type: 'REJECTED',
+      type: 'RECORD_REJECTED',
       requestId: 'r-3',
       reason: '1 and -5 is below zero',
     });
