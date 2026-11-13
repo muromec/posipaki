@@ -1,17 +1,30 @@
+// ── the process that follows ────────────────────────────────────────────────
+//
+// A follower keeps the authority's fold and answers for it, and never writes: what it is given to send leaves
+// through a request that answers or a channel that only carries.  In `optimistic` mode it also shows a record the
+// authority has not written yet, and holds it until an answer or the record itself settles it.
+
 import { defineActor, defineMessages, type SpawnedFrom } from 'posipaki';
 import type { Channel } from 'posipaki/port';
 
-import type { Followed } from './followed';
 import type {
+  ProxyMode,
   RecordInMessage,
   RecordOutMessage,
   RecordPublic,
   RecordSpec,
 } from './interface';
 import { reasonOf, written } from './record';
+import {
+  Refused,
+  processOf,
+  upstreamOf,
+  type Sendable,
+  type Upstream,
+  type UpstreamSource,
+} from './upstream';
 
-/** When a follower shows a change: after the authority has it, or at once and undone if it is refused. */
-export type ProxyMode = 'deferred' | 'optimistic';
+export type { ProxyMode } from './interface';
 
 export interface ProxyOptions {
   /** Default `deferred`. */
@@ -19,41 +32,52 @@ export interface ProxyOptions {
 }
 
 export interface ProxyArgs<S, R, Q, E = string> {
-  /** The process that owns the log and filters: what answers a request. */
-  authority: Followed<S, Q, E>;
+  /** Where requests go: a call that answers, a channel that only carries, or a process used as one of the two. */
+  upstream: UpstreamSource<S, Q, E>;
   /** What it is fed: the fold where it arrives, then one record per change — `mirrorChannel` over the authority. */
   source: Channel<R, string>;
 }
 
-/** One guess in flight: what it would have been, what the state was, and who is waiting to hear about it. */
-interface Guess<S, R, Q> {
+/** A request on its way up: who is waiting for it, what was asked, and the record this side makes of it. */
+interface Asked<Q, R> {
+  kind: 'asked';
   callerId: string;
-  record: R;
-  before: S | null;
-  /** What the caller asked, so the authority is asked the same question rather than being shown the guess. */
   request: Q;
+  /** What `map` made of the request, or null when this follower had no fold to ask it about. */
+  record: R | null;
+  /** Whether it is already in the fold this follower shows: a guess, rather than a request still on its way. */
+  shown: boolean;
 }
 
+/** A record the log has that could not be placed: it belongs after the requests that are still in flight. */
+interface Heard<R> {
+  kind: 'heard';
+  record: R;
+}
+
+/** What is not in the authority's fold yet, in the order it happened. */
+type Pending<Q, R> = Asked<Q, R> | Heard<R>;
+
+/** What the authority said about a request: taken, or refused in the spec's own words. */
+type Answer<E> = { ok: true } | { ok: false; reason: E };
+
 interface Private<S, R, Q, E> {
-  authority: Followed<S, Q, E>;
+  upstream: Upstream<Q, E>;
+  /** The process it sends to, when it was handed one: what this follower attaches to and lets go of. */
+  process: Sendable<Q, E> | null;
   source: Channel<R, string>;
   stopReading: () => void;
   mode: ProxyMode;
-  /** Guesses in flight, by the id this proxy asked the authority under. */
-  guessing: Map<string, Guess<S, R, Q>>;
-  /** Answered ids, by the id this proxy asked under, for the callers that are still waiting. */
-  asking: Map<string, string>;
-  /** Records already reduced as a guess, so the mirror's copy of one is not reduced twice. */
-  guessed: Set<string>;
-  next: number;
+  /** The authority's fold, built from its records alone: what a guess is replayed over. */
+  confirmed: S | null;
+  pending: Pending<Q, R>[];
 }
 
 /**
- * A proxy: the authority's records reduced locally, and its answers relayed under each caller's own id.
+ * A follower: the same fold as the authority, over a channel it may not write.
  *
- * A proxy never filters.  A request it cannot hand over is a failure, not a refusal, because it has no rules to
- * refuse with — except in optimistic mode, where it applies the spec's own `filter` and `map` to guess, and says
- * so if the guess was wrong.
+ * It filters nothing of its own — the authority's refusal is the only rule — except in `optimistic` mode, where it
+ * applies the spec to guess and says so if the guess was wrong.
  */
 export function makeDurableProxyActor<S, R, Q, E = string>(
   spec: RecordSpec<S, R, Q, E>,
@@ -64,118 +88,183 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
     inMessages: defineMessages<RecordInMessage<Q>>(),
     outMessages: defineMessages<RecordOutMessage<E>>(),
 
-    setup(args: ProxyArgs<S, R, Q, E>): { public: RecordPublic<S>; private: Private<S, R, Q, E> } {
+    setup(args: ProxyArgs<S, R, Q, E>): {
+      public: RecordPublic<S>;
+      private: Private<S, R, Q, E>;
+    } {
+      const mode = options.mode ?? 'deferred';
       return {
-        // The fold as it stands where this proxy attaches: a state, given as one.
         public: { state: null, watching: 0 },
         private: {
-          authority: args.authority,
+          upstream: upstreamOf(args.upstream, mode),
+          process: processOf(args.upstream),
           source: args.source,
           stopReading: () => {},
-          mode: options.mode ?? 'deferred',
-          guessing: new Map(),
-          asking: new Map(),
-          guessed: new Set(),
-          next: 1,
+          mode,
+          confirmed: null,
+          pending: [],
         },
       };
     },
 
     afterStart() {
       const mine = this.state.private;
-      // The records are the authority's; so are the answers to what this proxy forwards.
+      // The records are the authority's; the requests in between are this process's own.
       mine.stopReading = mine.source.onFrame((record) => this.receive(record));
-      mine.authority.subscribe('message', (message) =>
-        this.relayed(message as RecordOutMessage<E>),
-      );
-      mine.authority.send({ type: 'ATTACH' });
+      mine.source.onClose((reason: string) => this.exit(reason));
+      mine.process?.send({ type: 'ATTACH' });
     },
 
     async beforeEnd() {
       this.state.private.stopReading();
-      this.state.private.authority.send({ type: 'DETACH' });
+      this.state.private.process?.send({ type: 'DETACH' });
     },
 
     handlers: {
-      /** A request: answered from a guess, or forwarded and answered when the authority has spoken. */
-      ADD_RECORD(request) {
+      /** A request: guessed and shown at once, or carried up and answered when the authority has spoken. */
+      ADD_RECORD(message) {
         const mine = this.state.private;
-        const state = this.state.public.state;
-        if (mine.mode === 'optimistic' && state !== null) {
-          const verdict = spec.filter(state, request.request);
-          if ('refuse' in verdict) return this.reject(request.requestId, verdict.refuse);
-          const record = spec.map(state, request.request);
-          this.guess(request.requestId, record, state, request.request);
-          return;
+        const shown = this.state.public.state;
+        // A guess needs a fold to guess from, and a follower before its first record has none: the request is asked.
+        const guessed = mine.mode === 'optimistic' && shown !== null;
+        if (guessed) {
+          const verdict = spec.filter(shown, message.request);
+          if ('refuse' in verdict) return this.reject(message.requestId, verdict.refuse);
         }
-        const asking = `p-${mine.next++}`;
-        mine.asking.set(asking, request.requestId);
-        mine.authority.send({ type: 'ADD_RECORD', requestId: asking, request: request.request });
+        const asked: Asked<Q, R> = {
+          kind: 'asked',
+          callerId: message.requestId,
+          request: message.request,
+          record: shown === null ? null : spec.map(shown, message.request),
+          shown: guessed,
+        };
+        mine.pending.push(asked);
+        if (guessed) {
+          this.show();
+          this.emit({ type: 'RECORD_ACCEPTED', requestId: message.requestId } satisfies RecordOutMessage<E>);
+        }
+        void this.ask(asked);
       },
       ATTACH() {},
       DETACH() {},
     },
 
     methods: {
-      /** Show it now, and ask: the record is reduced here before the authority has decided about it. */
-      guess(callerId: string, record: R, before: S | null, request: Q): void {
-        const mine = this.state.private;
-        const asking = `p-${mine.next++}`;
-        this.state.public.state = spec.reduce(before, record);
-        this.self.notify();
-        this.emit({ type: 'RECORD_ACCEPTED', requestId: callerId } satisfies RecordOutMessage<E>);
-        mine.guessed.add(written(record));
-        mine.guessing.set(asking, { callerId, record, before, request });
-        mine.authority.send({ type: 'ADD_RECORD', requestId: asking, request });
-      },
-
-      /** What the authority said, in the words of whoever asked this proxy. */
-      relayed(answer: RecordOutMessage<E>): void {
-        const mine = this.state.private;
-        const guess = mine.guessing.get(answer.requestId);
-        if (guess !== undefined) {
-          mine.guessing.delete(answer.requestId);
-          if (answer.type === 'RECORD_ACCEPTED') return;
-          // The guess was wrong: the fold goes back, and the caller who was told yes a moment ago is told no —
-          // the same answer the authority gave, arriving late.
-          this.state.public.state = guess.before;
-          this.self.notify();
-          mine.guessed.delete(written(guess.record));
-          this.emit({
-            type: 'RECORD_REJECTED',
-            requestId: guess.callerId,
-            reason: answer.reason,
-          } satisfies RecordOutMessage<E>);
+      /** Carry one request up; what comes back is the answer, when the medium has one to give. */
+      async ask(asked: Asked<Q, R>): Promise<void> {
+        try {
+          const answered = await this.carry(asked.request);
+          // A medium that only carries says nothing about whether the request was taken: the record is the answer.
+          if (!answered) return;
+        } catch (error) {
+          // A medium that failed is not a refusal: nothing here can tell a caller the authority said no.
+          if (!(error instanceof Refused)) return this.exit(reasonOf(error));
+          this.settle(asked, { ok: false, reason: error.reason as E });
+          this.drain();
+          this.show();
           return;
         }
-        const callerId = mine.asking.get(answer.requestId);
-        if (callerId === undefined) return;
-        mine.asking.delete(answer.requestId);
-        if (answer.type === 'RECORD_ACCEPTED') {
-          this.emit({ type: 'RECORD_ACCEPTED', requestId: callerId } satisfies RecordOutMessage<E>);
-          return;
-        }
-        this.emit({ ...answer, requestId: callerId } satisfies RecordOutMessage<E>);
+        // A shown guess is not settled here: the record that says the same thing is on its way, and retires it.
+        if (asked.shown) return;
+        this.settle(asked, { ok: true });
+        this.drain();
+        this.show();
       },
 
-      /** One record from the source: reduced with the same spec — unless this proxy already guessed it. */
+      /** What this follower works through: the medium's own shape, hidden from the rest of it. */
+      async carry(request: Q): Promise<boolean> {
+        const upstream = this.state.private.upstream;
+        if (typeof upstream === 'function') {
+          await upstream(request);
+          return true;
+        }
+        await upstream.send(request);
+        return false;
+      },
+
+      /** One record from the authority: retired against the oldest request, or held until what is before it settles. */
       receive(record: R): void {
         const mine = this.state.private;
-        if (mine.guessed.has(written(record))) {
-          mine.guessed.delete(written(record));
-          return;
+        const asked = this.oldest();
+        if (asked !== null && this.madeOf(asked, record)) {
+          mine.confirmed = spec.reduce(mine.confirmed, record);
+          this.settle(asked, { ok: true });
+        } else {
+          mine.pending.push({ kind: 'heard', record });
         }
-        // A record this spec cannot reduce is the end of the process, the same as on the authority's side.
-        this.state.public.state = spec.reduce(this.state.public.state, record);
+        this.drain();
+        this.show();
+      },
+
+      /** Whether that record is the one the authority made of that request: whole, unless the spec says otherwise. */
+      madeOf(asked: Asked<Q, R>, record: R): boolean {
+        if (asked.record === null) return false;
+        if (spec.producedFrom !== undefined) return spec.producedFrom(asked.request, record);
+        return written(asked.record) === written(record);
+      },
+
+      oldest(): Asked<Q, R> | null {
+        for (const entry of this.state.private.pending) if (entry.kind === 'asked') return entry;
+        return null;
+      },
+
+      /** Take a request out of what is pending, and say what the authority said about it. */
+      settle(asked: Asked<Q, R>, answer: Answer<E>): void {
+        const pending = this.state.private.pending;
+        const at = pending.indexOf(asked);
+        if (at < 0) return;
+        pending.splice(at, 1);
+        // A guess was already answered when it was shown: only a refusal has anything left to say about it.
+        if (answer.ok && asked.shown) return;
+        this.emit(
+          answer.ok
+            ? ({ type: 'RECORD_ACCEPTED', requestId: asked.callerId } satisfies RecordOutMessage<E>)
+            : ({
+                type: 'RECORD_REJECTED',
+                requestId: asked.callerId,
+                reason: answer.reason,
+              } satisfies RecordOutMessage<E>),
+        );
+      },
+
+      /** A record nothing is waiting on is the authority's: it enters the fold the moment nothing is before it. */
+      drain(): void {
+        const mine = this.state.private;
+        for (;;) {
+          const head = mine.pending[0];
+          if (head === undefined || head.kind !== 'heard') return;
+          mine.confirmed = spec.reduce(mine.confirmed, head.record);
+          mine.pending.shift();
+        }
+      },
+
+      /**
+       * Publish the fold as this follower shows it: the authority's, with the guesses still in flight on top.
+       *
+       * A record held behind a guess is not shown: it cannot be placed until the guess is settled, and the fold
+       * that would put it first is not the one the authority will end up with.
+       */
+      show(): void {
+        const mine = this.state.private;
+        let folded = mine.confirmed;
+        for (const entry of mine.pending) {
+          if (entry.kind === 'asked' && entry.shown && entry.record !== null) {
+            folded = spec.reduce(folded, entry.record);
+          }
+        }
+        this.state.public.state = folded;
         this.self.notify();
       },
 
-      reject(requestId: string, reason: E): void {
-        this.emit({ type: 'RECORD_REJECTED', requestId, reason } satisfies RecordOutMessage<E>);
+      /** The spec's refusal: nothing was written, and this is why, in the spec's own vocabulary. */
+      reject(callerId: string, reason: E): void {
+        this.emit({ type: 'RECORD_REJECTED', requestId: callerId, reason } satisfies RecordOutMessage<E>);
       },
     },
   });
 }
 
-/** A running proxy. */
-export type ProxyProc<S, R, Q, E = string> = SpawnedFrom<ReturnType<typeof makeDurableProxyActor<S, R, Q, E>>>;
+/** A running follower. */
+export type ProxyProc<S, R, Q, E = string> = SpawnedFrom<
+  ReturnType<typeof makeDurableProxyActor<S, R, Q, E>>
+>;

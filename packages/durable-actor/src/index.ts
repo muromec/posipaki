@@ -23,6 +23,17 @@ export {
   type RecordSpec,
 } from './interface';
 
+export {
+  Refused,
+  processOf,
+  requesting,
+  upstreamOf,
+  type Request,
+  type Sendable,
+  type Upstream,
+  type UpstreamSource,
+} from './upstream';
+
 export { makeDurableActor, reasonOf, type AuthoritativeArgs, type AuthoritativeProc, written } from './record';
 
 export {

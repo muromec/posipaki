@@ -6,13 +6,16 @@
 // requests on its behalf.  The records a follower reduces are the authority's — it says which record explains
 // each change (`diff`), and the proxy reduces that, so both sides run one fold from one description.
 
+import type { Channel } from 'posipaki/port';
+
 import { afterEach, describe, expect, it } from 'vitest';
 
 import { counterSpec, type Counter, type CounterAsk, type CounterRecord } from './counter';
-import { openLog } from './log';
+import { logChannel, openLog } from './log';
 import { mirrorChannel } from './mirror';
 import { makeDurableProxyActor } from './proxy';
-import { type RecordOutMessage } from './interface';
+import { Refused, requesting } from './upstream';
+import { type RecordOutMessage, type RecordSpec } from './interface';
 import { makeDurableActor } from './record';
 
 const counter = makeDurableActor(counterSpec);
@@ -71,8 +74,8 @@ async function world(): Promise<World> {
   // What a follower is told: the state where it arrives, as one record, then one per change.
   mirrorA.onFrame((record) => told.a?.push(record));
   mirrorB.onFrame((record) => told.b?.push(record));
-  const a = await follower.spawn({ authority, source: mirrorA }, { name: 'proxy-a' });
-  const b = await follower.spawn({ authority, source: mirrorB }, { name: 'proxy-b' });
+  const a = await follower.spawn({ upstream: authority, source: mirrorA }, { name: 'proxy-a' });
+  const b = await follower.spawn({ upstream: authority, source: mirrorB }, { name: 'proxy-b' });
   for (const proc of [a, b]) {
     sealed.push(async () => {
       proc.send({ type: 'STOP' });
@@ -107,10 +110,21 @@ describe('one authority, two proxies', () => {
     expect(told.b?.[(told.b?.length ?? 0) - 1]).toEqual({ type: 'ADD', by: 'caller-a', n: 4 });
   });
 
-  it('relays the authority refusal, and nothing is written', async () => {
+  it('relays the authority refusal when the uplink can answer, and writes nothing', async () => {
     const { authority, a, b, told } = await world();
-    const answered = said(a, 'too-much');
-    a.send({ type: 'ADD_RECORD', requestId: 'too-much', request: { n: -5, by: 'caller-a' } });
+    // A process handed to a deferred follower is a channel: nothing comes back through it.  `requesting` is the
+    // same process asked as a call, and that is what a refusal needs.
+    const asking = await follower.spawn(
+      { upstream: requesting(authority), source: mirrorChannel(authority, counterSpec) },
+      { name: 'asking' },
+    );
+    sealed.push(async () => {
+      asking.send({ type: 'STOP' });
+      await asking.wait();
+    });
+    await until(() => asking.state?.state != null, 'the asking follower to fold');
+    const answered = said(asking, 'too-much');
+    asking.send({ type: 'ADD_RECORD', requestId: 'too-much', request: { n: -5, by: 'caller-a' } });
     expect(await answered).toEqual({
       type: 'RECORD_REJECTED',
       requestId: 'too-much',
@@ -127,7 +141,7 @@ describe('one authority, two proxies', () => {
     const { authority } = await world();
     const mirror = mirrorChannel(authority, counterSpec);
     const guesser = await optimistic.spawn(
-      { authority, source: mirror },
+      { upstream: authority, source: mirror },
       { name: 'guesser' },
     );
     sealed.push(async () => {
@@ -147,7 +161,7 @@ describe('one authority, two proxies', () => {
     const { authority } = await world();
     const mirror = mirrorChannel(authority, counterSpec);
     const guesser = await optimistic.spawn(
-      { authority, source: mirror },
+      { upstream: authority, source: mirror },
       { name: 'guesser' },
     );
     sealed.push(async () => {
@@ -168,5 +182,68 @@ describe('one authority, two proxies', () => {
       requestId: 'optimistic-2',
       reason: '4 and -10 is below zero',
     });
+  });
+
+  it('replays the guesses that are left when one of them is refused', async () => {
+    // An uplink whose answers are given by hand, so two requests can be in flight at once.
+    const answers: Array<(answer: 'taken' | 'refused') => void> = [];
+    const upstream = (): Promise<void> =>
+      new Promise<void>((resolve, reject) => {
+        answers.push((answer) => (answer === 'taken' ? resolve() : reject(new Refused('not this one'))));
+      });
+    const source = logChannel<CounterRecord>([{ type: 'COUNTED', by: 'me', total: 1, added: 1 }]);
+    const guesser = await optimistic.spawn({ upstream, source }, { name: 'guesser' });
+    sealed.push(async () => {
+      guesser.send({ type: 'STOP' });
+      await guesser.wait();
+    });
+    await until(() => guesser.state?.state?.total === 1, 'the guesser to fold');
+    guesser.send({ type: 'ADD_RECORD', requestId: 'a', request: { n: 3, by: 'a' } });
+    guesser.send({ type: 'ADD_RECORD', requestId: 'b', request: { n: 4, by: 'b' } });
+    await until(() => guesser.state?.state?.total === 8, 'both guesses to show');
+    // The first is refused.  The second was guessed on top of it, so it is replayed over the fold without it —
+    // 1 + 4, not 1 and not 8.
+    const [first] = answers;
+    await until(() => answers.length === 2, 'both requests to be carried up');
+    first?.('refused');
+    await until(() => guesser.state?.state?.total === 5, 'the second guess replayed over the authority fold');
+  });
+
+  it('settles a guess from the record itself when the uplink cannot answer', async () => {
+    // The record the authority made says +2 where the guess said +3: a spec that cannot recognise its own record
+    // leaves the guess in the fold, and one that can settles it.  That is what `producedFrom` is for.
+    const blind = (): Promise<void> => new Promise<void>(() => {});
+    const source = (): Channel<CounterRecord, string> =>
+      logChannel<CounterRecord>([{ type: 'COUNTED', by: 'me', total: 1, added: 1 }]);
+    const recognised: RecordSpec<Counter, CounterRecord, CounterAsk> = {
+      ...counterSpec,
+      producedFrom: (ask, record) => record.type === 'ADD' && record.by === ask.by,
+    };
+    const named = makeDurableProxyActor(recognised, { mode: 'optimistic' });
+    const plainSource = source();
+    const namedSource = source();
+    const byDefault = await optimistic.spawn({ upstream: blind, source: plainSource }, { name: 'by-default' });
+    const byName = await named.spawn({ upstream: blind, source: namedSource }, { name: 'by-name' });
+    for (const proc of [byDefault, byName]) {
+      sealed.push(async () => {
+        proc.send({ type: 'STOP' });
+        await proc.wait();
+      });
+    }
+    await until(
+      () => byDefault.state?.state?.total === 1 && byName.state?.state?.total === 1,
+      'both followers to fold',
+    );
+    byDefault.send({ type: 'ADD_RECORD', requestId: 'here', request: { n: 3, by: 'caller' } });
+    byName.send({ type: 'ADD_RECORD', requestId: 'here', request: { n: 3, by: 'caller' } });
+    await until(
+      () => byDefault.state?.state?.total === 4 && byName.state?.state?.total === 4,
+      'both guesses to show',
+    );
+    // The authority writes what the caller asked for, capped at two — and the record it wrote is what comes back.
+    await plainSource.send({ type: 'ADD', by: 'caller', n: 2 });
+    await namedSource.send({ type: 'ADD', by: 'caller', n: 2 });
+    await until(() => byName.state?.state?.total === 3, 'the recognised guess to settle on the record');
+    expect(byDefault.state?.state?.total).toBe(4);
   });
 });

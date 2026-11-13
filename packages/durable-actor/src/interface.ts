@@ -30,6 +30,14 @@ export interface RecordSpec<S, R, Q, E = string> {
    * with: a list, so a vocabulary needs no special "the whole thing" record.
    */
   diff(before: S | null, after: S): R[];
+  /**
+   * Whether `record` is the one the authority made of `request`.
+   *
+   * Defaults to the record `map` builds for it, compared whole: right when the whole record is the caller's to
+   * compute.  A spec whose records the authority stamps with its own fields compares on what survives that —
+   * usually an id the request carried — and can then tell apart two requests that map alike.
+   */
+  producedFrom?(request: Q, record: R): boolean;
 }
 
 /** What a process publishes: the fold, and how many are keeping it up. */
@@ -107,3 +115,12 @@ export interface RecordHandle<S, Q, E = string> {
   subscribe(event: 'state', handler: () => void): () => void;
   wait(): Promise<void>;
 }
+
+/**
+ * How a follower treats a request it is given.
+ *
+ * `deferred` shows nothing until the authority has the record, and says what the authority said.  `optimistic`
+ * shows the record at once, says it was only a guess, and takes it back if the authority refuses — which is what
+ * the dirty buffer of guesses is for.
+ */
+export type ProxyMode = 'deferred' | 'optimistic';

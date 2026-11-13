@@ -12,6 +12,7 @@ import { counterSpec, type Counter, type CounterAsk, type CounterRecord } from '
 import { openLog } from './log';
 import { mirrorChannel } from './mirror';
 import { makeDurableProxyActor } from './proxy';
+import { requesting } from './upstream';
 import { type RecordHandle, type RecordOutMessage } from './interface';
 import { makeDurableActor } from './record';
 
@@ -70,7 +71,8 @@ async function world(): Promise<{ authority: AuthorityProc; proxy: ProxyProc }> 
   });
   const proxyProc = await follower.spawn(
     {
-      authority,
+      // Asked as a call, so the follower hears a refusal as the authority's own words rather than as silence.
+      upstream: requesting(authority),
       source: mirrorChannel(authority, counterSpec),
     },
     { name: 'proxy' },

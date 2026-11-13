@@ -58,11 +58,11 @@ async function spawnAll(log: Log): Promise<World> {
   const authority = await counter.spawn({ source: log.channel() }, { name: 'authority' });
   await authority.ready();
   const a = await follower.spawn(
-    { authority, source: mirrorChannel(authority, counterSpec) },
+    { upstream: authority, source: mirrorChannel(authority, counterSpec) },
     { name: 'proxy-a' },
   );
   const b = await follower.spawn(
-    { authority, source: mirrorChannel(authority, counterSpec) },
+    { upstream: authority, source: mirrorChannel(authority, counterSpec) },
     { name: 'proxy-b' },
   );
   const world = { authority, a, b };
