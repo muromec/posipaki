@@ -16,7 +16,7 @@ import type {
   RecordOutMessage,
   RecordPublic,
   RecordSpec,
-} from './interface.ts';
+} from './interface';
 
 /** What the process that owns the log is given: one channel, both ways. */
 export interface AuthoritativeArgs<R> {
