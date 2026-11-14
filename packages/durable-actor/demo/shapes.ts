@@ -68,15 +68,13 @@ export const shapesSpec: RecordSpec<Board, ShapesRecord, ShapesAsk> = {
       );
       return places.length === 0 ? [{ type: 'CLEAR' }] : places;
     }
-    const empty = after.cells.every((cell) => cell === null);
-    const was = before.cells.some((cell) => cell !== null);
-    if (empty && was) return [{ type: 'CLEAR' }];
-    for (let cell = 0; cell < CELLS; cell += 1) {
-      const had = before.cells[cell] ?? null;
-      const has = after.cells[cell] ?? null;
-      if (had === null && has !== null) return [{ type: 'PLACE', cell, shape: has }];
-      if (had !== null && has === null) return [{ type: 'LIFT', cell }];
-    }
-    return [{ type: 'CLEAR' }];
+    // Nothing stands any more: one record says so for the whole board.
+    if (after.cells.every((shape) => shape === null)) return [{ type: 'CLEAR' }];
+    // Otherwise one record per box that changed.
+    return after.cells.flatMap((shape, cell): ShapesRecord[] =>
+      shape === (before.cells[cell] ?? null)
+        ? []
+        : [shape === null ? { type: 'LIFT', cell } : { type: 'PLACE', cell, shape }],
+    );
   },
 };
