@@ -21,11 +21,11 @@ import type {
 /** What the process that owns the log is given: one channel, both ways. */
 export interface AuthoritativeArgs<R> {
   /** Records come from here, and a passed request's record goes back here. */
-  source: Channel<R, string>;
+  log: Channel<R, string>;
 }
 
 interface Private<R> {
-  source: Channel<R, string>;
+  log: Channel<R, string>;
   stopReading: () => void;
   watching: number;
   /** Whether anybody has watched: a process is not torn down before its first reason to exist arrives. */
@@ -34,7 +34,7 @@ interface Private<R> {
   awaiting: Map<string, string>;
 }
 
-/** A record as the source will hand it back: what an answer is matched against. */
+/** A record as the log will hand it back: what an answer is matched against. */
 export function written<R>(record: R): string {
   return JSON.stringify(record);
 }
@@ -58,7 +58,7 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
       return {
         public: { state: null, watching: 0 },
         private: {
-          source: args.source,
+          log: args.log,
           stopReading: () => {},
           watching: 0,
           seen: false,
@@ -69,15 +69,15 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
 
     afterStart() {
       const mine = this.state.private;
-      // What the source holds arrives before this returns, so the state is the log's when the loop starts.
-      mine.stopReading = mine.source.onFrame((record) => this.reduce(record));
-      mine.source.onError((error: unknown) => this.crash(reasonOf(error)));
-      mine.source.onClose((reason: string) => this.crash(reason));
+      // What the log holds arrives before this returns, so the state is the log's when the loop starts.
+      mine.stopReading = mine.log.onFrame((record) => this.reduce(record));
+      mine.log.onError((error: unknown) => this.crash(reasonOf(error)));
+      mine.log.onClose((reason: string) => this.crash(reason));
     },
 
     async beforeEnd() {
       this.state.private.stopReading();
-      await this.state.private.source.close('the durable actor is over');
+      await this.state.private.log.close('the durable actor is over');
     },
 
     handlers: {
@@ -94,7 +94,7 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
         this.watch(true);
         mine.awaiting.set(written(record), request.requestId);
         // A write that cannot be made is the end of this process: the caller waiting on it hears that it ended.
-        await mine.source.send(record);
+        await mine.log.send(record);
       },
       ATTACH() {
         this.watch(true);
@@ -133,7 +133,7 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
         if (!joined && mine.seen && mine.watching === 0) this.exit('nobody is watching');
       },
 
-      /** The source went away: the process goes with it, and a caller waiting hears that it ended. */
+      /** The log went away: the process goes with it, and a caller waiting hears that it ended. */
       crash(reason: string): void {
         this.state.private.stopReading();
         this.exit(reason);

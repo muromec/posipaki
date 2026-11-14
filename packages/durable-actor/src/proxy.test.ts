@@ -61,7 +61,7 @@ interface World {
 /** One log, one writer, two followers: the arrangement this test is about. */
 async function world(): Promise<World> {
   const log = openLog<CounterRecord>([{ type: 'ADD', by: 'me', n: 1 }]);
-  const authority = await counter.spawn({ source: log.channel() }, { name: 'authority' });
+  const authority = await counter.spawn({ log: log.channel() }, { name: 'authority' });
   await authority.ready();
   sealed.push(async () => {
     authority.send({ type: 'STOP' });
@@ -74,8 +74,8 @@ async function world(): Promise<World> {
   // What a follower is told: the state where it arrives, as one record, then one per change.
   mirrorA.onFrame((record) => told.a?.push(record));
   mirrorB.onFrame((record) => told.b?.push(record));
-  const a = await follower.spawn({ upstream: authority, source: mirrorA }, { name: 'proxy-a' });
-  const b = await follower.spawn({ upstream: authority, source: mirrorB }, { name: 'proxy-b' });
+  const a = await follower.spawn({ upstream: authority, log: mirrorA }, { name: 'proxy-a' });
+  const b = await follower.spawn({ upstream: authority, log: mirrorB }, { name: 'proxy-b' });
   for (const proc of [a, b]) {
     sealed.push(async () => {
       proc.send({ type: 'STOP' });
@@ -115,7 +115,7 @@ describe('one authority, two proxies', () => {
     // A process handed to a deferred follower is a channel: nothing comes back through it.  `requesting` is the
     // same process asked as a call, and that is what a refusal needs.
     const asking = await follower.spawn(
-      { upstream: requesting(authority), source: mirrorChannel(authority, counterSpec) },
+      { upstream: requesting(authority), log: mirrorChannel(authority, counterSpec) },
       { name: 'asking' },
     );
     sealed.push(async () => {
@@ -141,7 +141,7 @@ describe('one authority, two proxies', () => {
     const { authority } = await world();
     const mirror = mirrorChannel(authority, counterSpec);
     const guesser = await optimistic.spawn(
-      { upstream: authority, source: mirror },
+      { upstream: authority, log: mirror },
       { name: 'guesser' },
     );
     sealed.push(async () => {
@@ -161,7 +161,7 @@ describe('one authority, two proxies', () => {
     const { authority } = await world();
     const mirror = mirrorChannel(authority, counterSpec);
     const guesser = await optimistic.spawn(
-      { upstream: authority, source: mirror },
+      { upstream: authority, log: mirror },
       { name: 'guesser' },
     );
     sealed.push(async () => {
@@ -191,8 +191,8 @@ describe('one authority, two proxies', () => {
       new Promise<void>((resolve, reject) => {
         answers.push((answer) => (answer === 'taken' ? resolve() : reject(new Refused('not this one'))));
       });
-    const source = logChannel<CounterRecord>([{ type: 'COUNTED', by: 'me', total: 1, added: 1 }]);
-    const guesser = await optimistic.spawn({ upstream, source }, { name: 'guesser' });
+    const log = logChannel<CounterRecord>([{ type: 'COUNTED', by: 'me', total: 1, added: 1 }]);
+    const guesser = await optimistic.spawn({ upstream, log }, { name: 'guesser' });
     sealed.push(async () => {
       guesser.send({ type: 'STOP' });
       await guesser.wait();
@@ -213,17 +213,17 @@ describe('one authority, two proxies', () => {
     // The record the authority made says +2 where the guess said +3: a spec that cannot recognise its own record
     // leaves the guess in the fold, and one that can settles it.  That is what `producedFrom` is for.
     const blind = (): Promise<void> => new Promise<void>(() => {});
-    const source = (): Channel<CounterRecord, string> =>
+    const feed = (): Channel<CounterRecord, string> =>
       logChannel<CounterRecord>([{ type: 'COUNTED', by: 'me', total: 1, added: 1 }]);
     const recognised: RecordSpec<Counter, CounterRecord, CounterAsk> = {
       ...counterSpec,
       producedFrom: (ask, record) => record.type === 'ADD' && record.by === ask.by,
     };
     const named = makeDurableProxyActor(recognised, { mode: 'optimistic' });
-    const plainSource = source();
-    const namedSource = source();
-    const byDefault = await optimistic.spawn({ upstream: blind, source: plainSource }, { name: 'by-default' });
-    const byName = await named.spawn({ upstream: blind, source: namedSource }, { name: 'by-name' });
+    const plainSource = feed();
+    const namedSource = feed();
+    const byDefault = await optimistic.spawn({ upstream: blind, log: plainSource }, { name: 'by-default' });
+    const byName = await named.spawn({ upstream: blind, log: namedSource }, { name: 'by-name' });
     for (const proc of [byDefault, byName]) {
       sealed.push(async () => {
         proc.send({ type: 'STOP' });

@@ -44,21 +44,21 @@ function drawn(board: Board | null | undefined): string[] {
 async function world() {
   // A board begins by being cleared: the log has no empty state, only a first record.
   const log = openLog<ShapesRecord>([{ type: 'CLEAR' }]);
-  const a = await Authority.spawn({ source: log.channel() }, { name: 'board-a' });
+  const a = await Authority.spawn({ log: log.channel() }, { name: 'board-a' });
   sealed.push(async () => {
     a.send({ type: 'STOP' });
     await a.wait();
   });
   const ab = gateChannel(mirrorChannel(a, shapesSpec));
   const b = await Follower.spawn(
-    { upstream: a, source: ab.channel },
+    { upstream: a, log: ab.channel },
     { name: 'board-b' },
   );
   // A follower attaches to a state, so it is spawned once the process it follows has one.
   await until(() => b.state?.state != null, 'the deferred follower to fold');
   const bc = gateChannel(mirrorChannel(b, shapesSpec));
   const c = await Guesser.spawn(
-    { upstream: b, source: bc.channel },
+    { upstream: b, log: bc.channel },
     { name: 'board-c' },
   );
   for (const proc of [b, c]) {
@@ -105,7 +105,7 @@ describe('three boards in a chain', () => {
     c.send({ type: 'STOP' });
     await c.wait();
     const again = await Guesser.spawn(
-      { upstream: b, source: bc.channel },
+      { upstream: b, log: bc.channel },
       { name: 'board-c2' },
     );
     sealed.push(async () => {

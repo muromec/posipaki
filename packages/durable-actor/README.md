@@ -66,7 +66,7 @@ A process is the shortcut: handed to a follower it becomes a request in `optimis
 
 ```ts
 const follower = makeDurableProxyActor(spec, { mode: 'deferred' });
-await follower.spawn({ upstream: authority, source: mirrorChannel(authority, spec) });
+await follower.spawn({ upstream: authority, log: mirrorChannel(authority, spec) });
 ```
 
 What the two modes promise:

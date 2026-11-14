@@ -73,9 +73,9 @@ export type RecordInMessage<Q> = AddRecord<Q> | AttachProcess | DetachProcess;
 // ── what a follower is fed ──────────────────────────────────────────────────
 
 /**
- * One frame of a follower's source: the fold where it arrives, or a record that changed it.
+ * One frame of a follower's log: the fold where it arrives, or a record that changed it.
  *
- * A follower has no log of its own — the difference it is told needs something to be different from — so the
+ * A follower's log is a copy — the difference it is told needs something to be different from — so the
  * state it starts at travels with the records rather than beside them.
  */
 // ── what a process says ─────────────────────────────────────────────────────
@@ -96,7 +96,7 @@ export interface RecordRejected<E = string> {
 /**
  * Everything a process says: whether it took the request, and nothing about the work — that is the state.
  *
- * There is no third word.  A process that cannot go on (its source went, a record would not fold) dies with the
+ * There is no third word.  A process that cannot go on (its log ended, a record would not fold) dies with the
  * reason instead of answering, because a caller waiting on a dead process hears that it ended.
  */
 export type RecordOutMessage<E = string> = RecordAccepted | RecordRejected<E>;

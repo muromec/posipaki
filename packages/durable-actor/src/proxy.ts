@@ -35,7 +35,7 @@ export interface ProxyArgs<S, R, Q, E = string> {
   /** Where requests go: a call that answers, a channel that only carries, or a process used as one of the two. */
   upstream: UpstreamSource<S, Q, E>;
   /** What it is fed: the fold where it arrives, then one record per change — `mirrorChannel` over the authority. */
-  source: Channel<R, string>;
+  log: Channel<R, string>;
 }
 
 /** A request on its way up: who is waiting for it, what was asked, and the record this side makes of it. */
@@ -65,7 +65,7 @@ interface Private<S, R, Q, E> {
   upstream: Upstream<Q, E>;
   /** The process it sends to, when it was handed one: what this follower attaches to and lets go of. */
   process: Sendable<Q, E> | null;
-  source: Channel<R, string>;
+  log: Channel<R, string>;
   stopReading: () => void;
   mode: ProxyMode;
   /** The authority's fold, built from its records alone: what a guess is replayed over. */
@@ -98,7 +98,7 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
         private: {
           upstream: upstreamOf(args.upstream, mode),
           process: processOf(args.upstream),
-          source: args.source,
+          log: args.log,
           stopReading: () => {},
           mode,
           confirmed: null,
@@ -110,8 +110,8 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
     afterStart() {
       const mine = this.state.private;
       // The records are the authority's; the requests in between are this process's own.
-      mine.stopReading = mine.source.onFrame((record) => this.receive(record));
-      mine.source.onClose((reason: string) => this.exit(reason));
+      mine.stopReading = mine.log.onFrame((record) => this.receive(record));
+      mine.log.onClose((reason: string) => this.exit(reason));
       mine.process?.send({ type: 'ATTACH' });
     },
 

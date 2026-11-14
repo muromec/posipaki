@@ -63,7 +63,7 @@ function asHandle(proc: AuthorityProc | ProxyProc): Handle {
 
 async function world(): Promise<{ authority: AuthorityProc; proxy: ProxyProc }> {
   const log = openLog<CounterRecord>([{ type: 'ADD', by: 'me', n: 1 }]);
-  const authority = await counter.spawn({ source: log.channel() }, { name: 'authority' });
+  const authority = await counter.spawn({ log: log.channel() }, { name: 'authority' });
   await authority.ready();
   sealed.push(async () => {
     authority.send({ type: 'STOP' });
@@ -73,7 +73,7 @@ async function world(): Promise<{ authority: AuthorityProc; proxy: ProxyProc }> 
     {
       // Asked as a call, so the follower hears a refusal as the authority's own words rather than as silence.
       upstream: requesting(authority),
-      source: mirrorChannel(authority, counterSpec),
+      log: mirrorChannel(authority, counterSpec),
     },
     { name: 'proxy' },
   );

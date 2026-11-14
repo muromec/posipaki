@@ -36,7 +36,7 @@ async function running(
   initial: CounterRecord[] = [],
 ): Promise<{ log: ReturnType<typeof logChannel<CounterRecord>>; proc: Proc }> {
   const log = logChannel<CounterRecord>(initial);
-  const proc = await counter.spawn({ source: log }, { name: 'counter' });
+  const proc = await counter.spawn({ log }, { name: 'counter' });
   await proc.ready();
   sealed.push(async () => {
     proc.send({ type: 'STOP' });
