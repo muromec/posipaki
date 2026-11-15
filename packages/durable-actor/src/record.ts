@@ -19,6 +19,12 @@ import type {
 } from './interface';
 
 /** What the process that owns the log is given: one channel, both ways. */
+/** A record the log handed over, carried into the process's own loop: a fold belongs in a turn, not beside one. */
+export interface ApplyRecord<R> {
+  type: 'APPLY_RECORD';
+  record: R;
+}
+
 export interface AuthoritativeArgs<R> {
   /** Records come from here, and a passed request's record goes back here. */
   log: Channel<R, string>;
@@ -53,7 +59,7 @@ export function reasonOf(error: unknown): string {
 export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, E>) {
   return defineActor({
     name: 'durable',
-    inMessages: defineMessages<RecordInMessage<Q>>(),
+    inMessages: defineMessages<RecordInMessage<Q> | ApplyRecord<R>>(),
     outMessages: defineMessages<RecordOutMessage<E>>(),
 
     /**
@@ -69,7 +75,6 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
     }> {
       let state: S | null = null;
       for (;;) {
-        if ((await args.log.hasFrames()) !== true) break;
         const record = await readMessageMaybe(args.log);
         if (record === null) break;
         state = spec.reduce(state, record);
@@ -101,6 +106,10 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
     },
 
     handlers: {
+      /** A record that arrived from the log: folded in this process's own turn, so the state subscribers hear it. */
+      APPLY_RECORD(message) {
+        this.reduce(message.record);
+      },
       /** A request: filtered here, and written if the rules allow it.  The answer follows the write back. */
       async ADD_RECORD(request) {
         const mine = this.state.private;
@@ -158,13 +167,13 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
         if (!joined && mine.seen && mine.watching === 0) this.exit('nobody is watching');
       },
 
-      /** Read the log as it speaks: one frame at a time, from the queue the startup read left behind. */
+      /** Read the log as it speaks: each record arrives as a message, so the fold happens in a turn of its own. */
       async follow(): Promise<void> {
         const mine = this.state.private;
         while (!mine.ended) {
           const record = await readMessage(mine.log);
           if (mine.ended) return;
-          this.reduce(record);
+          this.ctx.sendSelf({ type: 'APPLY_RECORD', record });
         }
       },
 
