@@ -1,6 +1,6 @@
 {
   "name": "posipaki-durable-actor",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "An actor whose state is the fold of a durable record log",
   "homepage": "https://posipaki-docs.muromec.nl/",
   "repository": {
@@ -29,6 +29,6 @@
     "test": "bash ../../scripts/test.sh"
   },
   "dependencies": {
-    "posipaki": "^0.50.0"
+    "posipaki": "^0.51.0"
   }
 }
