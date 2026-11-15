@@ -140,7 +140,8 @@ export function splitChannel<C = string>(
     },
     info: inner.info,
     control: (command) => inner.control(command),
-    hasFrames: async () => false,
+    /** A complete line is emitted the moment its bytes arrive: nothing of ours is ever standing. */
+    hasFrames: () => inner.hasFrames(),
   });
 
   inner.onFrame((chunk) => {
