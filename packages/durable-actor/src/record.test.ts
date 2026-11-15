@@ -112,15 +112,21 @@ describe('an authoritative actor', () => {
     await proc.wait();
   });
 
-  it('answers a request that arrives before its log has been read', async () => {
-    // A journal hands its records over a moment after the subscription; this is that moment, made explicit.
+  it('is not ready before its log has been handed over', async () => {
+    // A journal hands its records over a moment after the subscription and can say when it has finished: this is
+    // that channel, made explicit.  `hasFrames` answers for the read that is in flight, which is the whole point.
     const inner = logChannel<CounterRecord>([{ type: 'COUNTED', by: 'me', total: 3, added: 1 }]);
+    let handedOver = false;
     const slow: typeof inner = {
       ...inner,
       onFrame(handler) {
-        setTimeout(() => inner.onFrame(handler), 0);
+        setTimeout(() => {
+          inner.onFrame(handler);
+          handedOver = true;
+        }, 0);
         return () => {};
       },
+      hasFrames: async () => !handedOver,
     };
     const proc = await counter.spawn({ log: slow }, { name: 'slow' });
     sealed.push(async () => {
@@ -128,14 +134,13 @@ describe('an authoritative actor', () => {
       await proc.wait();
     });
     await proc.ready();
-    // The process is up and its state is not: a request made now waits for the first record instead of being
-    // refused, and it is judged against the state the log was holding.
+    // The process is up and its log is still being read: a request made now is not judged against the half the
+    // process happens to hold, because it waits for the log to go quiet first.
     const answered = said(proc);
     proc.send({ type: 'ADD_RECORD', requestId: 'early', request: { n: 4, by: 'early bird' } });
     expect(await answered).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'early' });
     expect(proc.state?.state).toEqual({ total: 7, added: 2, by: 'early bird' });
   });
-
   it('dies with the sentence when a record cannot be folded', async () => {
     const awkward: RecordSpec<Counter, CounterRecord, CounterAsk> = {
       ...counterSpec,

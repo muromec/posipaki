@@ -27,3 +27,7 @@ export {
 export { fetchPort, HttpRefusal, type FetchPortOptions, type HttpEnd } from "./fetch.js";
 export { portReactor, type PortListener, type PortPair, type PortReactor, type PortReactorOptions } from "./reactor.js";
 export { duplexChannel } from "./duplex.js";
+export { mapChannel, SKIP } from "./map.js";
+export { linesChannel } from "./lines.js";
+export { decode, encode, incoming, recording, type Written } from "./testing.js";
+export { readMessage, readMessageMaybe } from "./read.js";

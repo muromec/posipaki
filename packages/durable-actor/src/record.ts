@@ -9,7 +9,7 @@
 // and the accept is sent when that record comes back reduced.
 
 import { defineActor, defineMessages, type SpawnedFrom } from 'posipaki';
-import type { Channel } from 'posipaki/port';
+import { readMessageMaybe, type Channel } from 'posipaki/port';
 
 import type {
   RecordInMessage,
@@ -98,7 +98,7 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
         const mine = this.state.private;
         // A request that arrives before the log has been handed over waits for its first record: the state a
         // request is judged against is the log's, and the log has not spoken yet.
-        await mine.folded;
+        await this.quiet();
         const state = this.state.public.state;
         if (state === null) throw new Error('this process folded to nothing');
         const verdict = spec.filter(state, request.request);
@@ -142,6 +142,21 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
       /** The spec's refusal: the record was not written, and this is why, in the spec's own vocabulary. */
       reject(requestId: string, reason: E): void {
         this.emit({ type: 'RECORD_REJECTED', requestId, reason } satisfies RecordOutMessage<E>);
+      },
+
+      /**
+       * Wait until the log has handed over everything it already holds.
+       *
+       * A request is judged against a state, not against a prefix of one: a refusal computed from a half-read log is
+       * wrong, and wrong answers are not retried.  `hasFrames` answers `true` while the read is still going and
+       * `false` when it is quiet; `null` — a stream with no end — has no backlog to catch up on and is not waited on.
+       */
+      async quiet(): Promise<void> {
+        const mine = this.state.private;
+        for (;;) {
+          if ((await mine.log.hasFrames()) !== true) return;
+          await readMessageMaybe(mine.log);
+        }
       },
 
       /** Somebody joined or left: the count is what the process lives on. */
