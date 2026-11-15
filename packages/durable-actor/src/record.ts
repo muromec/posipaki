@@ -9,7 +9,7 @@
 // and the accept is sent when that record comes back reduced.
 
 import { defineActor, defineMessages, type SpawnedFrom } from 'posipaki';
-import { readMessageMaybe, type Channel } from 'posipaki/port';
+import { readMessage, readMessageMaybe, type Channel } from 'posipaki/port';
 
 import type {
   RecordInMessage,
@@ -32,9 +32,8 @@ interface Private<R> {
   seen: boolean;
   /** Records this process wrote and has not seen come back, by what was written, and who to answer. */
   awaiting: Map<string, string>;
-  /** Resolved by the first record, or by a source that ended before one arrived. */
-  folded: Promise<void>;
-  markFolded: () => void;
+  /** Whether this process is on its way out: the reading loop stops asking for frames. */
+  ended: boolean;
 }
 
 /** A record as the log will hand it back: what an answer is matched against. */
@@ -57,38 +56,47 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
     inMessages: defineMessages<RecordInMessage<Q>>(),
     outMessages: defineMessages<RecordOutMessage<E>>(),
 
-    setup(args: AuthoritativeArgs<R>): { public: RecordPublic<S>; private: Private<R> } {
-      // The process is up before its log has been handed over, so a request waits on the first record rather
-      // than being refused a state that has not arrived.
-      const fold: { done?: () => void } = {};
-      const folded = new Promise<void>((resolve) => {
-        fold.done = resolve;
-      });
-      const markFolded = (): void => fold.done?.();
+    /**
+     * The state the log already holds, folded before the process is up.
+     *
+     * `hasFrames` answering `true` is a frame that will be handed over; `false` is nothing standing and nothing
+     * being fetched.  So this loop ends exactly when the log has nothing more to say, which is what makes `ready`
+     * mean "folded": a request that arrives afterwards is judged against the whole log, not against a prefix of it.
+     */
+    async setup(args: AuthoritativeArgs<R>): Promise<{
+      public: RecordPublic<S>;
+      private: Private<R>;
+    }> {
+      let state: S | null = null;
+      for (;;) {
+        if ((await args.log.hasFrames()) !== true) break;
+        const record = await readMessageMaybe(args.log);
+        if (record === null) break;
+        state = spec.reduce(state, record);
+      }
       return {
-        public: { state: null, watching: 0 },
+        public: { state, watching: 0 },
         private: {
           log: args.log,
           stopReading: () => {},
           watching: 0,
           seen: false,
+          ended: false,
           awaiting: new Map(),
-          folded,
-          markFolded,
         },
       };
     },
 
     afterStart() {
       const mine = this.state.private;
-      // What the log holds arrives before this returns, so the state is the log's when the loop starts.
-      mine.stopReading = mine.log.onFrame((record) => this.reduce(record));
+      // From here the log is read as it speaks, from the same queue the startup read left behind: one frame at a
+      // time, in order, and nothing lost between the two.
+      void this.follow();
       mine.log.onError((error: unknown) => this.crash(reasonOf(error)));
       mine.log.onClose((reason: string) => this.crash(reason));
     },
-
     async beforeEnd() {
-      this.state.private.stopReading();
+      this.state.private.ended = true;
       await this.state.private.log.close('the durable actor is over');
     },
 
@@ -96,9 +104,7 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
       /** A request: filtered here, and written if the rules allow it.  The answer follows the write back. */
       async ADD_RECORD(request) {
         const mine = this.state.private;
-        // A request that arrives before the log has been handed over waits for its first record: the state a
-        // request is judged against is the log's, and the log has not spoken yet.
-        await this.quiet();
+        // `setup` folded what the log held, so the state here is the whole log and a request is judged against it.
         const state = this.state.public.state;
         if (state === null) throw new Error('this process folded to nothing');
         const verdict = spec.filter(state, request.request);
@@ -130,8 +136,6 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
           this.crash(reasonOf(error));
           return;
         }
-        mine.markFolded();
-        this.self.notify();
         const requestId = mine.awaiting.get(written(record));
         if (requestId === undefined) return;
         mine.awaiting.delete(written(record));
@@ -144,21 +148,6 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
         this.emit({ type: 'RECORD_REJECTED', requestId, reason } satisfies RecordOutMessage<E>);
       },
 
-      /**
-       * Wait until the log has handed over everything it already holds.
-       *
-       * A request is judged against a state, not against a prefix of one: a refusal computed from a half-read log is
-       * wrong, and wrong answers are not retried.  `hasFrames` answers `true` while the read is still going and
-       * `false` when it is quiet; `null` — a stream with no end — has no backlog to catch up on and is not waited on.
-       */
-      async quiet(): Promise<void> {
-        const mine = this.state.private;
-        for (;;) {
-          if ((await mine.log.hasFrames()) !== true) return;
-          await readMessageMaybe(mine.log);
-        }
-      },
-
       /** Somebody joined or left: the count is what the process lives on. */
       watch(joined: boolean): void {
         const mine = this.state.private;
@@ -169,11 +158,21 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
         if (!joined && mine.seen && mine.watching === 0) this.exit('nobody is watching');
       },
 
+      /** Read the log as it speaks: one frame at a time, from the queue the startup read left behind. */
+      async follow(): Promise<void> {
+        const mine = this.state.private;
+        while (!mine.ended) {
+          const record = await readMessage(mine.log);
+          if (mine.ended) return;
+          this.reduce(record);
+        }
+      },
+
       /** The log went away: the process goes with it, and a caller waiting hears that it ended. */
       crash(reason: string): void {
-        this.state.private.stopReading();
-        // A source that ends before its first record leaves nothing to fold: the wait for one ends here too.
-        this.state.private.markFolded();
+        const mine = this.state.private;
+        mine.ended = true;
+        mine.stopReading();
         this.exit(reason);
       },
     },

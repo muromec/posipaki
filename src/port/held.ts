@@ -2,12 +2,11 @@
 //
 // A medium can deliver a frame in the same turn a reader is being installed, and a channel with no subscriber
 // drops it.  This wraps a channel so nothing is dropped for want of a listener: what arrives while nobody is
-// subscribed is kept, and every subscriber that arrives before the first frame is delivered is given it.
+// subscribed is kept and handed to the first reader that arrives.
 //
-// The window ends at the first delivery.  After that the channel is live, and a subscriber that comes later has
-// missed what went before it — which is what any live channel means, and the alternative would be an unbounded
-// copy of everything ever said.
-
+// After that the channel is live, and a subscriber that comes later has missed what went before it.  That is not a
+// limitation of this adapter: a channel delivers a frame once, and a channel that replayed its history to every new
+// subscriber could never say whether anything was standing for one.
 import type { Channel } from "./channel.js";
 
 /**
@@ -57,8 +56,11 @@ export function held<F, C>(inner: Channel<F, C>): Channel<F, C> {
     send: (frame) => inner.send(frame),
     onFrame(handler) {
       readers.add(handler);
-      // Handed to every subscriber that arrives before the first delivery, not only to the first.
-      for (const frame of kept) handler(frame);
+      // Handed to the first reader and taken: a frame is delivered once, and what came before this one is not a
+      // later reader's to have.
+      const keptNow = [...kept];
+      kept.length = 0;
+      for (const frame of keptNow) handler(frame);
       return () => {
         readers.delete(handler);
       };

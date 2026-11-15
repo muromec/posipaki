@@ -6,7 +6,7 @@ import { held } from "./held.js";
 import { memoryChannelPair } from "./memory.js";
 
 describe("held", () => {
-  it("gives what arrived before the first subscriber to every subscriber that follows", async () => {
+  it("gives what arrived before the first subscriber to that subscriber, and to no one after it", async () => {
     const { near, far } = memoryChannelPair<string>();
     const kept = held(far);
     await near.send("one");
@@ -17,8 +17,9 @@ describe("held", () => {
     kept.onFrame((frame) => first.push(frame));
     kept.onFrame((frame) => second.push(frame));
 
+    // A frame is delivered once: the history belongs to the reader that was there for it.
     expect(first).toEqual(["one", "two"]);
-    expect(second).toEqual(["one", "two"]);
+    expect(second).toEqual([]);
   });
 
   it("stops keeping once a frame has been delivered", async () => {
