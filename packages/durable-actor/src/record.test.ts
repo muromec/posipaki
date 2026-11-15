@@ -112,8 +112,8 @@ describe('an authoritative actor', () => {
     await proc.wait();
   });
 
-  it('is not ready before its log has been read', async () => {
-    // A journal hands its records over a moment after the subscription: this is that moment, made explicit.
+  it('answers a request that arrives before its log has been read', async () => {
+    // A journal hands its records over a moment after the subscription; this is that moment, made explicit.
     const inner = logChannel<CounterRecord>([{ type: 'COUNTED', by: 'me', total: 3, added: 1 }]);
     const slow: typeof inner = {
       ...inner,
@@ -128,9 +128,12 @@ describe('an authoritative actor', () => {
       await proc.wait();
     });
     await proc.ready();
-    // The process is up; the log has not been read yet.  A caller that trusted `ready()` would ask a process with
-    // no state — which is the defect: ready has to mean "folded".
-    expect(proc.state?.state).toEqual({ total: 3, added: 1, by: 'me' });
+    // The process is up and its state is not: a request made now waits for the first record instead of being
+    // refused, and it is judged against the state the log was holding.
+    const answered = said(proc);
+    proc.send({ type: 'ADD_RECORD', requestId: 'early', request: { n: 4, by: 'early bird' } });
+    expect(await answered).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'early' });
+    expect(proc.state?.state).toEqual({ total: 7, added: 2, by: 'early bird' });
   });
 
   it('dies with the sentence when a record cannot be folded', async () => {

@@ -32,6 +32,9 @@ interface Private<R> {
   seen: boolean;
   /** Records this process wrote and has not seen come back, by what was written, and who to answer. */
   awaiting: Map<string, string>;
+  /** Resolved by the first record, or by a source that ended before one arrived. */
+  folded: Promise<void>;
+  markFolded: () => void;
 }
 
 /** A record as the log will hand it back: what an answer is matched against. */
@@ -55,6 +58,13 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
     outMessages: defineMessages<RecordOutMessage<E>>(),
 
     setup(args: AuthoritativeArgs<R>): { public: RecordPublic<S>; private: Private<R> } {
+      // The process is up before its log has been handed over, so a request waits on the first record rather
+      // than being refused a state that has not arrived.
+      const fold: { done?: () => void } = {};
+      const folded = new Promise<void>((resolve) => {
+        fold.done = resolve;
+      });
+      const markFolded = (): void => fold.done?.();
       return {
         public: { state: null, watching: 0 },
         private: {
@@ -63,6 +73,8 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
           watching: 0,
           seen: false,
           awaiting: new Map(),
+          folded,
+          markFolded,
         },
       };
     },
@@ -84,10 +96,11 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
       /** A request: filtered here, and written if the rules allow it.  The answer follows the write back. */
       async ADD_RECORD(request) {
         const mine = this.state.private;
+        // A request that arrives before the log has been handed over waits for its first record: the state a
+        // request is judged against is the log's, and the log has not spoken yet.
+        await mine.folded;
         const state = this.state.public.state;
-        // A process that has not folded is not one to ask: the caller is talking to the wrong thing, and a
-        // sentence saying so would be a rule this spec never gave.
-        if (state === null) throw new Error('no record has arrived yet: this process has not folded');
+        if (state === null) throw new Error('this process folded to nothing');
         const verdict = spec.filter(state, request.request);
         if ('refuse' in verdict) return this.reject(request.requestId, verdict.refuse);
         const record = spec.map(state, request.request);
@@ -108,8 +121,16 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
       /** One record arrived: reduce it, publish the state, and answer it if it is one of ours. */
       reduce(record: R): void {
         const mine = this.state.private;
-        // A record this spec cannot reduce is a journal it cannot read, and guessing past it is worse: crash.
-        this.state.public.state = spec.reduce(this.state.public.state, record);
+        // A record this spec cannot reduce is a journal it cannot read, and guessing past it is worse: the
+        // process ends with the sentence rather than letting the throw escape through the channel that delivered
+        // the record.
+        try {
+          this.state.public.state = spec.reduce(this.state.public.state, record);
+        } catch (error) {
+          this.crash(reasonOf(error));
+          return;
+        }
+        mine.markFolded();
         this.self.notify();
         const requestId = mine.awaiting.get(written(record));
         if (requestId === undefined) return;
@@ -136,6 +157,8 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
       /** The log went away: the process goes with it, and a caller waiting hears that it ended. */
       crash(reason: string): void {
         this.state.private.stopReading();
+        // A source that ends before its first record leaves nothing to fold: the wait for one ends here too.
+        this.state.private.markFolded();
         this.exit(reason);
       },
     },
