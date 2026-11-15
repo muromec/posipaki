@@ -77,14 +77,14 @@ export function fileChannel(path: string): Channel<Uint8Array, string> {
     },
     info: { path },
     /**
-     * Whether a frame is standing: bytes past this cursor, or a read already in flight for them.
+     * Whether a frame is standing: bytes past this cursor.
      *
-     * A file can always answer, because its length is a fact: what it holds past the cursor is what this channel
-     * has not handed over yet.  It grows a moment later and the answer becomes `true` again.
+     * A file can always answer, because its length is a fact — and a read in flight does not change the answer,
+     * since the octets it is fetching are already in the file and past the cursor.  It grows a moment later and
+     * the answer becomes `true` again.
      */
     async hasFrames(): Promise<boolean> {
       if (ended !== null) return false;
-      if (inFlight > 0) return true;
       const size = await stat(path).then((found) => found.size, () => 0);
       return size > cursor;
     },
