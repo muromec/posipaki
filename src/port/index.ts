@@ -31,3 +31,5 @@ export { mapChannel, SKIP } from "./map.js";
 export { linesChannel } from "./lines.js";
 export { decode, encode, incoming, recording, type Written } from "./testing.js";
 export { readMessage, readMessageMaybe } from "./read.js";
+export { sseChannel, sseWriter } from "./sse.js";
+export { fileChannel } from "./node/file/file.js";
