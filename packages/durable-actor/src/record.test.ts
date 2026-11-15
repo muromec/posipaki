@@ -9,7 +9,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import { counterSpec, type Counter, type CounterAsk, type CounterRecord } from './counter';
 import { logChannel } from './log';
-import { type RecordOutMessage } from './interface';
+import { type RecordOutMessage, type RecordSpec } from './interface';
 import { makeDurableActor } from './record';
 
 const counter = makeDurableActor(counterSpec);
@@ -110,5 +110,49 @@ describe('an authoritative actor', () => {
     await until(() => (proc.state?.watching ?? 0) === 1, 'the watcher');
     proc.send({ type: 'DETACH' });
     await proc.wait();
+  });
+
+  it('is not ready before its log has been read', async () => {
+    // A journal hands its records over a moment after the subscription: this is that moment, made explicit.
+    const inner = logChannel<CounterRecord>([{ type: 'COUNTED', by: 'me', total: 3, added: 1 }]);
+    const slow: typeof inner = {
+      ...inner,
+      onFrame(handler) {
+        setTimeout(() => inner.onFrame(handler), 0);
+        return () => {};
+      },
+    };
+    const proc = await counter.spawn({ log: slow }, { name: 'slow' });
+    sealed.push(async () => {
+      proc.send({ type: 'STOP' });
+      await proc.wait();
+    });
+    await proc.ready();
+    // The process is up; the log has not been read yet.  A caller that trusted `ready()` would ask a process with
+    // no state — which is the defect: ready has to mean "folded".
+    expect(proc.state?.state).toEqual({ total: 3, added: 1, by: 'me' });
+  });
+
+  it('dies with the sentence when a record cannot be folded', async () => {
+    const awkward: RecordSpec<Counter, CounterRecord, CounterAsk> = {
+      ...counterSpec,
+      reduce(state, record) {
+        if (record.type === 'COUNTED' && record.total < 0) throw new Error('a counter cannot go below zero');
+        return counterSpec.reduce(state, record);
+      },
+    };
+    const strict = makeDurableActor(awkward);
+    const log = logChannel<CounterRecord>([{ type: 'COUNTED', by: 'me', total: 1, added: 1 }]);
+    const proc = await strict.spawn({ log }, { name: 'strict' });
+    sealed.push(async () => {
+      proc.send({ type: 'STOP' });
+      await proc.wait();
+    });
+    await until(() => proc.state?.state != null, 'the first fold');
+    // A record the spec cannot fold ends the process with its sentence, rather than escaping through the channel
+    // that delivered it and taking the reader down with an unhandled throw.
+    void log.send({ type: 'COUNTED', by: 'me', total: -1, added: 1 });
+    await proc.wait();
+    expect(proc.state?.state).toEqual({ total: 1, added: 1, by: 'me' });
   });
 });
