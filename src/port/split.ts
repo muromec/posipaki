@@ -140,6 +140,7 @@ export function splitChannel<C = string>(
     },
     info: inner.info,
     control: (command) => inner.control(command),
+    hasFrames: async () => false,
   });
 
   inner.onFrame((chunk) => {

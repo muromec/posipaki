@@ -24,5 +24,6 @@ export function duplexChannel<F, C = void>(pair: {
     },
     info: { ...pair.inbound.info, ...pair.outbound.info },
     control: (command) => pair.inbound.control(command),
+    hasFrames: async () => false,
   };
 }

@@ -42,6 +42,17 @@ export interface Channel<F, C = string> {
   send(frame: F): Promise<void>;
   /** A frame arrived.  The returned function stops this reader and no other. */
   onFrame(handler: (frame: F) => void): () => void;
+  /**
+   * Is a frame ready to be handed to a reader?
+   *
+   * `true` — one is standing and will be delivered.  `false` — nothing is standing and nothing is being fetched,
+   * so a reader would wait for something that has not started.  `null` — this channel cannot say: a stream has no
+   * end to reach, and answering `false` there would be a lie about the future.
+   *
+   * The question waits for what the medium is doing: a file being read answers once the read has finished, not
+   * before.  It is about now, and a source that grows a moment later answers `true` again.
+   */
+  hasFrames(): Promise<true | false | null>;
   /** The far end closed, and this is what it said.  Once, after any frames already read. */
   onClose(handler: (reason: C) => void): () => void;
   /** The wire failed.  Once, and always followed by a close. */

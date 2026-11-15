@@ -72,6 +72,7 @@ export async function fetchPort(url: string, options: FetchPortOptions = {}): Pr
     },
     info: { url, status: response.status },
     control: () => {},
+    hasFrames: async () => false,
   };
 
   const reader = response.body?.getReader();

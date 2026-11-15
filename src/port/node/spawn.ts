@@ -88,6 +88,7 @@ export async function spawnPorts(
       const signal = command.signal;
       if (typeof signal === "string") signalGroup(child, signal as NodeJS.Signals);
     },
+    hasFrames: async () => false,
   };
   const stderr: Channel<Uint8Array, ProcessEnd> = {
     send: () => Promise.reject(new Error("stderr carries the process's output; it has no input")),
@@ -133,6 +134,7 @@ function bytesOf(stream: Readable | null, label: string): Channel<Uint8Array, Pr
     close: () => Promise.resolve(),
     info: {},
     control: () => {},
+    hasFrames: async () => false,
   };
   stream?.on("data", (chunk: Buffer) => {
     const bytes = new Uint8Array(chunk.buffer, chunk.byteOffset, chunk.byteLength);

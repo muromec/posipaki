@@ -128,6 +128,7 @@ export function handshake<C = string>(
     close: (reason) => inner.close(reason),
     info: inner.info,
     control: (command) => inner.control(command),
+    hasFrames: async () => false,
   };
   // What arrives between the agreement and the first reader is kept here rather than in this file: the wrapper
   // subscribes now, so no frame can find nobody listening.

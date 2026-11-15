@@ -128,6 +128,7 @@ export function json1<C = string>(parts: Channel<Part, C>): Channel<Delivered, C
     close: (reason?: string) => parts.close(reason),
     info: parts.info,
     control: (command) => parts.control(command),
+    hasFrames: async () => false,
   };
 }
 export const VERSION = "json.v1";

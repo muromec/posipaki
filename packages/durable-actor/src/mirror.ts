@@ -81,6 +81,8 @@ export function mirrorChannel<S, R, Q, E>(
     },
     info: { authority: authority.pname },
     control: () => {},
+    // A mirror speaks when the state moves: there is never a frame standing.
+    hasFrames: async () => false,
   };
 }
 

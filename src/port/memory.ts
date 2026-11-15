@@ -53,6 +53,9 @@ export function memoryChannelPair<F>(): ChannelPair<F> {
           mine.frames.delete(handler);
         };
       },
+      // Nothing is ever kept: a frame reaches the other end before `send` settles, so a reader never waits on a
+      // buffer and there is never anything standing.
+      hasFrames: async () => false,
       onClose: (handler) => {
         mine.closes.add(handler);
         return () => {

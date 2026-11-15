@@ -58,3 +58,15 @@ describe("held: an ending nobody was there for", () => {
     await expect(new Promise((resolve) => channel.onClose(resolve))).resolves.toBe("over");
   });
 });
+
+describe("held: what is standing", () => {
+  it("forwards the question: what it kept is a replay, not a frame waiting to be pushed", async () => {
+    const { near, far } = memoryChannelPair<string>();
+    const kept = held(far);
+    // The medium under it keeps nothing, and a frame it kept is handed to the next subscriber rather than pushed
+    // to a current one — so it is not standing, and a reader is right to wait for the next frame.
+    expect(await kept.hasFrames()).toBe(false);
+    await near.send("kept");
+    expect(await kept.hasFrames()).toBe(false);
+  });
+});

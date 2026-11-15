@@ -59,6 +59,7 @@ function lines(parts: Channel<Part, ProcessEnd>): Channel<string, ProcessEnd> {
     close: (reason) => parts.close(reason),
     info: parts.info,
     control: (command) => parts.control(command),
+    hasFrames: async () => false,
   };
 }
 

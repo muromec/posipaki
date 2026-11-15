@@ -45,6 +45,8 @@ export function openLog<R>(initial: R[] = []): Log<R> {
         },
         info: { records: records.length },
         control: () => {},
+        // What the log holds is handed over at subscription; nothing is left standing for a reader after that.
+        hasFrames: async () => false,
       };
     },
   };

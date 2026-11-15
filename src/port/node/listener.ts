@@ -154,6 +154,7 @@ function requestPort(request: IncomingMessage): Channel<Uint8Array, void> {
     },
     info: { method: request.method ?? "GET", url: request.url ?? "/" },
     control: () => {},
+    hasFrames: async () => false,
   };
 
   // Held before the first read: a body can arrive in the same turn the pair is handed out.
@@ -205,6 +206,8 @@ function responsePort(response: ServerResponse): Channel<Uint8Array, void> {
     onFrame() {
       return () => {};
     },
+    /** A response carries what is written to it and nothing else: there is never a frame standing. */
+    hasFrames: async () => false,
     onClose(handler) {
       if (ended) {
         handler(undefined);

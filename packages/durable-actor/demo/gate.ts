@@ -38,6 +38,7 @@ export function gateChannel<R>(inner: Channel<R, string>): Gate<R> {
       return inner.info;
     },
     control: (command) => inner.control(command),
+    hasFrames: () => inner.hasFrames(),
   };
 
   return {

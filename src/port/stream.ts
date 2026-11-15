@@ -158,5 +158,6 @@ export function streamChannel(pair: StreamPair): Channel<Uint8Array> {
     },
     info: {},
     control: () => {},
+    hasFrames: async () => false,
   };
 }

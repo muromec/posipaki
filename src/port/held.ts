@@ -63,6 +63,8 @@ export function held<F, C>(inner: Channel<F, C>): Channel<F, C> {
         readers.delete(handler);
       };
     },
+    /** What it kept is handed to whoever subscribes next; what it will *push* is the inner channel's business. */
+    hasFrames: () => inner.hasFrames(),
     onClose(handler) {
       if (ending !== null) {
         handler(ending.reason);

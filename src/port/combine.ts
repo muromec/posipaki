@@ -91,6 +91,7 @@ export function all<T extends string, F, C>(sources: Record<T, Channel<F, C>>): 
     },
     info: {},
     control: () => {},
+    hasFrames: async () => false,
   };
 }
 
@@ -163,5 +164,6 @@ export function settled<T extends string, F, C>(
     },
     info: {},
     control: () => {},
+    hasFrames: async () => false,
   };
 }

@@ -215,6 +215,7 @@ export function partsOf(transport: StringTransport, announced: Announcement = se
     close: () => transport.close(),
     info: {},
     control: () => {},
+    hasFrames: async () => false,
   };
 }
 

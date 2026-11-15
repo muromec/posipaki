@@ -73,6 +73,8 @@ function casting<Q, E>(to: Sendable<Q, E>): Channel<Q, string> {
     close: async () => {},
     info: { writes: 'a process' },
     control: () => {},
+    // Nothing reads through a channel made from a process: it only carries requests up.
+    hasFrames: async () => false,
   };
 }
 
