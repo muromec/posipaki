@@ -32,7 +32,7 @@ interface Private<R> {
   seen: boolean;
   /** Records this process wrote and has not seen come back, by what was written, and who to answer. */
   awaiting: Map<string, string>;
-  /** Resolved by the first record, or by a source that ended before one arrived. */
+  /** Resolved by the first fold: a request waits for it as well as for the log, because the two are not one moment. */
   folded: Promise<void>;
   markFolded: () => void;
 }
@@ -99,6 +99,9 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
         // A request that arrives before the log has been handed over waits for its first record: the state a
         // request is judged against is the log's, and the log has not spoken yet.
         await this.quiet();
+        // The log has stopped handing over; the fold it caused may still be a tick behind it, and a request is judged
+        // against a state, not against a record in flight.
+        await mine.folded;
         const state = this.state.public.state;
         if (state === null) throw new Error('this process folded to nothing');
         const verdict = spec.filter(state, request.request);
