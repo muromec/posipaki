@@ -316,6 +316,63 @@ describe("reactor", () => {
     await r.stop();
   });
 
+  it("a stop for the root ends the session, not a process every session shares", async () => {
+    const listener = new QueueListener<Record<string, never>>();
+    const closed: Session<Record<string, never>>[] = [];
+    // The factory hands over a process it did not spawn, with a cleanup of its own: stopping it here would end
+    // it for every other connection bound to it.
+    const proc = await makeEcho().spawn(undefined, { name: "shared" });
+    let ended = false;
+    void proc.wait().then(
+      () => {
+        ended = true;
+      },
+      () => {
+        ended = true;
+      },
+    );
+    let cleaned = 0;
+    const r = reactor(
+      listener,
+      () => ({
+        proc,
+        cleanup: () => {
+          cleaned += 1;
+        },
+      }),
+      { onClosed: (session) => closed.push(session) },
+    );
+
+    const first = new FakeTransport();
+    listener.offer({ meta: {}, transport: first });
+    await connected(first, "shared");
+    const second = new FakeTransport();
+    listener.offer({ meta: {}, transport: second });
+    await connected(second, "shared");
+    await waitUntil(() => r.live === 2, "both sessions");
+    // The other side asks to hear what the process says, as a proxy does.
+    second.receive({ to: ROOT, $tune: { streams: ["message"] } });
+
+    // The far side stops the root: that is this session asking to be over.
+    first.receive({ to: ROOT, $stop: {} });
+    await waitUntil(() => closed.length > 0 || ended, "the stop to be acted on");
+    expect(ended).toBe(false);
+    expect(closed.length).toBe(1);
+    expect(cleaned).toBe(1);
+    expect(r.live).toBe(1);
+
+    // The other connection still talks to the same process.
+    second.receive({ to: ROOT, $msg: { fromName: "root", body: { type: "PING", count: 9 } } });
+    await waitUntil(
+      () => second.frames().some((frame) => isMsg(frame) && (frame.$msg.body as { count?: number }).count === 9),
+      "the reply on the connection still bound",
+    );
+
+    await proc.stop();
+    await waitUntil(() => closed.length === 2, "the second session");
+    await r.stop();
+  });
+
   it("gives every frame to the hook, and a swallowed one never reaches the actor", async () => {
     const listener = new QueueListener<Record<string, never>>();
     const seen: Record<string, unknown>[] = [];
