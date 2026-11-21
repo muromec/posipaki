@@ -3,7 +3,7 @@
 > One file per bug.  Active bugs live in this directory, fixed ones in `FIXED/`.
 > The table below is the index; keep it current when a bug is filed or fixed.
 
-**Next free id: BUG-012.**
+**Next free id: BUG-013.**
 
 ## Index
 
@@ -20,6 +20,7 @@
 | BUG-009 | [A frame that cannot be read takes the host process down](FIXED/BUG-009-a-frame-that-cannot-be-read-takes-the-host-down.md) | 🔴 HIGH | fixed 0.41.0, `5b23160` |
 | BUG-010 | [A failed websocket open drops its cause](BUG-010-a-failed-websocket-open-drops-its-cause.md) | 🟡 MEDIUM | fixed in tree, unreleased |
 | BUG-011 | [A wire closed by its own side tells no one](BUG-011-a-wire-closed-by-its-own-side-tells-no-one.md) | 🔴 HIGH | fixed in tree, unreleased |
+| BUG-012 | [A durable actor with an empty log refuses its first request](BUG-012-a-durable-actor-with-an-empty-log-refuses-its-first-request.md) | 🔴 HIGH | **open** |
 
 ## Filing one
 
