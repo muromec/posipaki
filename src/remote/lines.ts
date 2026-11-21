@@ -33,8 +33,19 @@ export interface LineReader {
 const NL = 0x0a;
 const CR = 0x0d;
 
-function withoutCr(line: Buffer<ArrayBufferLike>): Buffer<ArrayBufferLike> {
+/** UTF-8, decoded a line at a time: a decoder carries no state outside a streaming call. */
+const utf8 = new TextDecoder();
+
+function withoutCr(line: Uint8Array): Uint8Array {
   return line.length > 0 && line[line.length - 1] === CR ? line.subarray(0, line.length - 1) : line;
+}
+
+/** One chunk onto what is left of a line.  A copy, because the caller's buffer is the caller's. */
+function joined(a: Uint8Array, b: Uint8Array): Uint8Array {
+  const out = new Uint8Array(a.length + b.length);
+  out.set(a, 0);
+  out.set(b, a.length);
+  return out;
 }
 
 /**
@@ -45,7 +56,7 @@ function withoutCr(line: Buffer<ArrayBufferLike>): Buffer<ArrayBufferLike> {
  * arrived in, and the reader goes back to looking for a newline.
  */
 export class PartReader {
-  private acc: Buffer<ArrayBufferLike> = Buffer.alloc(0);
+  private acc: Uint8Array = new Uint8Array(0);
   /** How many octets the octet run still needs, or 0 while looking for a line. */
   private want = 0;
   private done = false;
@@ -57,7 +68,7 @@ export class PartReader {
 
   feed(chunk: Uint8Array): void {
     if (this.done) return;
-    this.acc = this.acc.length === 0 ? Buffer.from(chunk.buffer, chunk.byteOffset, chunk.byteLength) : Buffer.concat([this.acc, chunk]);
+    this.acc = this.acc.length === 0 ? chunk : joined(this.acc, chunk);
     this.pump();
   }
 
@@ -65,9 +76,9 @@ export class PartReader {
   end(): void {
     if (this.done) return;
     const rest = this.acc;
-    this.acc = Buffer.alloc(0);
+    this.acc = new Uint8Array(0);
     this.done = true;
-    if (rest.length > 0 && this.want === 0) this.onLine(withoutCr(rest).toString("utf8"));
+    if (rest.length > 0 && this.want === 0) this.onLine(utf8.decode(withoutCr(rest)));
   }
 
   private pump(): void {
@@ -84,7 +95,7 @@ export class PartReader {
       if (at < 0) return;
       const line = this.acc.subarray(0, at);
       this.acc = this.acc.subarray(at + 1);
-      const asked = this.onLine(withoutCr(line).toString("utf8"));
+      const asked = this.onLine(utf8.decode(withoutCr(line)));
       if (typeof asked === "number") {
         // A run of no octets is still a run: the line said what follows, and it follows as nothing.
         if (asked > 0) this.want = asked;
