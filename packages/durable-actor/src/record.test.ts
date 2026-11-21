@@ -64,6 +64,19 @@ describe('an authoritative actor', () => {
     expect(proc.state?.state).toEqual({ total: 5, added: 2, by: 'me' });
   });
 
+  it('takes its first request when the log holds nothing', async () => {
+    const { proc } = await running();
+    expect(proc.state?.state).toBeNull();
+
+    const answered = said(proc);
+    proc.send({ type: 'ADD_RECORD', requestId: 'r-1', request: { n: 3, by: 'me' } });
+    // A process that cannot judge a request dies rather than answering, so the wait covers both: what the caller
+    // hears is either the accept or the end.
+    const heard = await Promise.race([answered, proc.wait().then(() => null)]);
+    expect(heard).toEqual({ type: 'RECORD_ACCEPTED', requestId: 'r-1' });
+    expect(proc.state?.state).toEqual({ total: 3, added: 1, by: 'me' });
+  });
+
   it('accepts a request once its record has come back, and the state holds it', async () => {
     const { proc } = await running([{ type: 'ADD', by: 'me', n: 1 }]);
     const answered = said(proc);
