@@ -44,3 +44,35 @@ export function mapChannel<I, O, C>(
     hasFrames: () => inner.hasFrames(),
   };
 }
+
+/**
+ * A channel of `I` over a channel of `O`, where one value is several frames and one frame is several values.
+ *
+ * `up` answers what one frame carries: every value reaches the reader before that frame's turn is over, so a reader
+ * acting on the first has the rest coming in the same turn — a caller that reads one value per frame may rely on it.
+ * `down` answers what one value needs, written in order.  An empty array is this mapper's `SKIP`.
+ */
+export function mapChannelMany<I, O, C>(
+  inner: Channel<O, C>,
+  down: (value: I) => readonly O[],
+  up: (value: O) => readonly I[],
+): Channel<I, C> {
+  return {
+    async send(value: I): Promise<void> {
+      for (const frame of down(value)) await inner.send(frame);
+    },
+    onFrame(handler: (frame: I) => void): () => void {
+      return inner.onFrame((frame: O) => {
+        for (const value of up(frame)) handler(value);
+      });
+    },
+    onClose: (handler) => inner.onClose(handler),
+    onError: (handler) => inner.onError(handler),
+    close: (reason) => inner.close(reason),
+    get info() {
+      return inner.info;
+    },
+    control: (command) => inner.control(command),
+    hasFrames: () => inner.hasFrames(),
+  };
+}

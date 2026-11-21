@@ -6,7 +6,7 @@
 import { describe, expect, it } from 'vitest';
 import { memoryChannelPair } from "./memory.js";
 
-import { mapChannel, SKIP } from "./map.js";
+import { mapChannel, mapChannelMany, SKIP } from "./map.js";
 
 /** Let the pair deliver: a memory channel hands frames on in a later turn, never inside `send`. */
 const settled = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 0));
@@ -87,5 +87,71 @@ describe('a channel of one vocabulary over another', () => {
     );
 
     expect(above.info).toBe(pair.near.info);
+  });
+});
+
+describe('a channel whose values are one-to-many', () => {
+  it('hands on every value a frame carries, in the order the mapper gave them', async () => {
+    const pair = memoryChannelPair<string>();
+    const above = mapChannelMany<number, string, string>(
+      pair.near,
+      (value) => [`${value}`],
+      (frame) => frame.split(',').map(Number),
+    );
+    const heard: number[] = [];
+    above.onFrame((value) => heard.push(value));
+
+    await pair.far.send('1,2,3');
+    await settled();
+
+    expect(heard).toEqual([1, 2, 3]);
+  });
+
+  it('drops a frame that carries nothing', async () => {
+    const pair = memoryChannelPair<string>();
+    const above = mapChannelMany<number, string, string>(
+      pair.near,
+      (value) => [`${value}`],
+      () => [],
+    );
+    const heard: number[] = [];
+    above.onFrame((value) => heard.push(value));
+
+    await pair.far.send('1,2');
+    await settled();
+
+    expect(heard).toEqual([]);
+  });
+
+  it('writes one frame per value, in order', async () => {
+    const pair = memoryChannelPair<string>();
+    const above = mapChannelMany<string, string, string>(
+      pair.near,
+      (value) => value.split(''),
+      (frame) => [frame],
+    );
+    const heard: string[] = [];
+    pair.far.onFrame((frame) => heard.push(frame));
+
+    await above.send('abc');
+    await settled();
+
+    expect(heard).toEqual(['a', 'b', 'c']);
+  });
+
+  it('has every value of a frame delivered by the time the send resolves', async () => {
+    const pair = memoryChannelPair<string>();
+    const above = mapChannelMany<number, string, string>(
+      pair.near,
+      (value) => [`${value}`],
+      (frame) => frame.split(',').map(Number),
+    );
+    const heard: number[] = [];
+    above.onFrame((value) => heard.push(value));
+
+    // No settling turn: the mapper hands the whole frame on before the send it came with is over.
+    await pair.far.send('1,2,3');
+
+    expect(heard).toEqual([1, 2, 3]);
   });
 });
