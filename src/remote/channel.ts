@@ -304,9 +304,10 @@ export function isStreamKind(value: unknown): value is StreamKind {
 //                               silence
 //
 // They address the process they are about, so they are answered by whoever holds
-// that process — the side that can act on it.  Stopping the *root* of a connection
-// is not one of these: that stays the STOP message it always was, since the root
-// is not a handle but the process this side is talking through.
+// that process — the side that can act on it.  A stop for the connection's root asks
+// for this session to be over rather than for the process behind it to end: what ends
+// a session is its cleanup, and a process a factory handed over outlives every
+// connection.
 
 export type StopFrame = {
   $stop: Record<string, unknown>;

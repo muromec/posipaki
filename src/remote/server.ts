@@ -354,13 +354,17 @@ export async function serveChannel<Meta = unknown>(
     }
     if (isStop(frame) || isPause(frame) || isResume(frame)) {
       // Control, addressed to the process it is about: acted on by whoever holds that
-      // process, which is this side.  The root is one of those — stopping it stops
-      // what the connection is for — and a handle has nothing here to act on.
+      // process, which is this side.  A handle has nothing here to act on.
       if (isProcess(mine)) {
         const sender = makeSender(rootName, parentName, parentId);
-        if (isStop(frame)) void mine.stop({ from: sender });
-        else if (isPause(frame)) mine.pause();
-        else mine.resume();
+        if (isPause(frame)) mine.pause();
+        else if (isResume(frame)) mine.resume();
+        else if (to === table.rootId()) {
+          // A stop for the root is this side asking for the session to be over, not an order to stop a process
+          // that may be every session's: what ends a session is its cleanup, and a process the factory handed
+          // over outlives the connection.  The teardown below runs it, then says the root's end and closes.
+          pvtGone();
+        } else void mine.stop({ from: sender });
       }
       return;
     }

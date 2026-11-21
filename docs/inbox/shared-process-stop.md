@@ -3,6 +3,11 @@
 **Parked:** 2026-11-20, from prsquare-sign serving one document authority to every
 connection instead of one actor per client.
 
+**Implemented:** 2026-11-21 — a stop for the connection's root settles the session
+(`pvtGone`) instead of stopping the process the frame names, so the teardown runs
+`Served.cleanup` and a handed-over process outlives it.  `src/remote/server.ts:355-370`,
+`src/remote/channel.ts:306-310`, and the case in `src/remote/reactor.test.ts`.
+
 ## What
 
 `Served.cleanup` says what a handed-over process is: run when the connection is
