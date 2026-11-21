@@ -1,13 +1,13 @@
 // ── the ticket, as a record spec ────────────────────────────────────────────
 //
 // The case the generic actor was cut from: a ticket opened with a word, moved by its owner, commented on.
-// Two things the four words make explicit here.  `filter` is where the *clock* lives — it stamps `at` on the ask
-// it passes, which is why `map` is pure and a replay builds the same record twice.  And `diff` needs the state to
+// Two things the four words make explicit here.  The clock is the caller's: it stamps `at` on the ask it makes, so
+// the record says when the ask happened without the spec reading a clock of its own.  And `diff` needs the state to
 // remember who moved it (`movedBy`), because a fold that dropped it could not say.
 //
 // `diff` answers a list, which is what lets `diff(null, ticket)` rebuild a ticket mid-life: its opening word, then
-
 // every comment after it.  A vocabulary with one record per step needs no special "the whole thing" record.
+
 import type { FilterResult, RecordSpec } from '../src/interface';
 
 export type TicketState = 'SUBMITTED' | 'WORKING' | 'COMPLETED' | 'CANCELED';
@@ -37,25 +37,25 @@ export type TicketRecord =
 
 export type TicketAsk = {
   by: string;
-  /** When it was asked: the caller stamps it, so `map` is pure. */ at: string;
+  /** When it was asked: the caller stamps it, which is what keeps a replayed ask the same ask. */ at: string;
 } & ({ type: 'MOVE'; state: TicketState } | { type: 'COMMENT'; text: string });
 
 const FINAL: readonly TicketState[] = ['COMPLETED', 'CANCELED'];
 
 /** A ticket: opened once, changed by its owner while it is not over. */
 export const ticketSpec: RecordSpec<Ticket, TicketRecord, TicketAsk> = {
-  filter(state: Ticket, ask: TicketAsk): FilterResult {
+  filter(state: Ticket | null, ask: TicketAsk): FilterResult {
+    if (state === null) return { refuse: `no ticket has been opened: ${ask.by} has nothing to change` };
     if (state.owner !== ask.by) {
       return { refuse: `${state.id} belongs to ${state.owner}: ${ask.by} may not change it` };
     }
     if (FINAL.includes(state.state)) {
       return { refuse: `${state.id} is ${state.state}: nothing changes it again` };
     }
-    // The clock belongs to the decision, so the record is a function of the state and the ask alone.
     return { pass: true };
   },
 
-  map(_state: Ticket, ask: TicketAsk): TicketRecord {
+  map(_state: Ticket | null, ask: TicketAsk): TicketRecord {
     if (ask.type === 'MOVE')
       return { type: 'TASK_MOVED', at: ask.at, by: ask.by, state: ask.state };
     return { type: 'TASK_COMMENT', at: ask.at, by: ask.by, text: ask.text };

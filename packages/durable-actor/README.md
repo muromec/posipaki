@@ -17,17 +17,19 @@ Four words, and they are laws rather than four unrelated functions:
 type FilterResult<E = string> = { pass: true } | { refuse: E };
 
 interface RecordSpec<S, R, Q, E = string> {
-  filter(state: S, request: Q): FilterResult<E>;            // may it go on
-  map(state: S, request: Q): R;                            // the record it becomes
-  reduce(state: S | null, record: R): S;                   // one record onto the fold
-  diff(before: S | null, after: S): R[];                   // the way back, as records
-  producedFrom?(request: Q, record: R): boolean;           // did the authority make that of this
+  filter(state: S | null, request: Q): FilterResult<E>;     // may it go on
+  map(state: S | null, request: Q): R;                      // the record it becomes
+  reduce(state: S | null, record: R): S;                    // one record onto the fold
+  diff(before: S | null, after: S): R[];                    // the way back, as records
+  producedFrom?(request: Q, record: R): boolean;            // did the authority make that of this
 }
 ```
 
 - **filter gates map.** A `refuse` writes nothing; a `pass` means `map` is called exactly once.
-- **map is pure.** Same state, same request, same record — twice. A record's moment and ids belong to whoever
-  builds the request, so a replay builds what the live run built.
+- **An empty log is ordinary.** `filter` and `map` are handed `null` until the first record, so a journal that
+  starts empty takes its first request instead of being refused for want of a state.
+- **map is the spec's own.** Nothing asks a record to be the same twice: a spec may stamp a moment or an id into
+  it. A follower that guesses with `map` then says how its records are recognised through `producedFrom`.
 - **diff inverts reduce.** `reduce(before, diff(before, after))` is `after`, for every adjacent pair — which
   forces the state to remember what its records said (`counter.ts` keeps `by`, the ticket keeps `movedBy`).
 - **producedFrom is optional.** A follower that shows a record before the authority has written it needs to know

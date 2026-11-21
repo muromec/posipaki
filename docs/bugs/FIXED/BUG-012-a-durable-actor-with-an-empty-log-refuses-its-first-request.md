@@ -35,13 +35,19 @@ written to disk, never mirrored to a client, ignored by the spec's `reduce`.
 It works, and it is a fact only that one channel knows: the next consumer of the
 package will hit the same wall and invent its own.
 
-**Fix, to choose:** either an initial state (`AuthoritativeArgs<R, S> = { log,
-initial?: S }`, two lines and the empty log becomes an ordinary case), or say in
-the docs and in the type that a log begins with a record and give the vocabulary
-a genesis record so every reader folds the same first line.  The second is the
-larger promise and the better one if a durable actor is meant to be usable by
-anyone with an empty file.
+**Fix:** neither of the two above was needed.  The empty fold is an ordinary state: `filter` and `map` are handed
+`S | null` (`packages/durable-actor/src/interface.ts`), `setup` still folds only what the log holds, and `ADD_RECORD`
+no longer throws on a null state (`src/record.ts`) — the first request of a new journal is judged and mapped against
+nothing, and the record it becomes builds the state.
 
-**Tests:** red first — spawn an authority on `logChannel([])`, send one
-`ADD_RECORD` the spec allows, and expect `RECORD_ACCEPTED` with the fold holding
-the record; today the process ends instead.
+No initial state was added.  A spec that wants a value before the first record writes it in `reduce`'s `null` case,
+which is where it already lives; a second place to put it would be a second answer to "what is this actor's state".
+
+The same sitting removed the `map` law.  Nothing in the package asks one request to map to the same record twice:
+the authority matches an answer against the record the log hands back, and a follower that guesses says which record
+came back for which request through `producedFrom`.  `LAWS` is now `fold`, `diff`, `refusal` and `effect`, and
+`packages/durable-actor/src/conformance.test.ts` carries a spec whose `map` stamps a counter to prove it.
+
+**Tests:** `src/record.test.ts`, "takes its first request when the log holds nothing" — red first, the process ended
+and the caller heard nothing; and the "counter that stamps the moment" case, which the `map` law refused before it
+was removed.  The workaround in the caller (a no-op genesis record) can go.

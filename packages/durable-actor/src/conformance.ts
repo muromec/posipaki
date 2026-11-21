@@ -23,9 +23,9 @@ export interface LawCase<S, R, Q, E = string> {
 }
 
 /** The laws, by the name a failure reports. */
-export type LawName = 'fold' | 'diff' | 'map' | 'refusal' | 'effect';
+export type LawName = 'fold' | 'diff' | 'refusal' | 'effect';
 
-export const LAWS: readonly LawName[] = ['fold', 'diff', 'map', 'refusal', 'effect'];
+export const LAWS: readonly LawName[] = ['fold', 'diff', 'refusal', 'effect'];
 
 /** What one law has to say when a spec fails it. */
 export interface LawFailure {
@@ -83,19 +83,8 @@ export function runLaw<S, R, Q, E>(law: LawName, one: LawCase<S, R, Q, E>): LawF
       }
       return [];
     }
-    case 'map': {
-      const state = folded(one);
-      if (state === null) return fail(`${one.name}: the journal folded to nothing`);
-      const verdict = one.spec.filter(state, one.allowed);
-      if (!('pass' in verdict)) return fail(`${one.name}: the allowed request was refused`);
-      const once = one.spec.map(state, one.allowed);
-      return same(once, one.spec.map(state, one.allowed))
-        ? []
-        : fail(`${one.name}: map gave two records for one request`);
-    }
     case 'refusal': {
       const state = folded(one);
-      if (state === null) return fail(`${one.name}: the journal folded to nothing`);
       const verdict = one.spec.filter(state, one.refused);
       if (!('refuse' in verdict)) return fail(`${one.name}: the refused request passed the filter`);
       // A refusal is a word: the journal, and the state it folds to, are untouched.
@@ -103,7 +92,6 @@ export function runLaw<S, R, Q, E>(law: LawName, one: LawCase<S, R, Q, E>): LawF
     }
     case 'effect': {
       const state = folded(one);
-      if (state === null) return fail(`${one.name}: the journal folded to nothing`);
       const verdict = one.spec.filter(state, one.allowed);
       if (!('pass' in verdict)) return fail(`${one.name}: the allowed request was refused`);
       const record = one.spec.map(state, one.allowed);

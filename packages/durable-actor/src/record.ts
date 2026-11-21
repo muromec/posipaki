@@ -113,9 +113,9 @@ export function makeDurableActor<S, R, Q, E = string>(spec: RecordSpec<S, R, Q, 
       /** A request: filtered here, and written if the rules allow it.  The answer follows the write back. */
       async ADD_RECORD(request) {
         const mine = this.state.private;
-        // `setup` folded what the log held, so the state here is the whole log and a request is judged against it.
+        // `setup` folded what the log held, so this is the whole log: `null` when it held nothing, and that is the
+        // state a first request is judged against.
         const state = this.state.public.state;
-        if (state === null) throw new Error('this process folded to nothing');
         const verdict = spec.filter(state, request.request);
         if ('refuse' in verdict) return this.reject(request.requestId, verdict.refuse);
         const record = spec.map(state, request.request);

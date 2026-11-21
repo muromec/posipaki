@@ -9,17 +9,21 @@ export type FilterResult<E = string> = { pass: true } | { refuse: E };
 /**
  * What makes a durable actor: the four words a pipeline uses.
  *
- * `filter` says whether a request may become anything at all; `map` turns a request that may into the record it
- * is.  Everything `map` needs is in its two arguments — a record's moment and ids belong to whoever built the
- * request, not to the spec — so the same request maps to the same record twice, and a replay builds what the live
- * run built.  `reduce` is the fold of records into state, `diff` its inverse for one step: the record that takes
- * one state to the next.
+ * `filter` says whether a request may become anything at all; `map` turns a request that may into the record it is.
+ * Both are handed the state as it stands, `null` while the log holds nothing: an empty log is an ordinary case, and
+ * its first request is judged against nothing rather than turned away for want of a state.  `reduce` is the fold of
+ * records into state, `diff` its inverse for one step: the record that takes one state to the next.
  */
 export interface RecordSpec<S, R, Q, E = string> {
   /** May this request go on?  A `refuse` writes nothing. */
-  filter(state: S, request: Q): FilterResult<E>;
-  /** The record a request becomes.  Pure in its two arguments. */
-  map(state: S, request: Q): R;
+  filter(state: S | null, request: Q): FilterResult<E>;
+  /**
+   * The record a request becomes.
+   *
+   * Nothing asks it to be the same record twice: a record's moment or ids may be the spec's own to stamp.  A
+   * follower that guesses with `map` says which record came back for which request through `producedFrom`.
+   */
+  map(state: S | null, request: Q): R;
   /** One record onto the fold.  `null` is a fold with nothing in it yet. */
   reduce(state: S | null, record: R): S;
   /**

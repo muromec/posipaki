@@ -25,12 +25,13 @@ export type CounterRecord =
 export type CounterAsk = { n: number; by: string };
 
 export const counterSpec: RecordSpec<Counter, CounterRecord, CounterAsk> = {
-  filter(state: Counter, ask: CounterAsk): FilterResult {
-    if (state.total + ask.n < 0) return { refuse: `${state.total} and ${ask.n} is below zero` };
+  filter(state: Counter | null, ask: CounterAsk): FilterResult {
+    const total = state?.total ?? 0;
+    if (total + ask.n < 0) return { refuse: `${total} and ${ask.n} is below zero` };
     return { pass: true };
   },
 
-  map(_state: Counter, ask: CounterAsk): CounterRecord {
+  map(_state: Counter | null, ask: CounterAsk): CounterRecord {
     return { type: 'ADD', by: ask.by, n: ask.n };
   },
 

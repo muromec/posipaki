@@ -43,8 +43,8 @@ interface Asked<Q, R> {
   kind: 'asked';
   callerId: string;
   request: Q;
-  /** What `map` made of the request, or null when this follower had no fold to ask it about. */
-  record: R | null;
+  /** What `map` made of the request: what is shown when this follower guesses. */
+  record: R;
   /** Whether it is already in the fold this follower shows: a guess, rather than a request still on its way. */
   shown: boolean;
 }
@@ -125,8 +125,9 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
       ADD_RECORD(message) {
         const mine = this.state.private;
         const shown = this.state.public.state;
-        // A guess needs a fold to guess from, and a follower before its first record has none: the request is asked.
-        const guessed = mine.mode === 'optimistic' && shown !== null;
+        // A guess is this mode's whole promise: it is made from whatever fold this follower shows, which is
+        // nothing before its first record.
+        const guessed = mine.mode === 'optimistic';
         if (guessed) {
           const verdict = spec.filter(shown, message.request);
           if ('refuse' in verdict) return this.reject(message.requestId, verdict.refuse);
@@ -135,7 +136,7 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
           kind: 'asked',
           callerId: message.requestId,
           request: message.request,
-          record: shown === null ? null : spec.map(shown, message.request),
+          record: spec.map(shown, message.request),
           shown: guessed,
         };
         mine.pending.push(asked);
@@ -198,7 +199,6 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
 
       /** Whether that record is the one the authority made of that request: whole, unless the spec says otherwise. */
       madeOf(asked: Asked<Q, R>, record: R): boolean {
-        if (asked.record === null) return false;
         if (spec.producedFrom !== undefined) return spec.producedFrom(asked.request, record);
         return written(asked.record) === written(record);
       },
@@ -248,7 +248,7 @@ export function makeDurableProxyActor<S, R, Q, E = string>(
         const mine = this.state.private;
         let folded = mine.confirmed;
         for (const entry of mine.pending) {
-          if (entry.kind === 'asked' && entry.shown && entry.record !== null) {
+          if (entry.kind === 'asked' && entry.shown) {
             folded = spec.reduce(folded, entry.record);
           }
         }
