@@ -11,18 +11,19 @@
  *
  *   bun src/index.ts <host> <cookie>
  *
- * Options: --name (the registered name, robot), --self (this side's node name, posipaki@<host>), --message (what to
- * send, "robot"). POSIPAKI_EPMD_TRACE=1 prints what this side sends and receives.
+ * The flags are `args.ts`'s: two positionals, three flags, and a sentence for anything else.
+ * POSIPAKI_EPMD_TRACE=1 prints what this side sends and receives.
  */
 
 import { randomBytes } from "node:crypto";
 
 import { socketChannel } from "posipaki/port/node";
 
+import { parseArgs } from "./args.js";
+import { writeControl, type Control } from "./control.js";
 import { epmdPort } from "./epmd.js";
 import { wrapEpmdFrame } from "./frame.js";
 import { handshake } from "./handshake.js";
-import { writeControl, type Control } from "./control.js";
 import { inbox, withMeaning, type WireMessage } from "./messages.js";
 import { render, type Term } from "./terms.js";
 
@@ -39,45 +40,6 @@ const FLAGS_LOW =
 
 
 const trace = Boolean(process.env.POSIPAKI_EPMD_TRACE);
-
-interface Options {
-  host: string;
-  cookie: string;
-  name: string;
-  self: string;
-  message: string;
-}
-
-function parseArgs(argv: string[]): Options {
-  const positional: string[] = [];
-  const flags: Record<string, string> = {};
-  for (let index = 0; index < argv.length; index += 1) {
-    const item = argv[index];
-    if (item.startsWith("--")) {
-      const value = argv[index + 1];
-      if (value === undefined) throw new Error(`${item} needs a value`);
-      flags[item.slice(2)] = value;
-      index += 1;
-    } else {
-      positional.push(item);
-    }
-  }
-  const [host, cookie] = positional;
-  if (host === undefined || cookie === undefined) {
-    throw new Error(
-      "usage: posipaki-epmd <host> <cookie> [--name robot] [--self posipaki@<host>] [--message robot]",
-    );
-  }
-  return {
-    host,
-    cookie,
-    name: flags.name ?? "robot",
-    // A short node name carries no dot, so the default takes the peer's host: a node started with -sname refuses
-    // a name that looks like a long one.
-    self: flags.self ?? `posipaki@${host}`,
-    message: flags.message ?? "robot",
-  };
-}
 
 async function main(argv: string[]): Promise<void> {
   const options = parseArgs(argv);

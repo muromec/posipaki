@@ -37,18 +37,19 @@ Options: `--name` (the registered name, `robot`), `--self` (this side's node nam
 Bottom up, one file each, each with its own tests:
 
 - `frame.ts` — bytes as packets: the length a packet announces, two bytes until the handshake ends and four after.
-  `use(4)` is how the wire widens, and the framing is where a frame longer than its width can announce is refused.
+  `use(4)` is how the wire widens, and a frame longer than its width can announce is refused where it is sent.
 - `terms.ts` — the external term format, read and written: integers, atoms, binaries, tuples, lists, maps, pids.
+- `control.ts` — what a distribution message's control tuple says: `{2, '', To}` a message for a process,
+  `{6, From, '', ToName}` one for a registered name, `{3, From, To, Reason}` the node closing the connection, and
+  any other opcode named as such rather than skipped.
 - `messages.ts` — what a frame says: a status, a node's name, a challenge, a reply, an ack, or a distribution
   message of a control and the term after it. `'N'` is the one tag the octets do not tell apart, so this module is
   a client's reading, and `decodeName` is the other.
 - `handshake.ts` — the cookie, proved by both sides hashing the other's challenge, and the point where the wire
-- `control.ts` — what a distribution message's control tuple says: `{2, '', To}` a message for a process,
-  `{6, From, '', ToName}` one for a registered name, `{3, From, To, Reason}` the node closing the connection, and
-  any other opcode named as such rather than skipped.
   widens: the ack is the last two-byte message.
 - `epmd.ts` — where the node listens. Its answer carries no length field at all and ends when epmd closes the
   socket, so it is read to the close instead of being cut into frames.
+- `args.ts` — the command line: two positionals and three flags, the defaults, and a sentence for anything else.
 - `index.ts` — the entry: the names, the flags this client offers, one message, the answer printed.
 
 `bun test` in this directory runs the tests of every layer over memory channels; nothing but the medium is faked.
