@@ -1,0 +1,60 @@
+// ── the port mapper ────────────────────────────────────────────────────────
+//
+// A port mapper on the other end of a memory pair: it reads the framed request, answers the octets a real epmd
+// answers, and closes — which is the only ending this exchange has.
+
+import { describe, expect, it } from "vitest";
+
+import { memoryChannelPair } from "posipaki/port";
+
+import { epmdPort } from "./epmd.js";
+import { wrapEpmdFrame } from "./frame.js";
+
+/** A mapper that answers `reply` and closes, and the request it was sent. */
+function mapper(reply: Uint8Array | null) {
+  const ends = memoryChannelPair<Uint8Array>();
+  const framed = wrapEpmdFrame(ends.far);
+  let asked: Uint8Array | null = null;
+  framed.onFrame((frame) => {
+    asked = frame;
+    void (async () => {
+      if (reply !== null) await ends.far.send(reply);
+      await ends.far.close("the mapper is done");
+    })();
+  });
+  return { channel: ends.near, asked: () => asked };
+}
+
+/** The answer a mapper gives: its tag, a result, and the port. */
+function answered(port: number, result = 0): Uint8Array {
+  return new Uint8Array([119, result, port >> 8, port & 0xff, 0x4d, 0, 0, 6, 0, 5, 0, 4, 0x72, 0x6f, 0x62]);
+}
+
+describe("epmdPort", () => {
+  it("asks after a name and answers the port it was given", async () => {
+    const { channel, asked } = mapper(answered(46257));
+    expect(await epmdPort(channel, { host: "10.0.0.2", name: "robot" })).toBe(46257);
+    expect(Buffer.from(asked() ?? []).toString("latin1")).toBe("\x7arobot");
+  });
+
+  it("refuses a name the mapper does not know", async () => {
+    const { channel } = mapper(new Uint8Array([119, 1]));
+    await expect(epmdPort(channel, { host: "10.0.0.2", name: "nobody" })).rejects.toThrow(
+      "epmd on 10.0.0.2 does not know a node named nobody (result 1)",
+    );
+  });
+
+  it("refuses an answer that is not the mapper's", async () => {
+    const { channel } = mapper(new Uint8Array([120, 0, 0, 1]));
+    await expect(epmdPort(channel, { host: "10.0.0.2", name: "robot" })).rejects.toThrow(
+      "epmd answered request 120, not 119",
+    );
+  });
+
+  it("refuses an answer that carried nothing", async () => {
+    const { channel } = mapper(null);
+    await expect(epmdPort(channel, { host: "10.0.0.2", name: "robot" })).rejects.toThrow(
+      "epmd on 10.0.0.2 answered 0 bytes and nothing else",
+    );
+  });
+});
