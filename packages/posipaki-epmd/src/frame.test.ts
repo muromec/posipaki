@@ -82,3 +82,15 @@ describe("wrapEpmdFrame", () => {
     expect(() => framed.use(4)).toThrow("cannot change from 2 to 4");
   });
 });
+
+describe("ticks", () => {
+  it("answers an empty packet with one, and hands nothing up", async () => {
+    const { framed, wire } = pair();
+    const seen = collected(framed);
+    const written = collected(wire);
+    // An empty packet: the length is zero and nothing follows it.
+    await wire.send(new Uint8Array([0, 0]));
+    expect(seen).toEqual([]);
+    expect([...(written[0] ?? [])]).toEqual([0, 0]);
+  });
+});

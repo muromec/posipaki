@@ -70,11 +70,25 @@ export function wrapEpmdFrame<C = string>(inner: Channel<Uint8Array, C>): Framed
     for (const reader of [...readers]) reader(frame);
   };
 
+  /**
+   * An empty packet is a tick: a keep-alive a node expects to hear back, and not a message.
+   *
+   * The answer is what keeps the connection: a node that hears nothing for its net tick time closes it, and a side
+   * that never speaks looks exactly like one that has gone.
+   */
+  const answerTick = (): void => {
+    inner.send(new Uint8Array(width)).catch(() => undefined);
+  };
+
   const drain = (): void => {
     while (!ended) {
       const next = cut(buffered, width);
       if (next === null) return;
       buffered = next.rest;
+      if (next.frame.length === 0) {
+        answerTick();
+        continue;
+      }
       deliver(next.frame);
     }
   };
