@@ -1,14 +1,16 @@
 // ── the command line ────────────────────────────────────────────────────────
 //
-// Two positionals and three flags, and nothing else. A flag this program does not have is refused by name, and so
-// is a third positional: a typo that is ignored is a run that does something other than what was asked, which is
-// the expensive way to find out.
+// Two positionals and four flags, and nothing else. A flag this program does not have is refused by name, and so is
+// a third positional: a typo that is ignored is a run that did something other than what was asked, which is the
+// expensive way to find out.
 
 export interface Options {
   readonly host: string;
   readonly cookie: string;
-  /** The registered name to send to. */
-  readonly name: string;
+  /** The node's name in epmd, without a host: `robot` for `robot@tomato`. */
+  readonly node: string;
+  /** The name to send to on that node. A node usually answers for its own name, so that is the default. */
+  readonly to: string;
   /** The node name this side claims. */
   readonly self: string;
   /** What to send. */
@@ -17,10 +19,10 @@ export interface Options {
 
 /** What a command line that cannot be read is told. */
 export const USAGE =
-  "usage: posipaki-epmd <host> <cookie> [--name robot] [--self posipaki@<host>] [--message robot]";
+  "usage: posipaki-epmd <host> <cookie> [--node robot] [--to robot] [--self posipaki@<host>] [--message robot]";
 
 /** The flags this program has. */
-const FLAGS: readonly string[] = ["name", "self", "message"];
+const FLAGS: readonly string[] = ["node", "to", "self", "message"];
 
 /** A command line as the facts a run needs, or a sentence saying what is wrong with it. */
 export function parseArgs(argv: string[]): Options {
@@ -46,10 +48,12 @@ export function parseArgs(argv: string[]): Options {
   if (host === undefined || cookie === undefined) throw new Error(USAGE);
   if (rest.length > 0) throw new Error(`unexpected after the cookie: ${rest.join(" ")}\n${USAGE}`);
 
+  const node = flags.node ?? "robot";
   return {
     host,
     cookie,
-    name: flags.name ?? "robot",
+    node,
+    to: flags.to ?? node,
     // A short node name carries no dot, so the default takes the peer's host: a node started with -sname refuses a
     // name that looks like a long one.
     self: flags.self ?? `posipaki@${host}`,
