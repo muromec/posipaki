@@ -6,6 +6,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 
 import { listen, type Listener } from "./listen.js";
+import { open } from "./connection.js";
 import { network, type Network, type PidTerm } from "./network.js";
 import type { Peer } from "./handshake.js";
 import type { WireMessage } from "./messages.js";
@@ -61,7 +62,7 @@ describe("network", () => {
     const said = peer.next();
     await mine.send(pidOf(PEER, 99), { kind: "binary", bytes: Buffer.from("hi", "utf8") });
     expect(await said).toBe("hi");
-    expect(peer.peers).toEqual([{ name: "me@127.0.0.1" }]);
+    expect(peer.peers).toMatchObject([{ name: "me@127.0.0.1" }]);
   });
 
   it("keeps one connection for one node", async () => {
@@ -83,5 +84,69 @@ describe("network", () => {
     await expect(mine.send(pidOf("me@127.0.0.1", 7), { kind: "binary", bytes: Buffer.alloc(0) })).rejects.toThrow(
       "me@127.0.0.1 is this side's own name",
     );
+  });
+});
+
+describe("incarnations", () => {
+  it("refuses a pid minted by another incarnation of the node it names", async () => {
+    const peer = await answer();
+    const mine = network({ self: "me@127.0.0.1", cookie: COOKIE, creation: 7, locate: async () => peer.port, timeoutMs: 2_000 });
+    networks.push(mine);
+    // The node answers as incarnation 99; this pid was minted by 98, so there is nobody it can reach.
+    await expect(
+      mine.send(pidOf(PEER, 98), { kind: "binary", bytes: Buffer.from("hi", "utf8") }),
+    ).rejects.toThrow("answers as incarnation 99, and this pid was minted by 98");
+    expect(peer.said).toEqual([]);
+  });
+
+  it("uses a connection that arrived rather than dialling the node again", async () => {
+    let dials = 0;
+    const mine = network({
+      self: "me@127.0.0.1",
+      cookie: COOKIE,
+      creation: 7,
+      timeoutMs: 2_000,
+      locate: async () => {
+        dials += 1;
+        return 1;
+      },
+    });
+    networks.push(mine);
+    let adopted: () => void = () => undefined;
+    const adoption = new Promise<void>((resolve) => {
+      adopted = resolve;
+    });
+    const ours = await listen(
+      { self: "me@127.0.0.1", cookie: COOKIE, creation: 7, timeoutMs: 2_000 },
+      {
+        onConnection(connected, messages) {
+          mine.adopt(connected, messages);
+          adopted();
+        },
+      },
+    );
+    listeners.push(ours);
+
+    // The peer opens the connection, and what it says comes back over that same one: no second dial.
+    const client = await open(ours.port, {
+      host: "127.0.0.1",
+      node: "me",
+      cookie: COOKIE,
+      self: PEER,
+      creation: 99,
+      timeoutMs: 2_000,
+    });
+    await adoption;
+    const said = new Promise<string>((resolve) => {
+      client.messages.onFrame((message: WireMessage) => {
+        if (message.kind === "message" && message.payload?.kind === "binary") {
+          resolve(Buffer.from(message.payload.bytes).toString("utf8"));
+        }
+      });
+    });
+    await mine.send(pidOf(PEER, 99), { kind: "binary", bytes: Buffer.from("over it", "utf8") });
+    expect(await said).toBe("over it");
+    expect(dials).toBe(0);
+    await client.messages.close("done");
   });
 });

@@ -92,7 +92,9 @@ async function main(): Promise<void> {
 
   const node = await listen({ self, cookie, creation, host, port }, {
     onConnection(peer, messages) {
-      console.log(`${peer.name} connected`);
+      // A connection that arrived is the way to that node: a pid on it is answered over this, not over a new one.
+      reach.adopt(peer, messages);
+      console.log(`${peer.name} connected (incarnation ${peer.creation})`);
       report(peer.name, messages);
     },
     onRefused(error) {

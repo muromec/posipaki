@@ -57,8 +57,8 @@ describe("listen", () => {
       creation: 7,
       timeoutMs: 2_000,
     });
-    expect(connection.peer).toEqual({ name: "posipaki@127.0.0.1" });
-    expect(peers).toEqual([{ name: "probe@127.0.0.1" }]);
+    expect(connection.peer).toMatchObject({ name: "posipaki@127.0.0.1" });
+    expect(peers).toMatchObject([{ name: "probe@127.0.0.1" }]);
     const ourselves = { kind: "pid" as const, node: "probe@127.0.0.1", id: 1, serial: 0, creation: 7 };
     await connection.messages.send({
       kind: "message",

@@ -101,7 +101,7 @@ describe("handshake", () => {
   it("answers with the node's name, and widens the wire to four-byte lengths", async () => {
     const { frames, messages, claimed } = connection({});
     const peer = await handshake({ frames, messages }, options());
-    expect(peer).toEqual({ name: "robot@tomato" });
+    expect(peer).toMatchObject({ name: "robot@tomato" });
     expect(frames.prefix).toBe(4);
     expect(claimed()).toEqual(["posipaki@host"]);
   });
@@ -116,7 +116,7 @@ describe("handshake", () => {
   it("takes `alive` as a question, answers it, and carries on", async () => {
     const { frames, messages } = connection({ status: "alive" });
     const peer = await handshake({ frames, messages }, options());
-    expect(peer).toEqual({ name: "robot@tomato" });
+    expect(peer).toMatchObject({ name: "robot@tomato" });
     expect(frames.prefix).toBe(4);
   });
 

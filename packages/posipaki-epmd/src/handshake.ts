@@ -32,9 +32,13 @@ export interface HandshakeOptions {
   readonly timeoutMs: number;
 }
 
-/** What the node on the other end calls itself. */
+/** What the node on the other end calls itself, and the incarnation it said this is. */
 export interface Peer {
   readonly name: string;
+  /** The incarnation: a pid minted by another one of these is a pid for a node that is not here any more. */
+  readonly creation: number;
+  /** The flags it offered, high half then low. */
+  readonly flags: readonly [high: number, low: number];
 }
 
 /** md5 over the cookie and the challenge written as decimal text. */
@@ -107,7 +111,7 @@ export async function initiate(ports: HandshakePorts, options: HandshakeOptions)
 
   // The ack is the handshake's last message, and with it the wire switches to four-byte lengths.
   frames.use(4);
-  return { name: challenge.name };
+  return { name: challenge.name, creation: challenge.creation, flags: challenge.flags };
 }
 
 /**
@@ -147,7 +151,7 @@ export async function accept(ports: HandshakePorts, options: HandshakeOptions): 
   // Our own proof, over the challenge it sent: with this the cookie is proved in both directions.
   await messages.send({ kind: "ack", digest: digest(options.cookie, reply.challenge) });
   frames.use(4);
-  return { name: named.name };
+  return { name: named.name, creation: named.creation, flags: named.flags };
 }
 
 /** The flags a node refuses a connection without: dist.h's DFLAG_DIST_MANDATORY_25 and DFLAG_UNLINK_ID. */

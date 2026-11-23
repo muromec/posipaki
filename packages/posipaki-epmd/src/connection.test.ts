@@ -123,7 +123,7 @@ describe("open", () => {
   it("proves the cookie, carries a message to a name, and brings the answer back", async () => {
     const port = await serveNode(node);
     const connection = await open(port, { host: "127.0.0.1", node: "robot", cookie: COOKIE, creation: 7 });
-    expect(connection.peer).toEqual({ name: "robot@tomato" });
+    expect(connection.peer).toMatchObject({ name: "robot@tomato" });
     const said = answer(connection.messages);
     await connection.messages.send(toName("robot", "robot", 7));
     expect(await said).toBe("hello robot");
