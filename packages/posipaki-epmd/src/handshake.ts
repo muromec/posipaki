@@ -50,7 +50,7 @@ export function digest(cookie: string, challenge: number): Buffer {
  * Answers the name the other node answered with. A status the node refuses with is thrown as that status; a
  * connection that ends where a digest belonged is thrown as the cookie being wrong.
  */
-export async function handshake(ports: HandshakePorts, options: HandshakeOptions): Promise<Peer> {
+export async function initiate(ports: HandshakePorts, options: HandshakeOptions): Promise<Peer> {
   const { messages, frames } = ports;
   const heard = inbox(messages);
   await messages.send({
@@ -82,16 +82,17 @@ export async function handshake(ports: HandshakePorts, options: HandshakeOptions
   }
 
   const ours = randomBytes(4).readUInt32BE(0);
-  await messages.send({
-    kind: "reply",
-    challenge: ours,
-    digest: digest(options.cookie, challenge.challenge),
-  });
-
   let ack: WireMessage;
   try {
+    await messages.send({
+      kind: "reply",
+      challenge: ours,
+      digest: digest(options.cookie, challenge.challenge),
+    });
     ack = await heard.next(options.timeoutMs, "no answer to our digest");
   } catch (error) {
+    // erts sends nothing when the digest is wrong: it drops the connection, and the send of our own may be the
+    // write that finds that out.
     const why = error instanceof Error ? error.message : String(error);
     throw new Error(
       `the node dropped the connection at the digest: the cookie is not the one it knows (${why})`,
@@ -108,3 +109,52 @@ export async function handshake(ports: HandshakePorts, options: HandshakeOptions
   frames.use(4);
   return { name: challenge.name };
 }
+
+/**
+ * The accepting side: reads the name, asks a challenge of its own, checks the digest the other side computed with
+ * the cookie, and proves its own with the challenge that came back.
+ *
+ * The widening is the same as the initiating side's: the ack is the last message either way.
+ */
+export async function accept(ports: HandshakePorts, options: HandshakeOptions): Promise<Peer> {
+  const { messages, frames } = ports;
+  const heard = inbox(messages);
+
+  const named = await heard.next(options.timeoutMs, "no name from the node");
+  if (named.kind !== "name") {
+    throw new Error(`the node sent a ${named.kind} where its name belonged`);
+  }
+
+  await messages.send({ kind: "status", status: "ok" });
+
+  const ours = randomBytes(4).readUInt32BE(0);
+  await messages.send({
+    kind: "challenge",
+    flags: options.flags,
+    challenge: ours,
+    creation: options.creation,
+    name: options.self,
+  });
+
+  const reply = await heard.next(options.timeoutMs, "no answer to our challenge");
+  if (reply.kind !== "reply") {
+    throw new Error(`the node sent a ${reply.kind} where its digest belonged`);
+  }
+  if (!Buffer.from(reply.digest).equals(digest(options.cookie, ours))) {
+    throw new Error("the node's digest does not match ours: it does not know the cookie");
+  }
+
+  // Our own proof, over the challenge it sent: with this the cookie is proved in both directions.
+  await messages.send({ kind: "ack", digest: digest(options.cookie, reply.challenge) });
+  frames.use(4);
+  return { name: named.name };
+}
+
+/** The flags a node refuses a connection without: dist.h's DFLAG_DIST_MANDATORY_25 and DFLAG_UNLINK_ID. */
+export const MANDATORY_FLAGS: readonly [high: number, low: number] = [
+  0x4,
+  0x4 | 0x10 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x10000 | 0x20000 | 0x40000 | 0x1000000 | 0x2000000,
+];
+
+/** How long a handshake step waits when the caller does not say. */
+export const DEFAULT_TIMEOUT_MS = 10_000;

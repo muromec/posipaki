@@ -6,7 +6,8 @@
 //
 // 'N' is the one message the octets do not tell apart: send_name and send_challenge carry the same tag and the
 // same eight flag octets, and a node tells them apart by which side asked. This module is a client's reading, so
-// an 'N' that arrives is a challenge; `decodeName` is the other reading, for a peer or a test.
+// an 'N' that arrives is a challenge to the side that opened the connection and a name to the side that answered,
+// so the reading is a parameter and not a second function.
 //
 // Each term on this wire carries its own version magic, which is why a distribution message is a pass-through
 // byte and a term, and why its payload is a second term with a magic of its own.
@@ -58,8 +59,11 @@ function nameAt(body: Buffer, start: number): string {
   return body.subarray(start + 2, start + 2 + length).toString("utf8");
 }
 
-/** What a frame says, read as the initiating client reads it. */
-export function decode(frame: Uint8Array): WireMessage {
+/** Which side of a connection is reading. The name and the challenge are the same message, told apart by this. */
+export type Side = "initiator" | "acceptor";
+
+/** What a frame says, read as `side` reads it: an 'N' is a challenge to the side that opened the connection. */
+export function decode(frame: Uint8Array, side: Side = "initiator"): WireMessage {
   const body = bytes(frame);
   if (body.length === 0) {
     throw new Error("a frame carried nothing: every message on this wire begins with the byte that names it");
@@ -68,13 +72,21 @@ export function decode(frame: Uint8Array): WireMessage {
     case TAG_STATUS:
       return { kind: "status", status: body.subarray(1).toString("utf8") };
     case TAG_NAME:
-      return {
-        kind: "challenge",
-        flags: flagsOf(body),
-        challenge: body.readUInt32BE(9),
-        creation: body.readUInt32BE(13),
-        name: nameAt(body, 17),
-      };
+      // The same octets, read by the side that asked the question or the side that answered it.
+      return side === "acceptor"
+        ? {
+            kind: "name",
+            flags: flagsOf(body),
+            creation: body.readUInt32BE(9),
+            name: nameAt(body, 13),
+          }
+        : {
+            kind: "challenge",
+            flags: flagsOf(body),
+            challenge: body.readUInt32BE(9),
+            creation: body.readUInt32BE(13),
+            name: nameAt(body, 17),
+          };
     case TAG_REPLY:
       return { kind: "reply", challenge: body.readUInt32BE(1), digest: body.subarray(5, 21) };
     case TAG_ACK:
@@ -98,12 +110,6 @@ export function decode(frame: Uint8Array): WireMessage {
   }
 }
 
-/** The other reading of 'N': the name an initiating side sent. Null when the frame is not one. */
-export function decodeName(frame: Uint8Array): NodeIdentity | null {
-  if (frame.length < 15 || frame[0] !== TAG_NAME) return null;
-  const body = bytes(frame);
-  return { flags: flagsOf(body), creation: body.readUInt32BE(9), name: nameAt(body, 13) };
-}
 
 /** The octets of a message. */
 export function encode(message: WireMessage): Uint8Array {
@@ -150,8 +156,8 @@ export function encode(message: WireMessage): Uint8Array {
 }
 
 /** A channel of frames as a channel of messages: this side's reading, both ways. */
-export function withMeaning<C = string>(frames: Channel<Uint8Array, C>): Channel<WireMessage, C> {
-  return mapChannel(frames, encode, decode);
+export function withMeaning<C = string>(frames: Channel<Uint8Array, C>, side: Side = "initiator"): Channel<WireMessage, C> {
+  return mapChannel(frames, encode, (frame) => decode(frame, side));
 }
 
 /**
@@ -182,14 +188,13 @@ export function inbox(messages: Channel<WireMessage>) {
       const waiting = standing.shift();
       if (waiting !== undefined) return Promise.resolve(waiting);
       if (closed !== null) return Promise.reject(new Error(closed));
-      return withTimeout(
-        new Promise<WireMessage>((resolve, reject) => {
-          readers.push(resolve);
-          refused.push(reject);
-        }),
-        timeoutMs,
-        reason,
-      );
+      const awaited = new Promise<WireMessage>((resolve, reject) => {
+        readers.push(resolve);
+        refused.push(reject);
+      });
+      // A reader that timed out is gone; whatever the channel says to it afterwards is nobody's news.
+      awaited.catch(() => undefined);
+      return withTimeout(awaited, timeoutMs, reason);
     },
   };
 }

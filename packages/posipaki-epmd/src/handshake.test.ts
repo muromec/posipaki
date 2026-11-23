@@ -10,8 +10,8 @@ import { createHash } from "node:crypto";
 import { memoryChannelPair } from "posipaki/port";
 
 import { wrapEpmdFrame } from "./frame.js";
-import { handshake, type HandshakeOptions } from "./handshake.js";
-import { decode, decodeName, encode, withMeaning } from "./messages.js";
+import { initiate as handshake, type HandshakeOptions } from "./handshake.js";
+import { decode, encode, withMeaning } from "./messages.js";
 
 const COOKIE = "pocookie";
 const PEER_CHALLENGE = 0x1122_3344;
@@ -56,8 +56,8 @@ function connection(script: Script) {
 
   const answer = async (frame: Uint8Array): Promise<void> => {
     if (frame[0] === 0x4e) {
-      const identity = decodeName(frame);
-      if (identity !== null) claimed.push(identity.name);
+      const identity = decode(frame, "acceptor");
+      if (identity.kind === "name") claimed.push(identity.name);
       const status = script.status ?? "ok";
       await peer.send(encode({ kind: "status", status }));
       if (status === "ok") await peer.send(challenge());

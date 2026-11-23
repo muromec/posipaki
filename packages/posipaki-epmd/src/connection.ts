@@ -12,20 +12,14 @@ import { socketChannel } from "posipaki/port/node";
 
 import { epmdPort } from "./epmd.js";
 import { wrapEpmdFrame } from "./frame.js";
-import { handshake, type Peer } from "./handshake.js";
+import { DEFAULT_TIMEOUT_MS, initiate, MANDATORY_FLAGS, type Peer } from "./handshake.js";
 import { withMeaning, type WireMessage } from "./messages.js";
 
 const EPMD_PORT = 4369;
 
-/** How long a step of the connection may take when the caller says nothing. */
-const DEFAULT_TIMEOUT_MS = 10_000;
 
-// dist.h's DFLAG_DIST_MANDATORY_25 and DFLAG_UNLINK_ID: a node refuses a connection that lacks any of them. The
-// flags word is sixty-four bits, written high half first, so the two are not one number here.
-const DEFAULT_FLAGS: readonly [high: number, low: number] = [
-  0x4,
-  0x4 | 0x10 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x10000 | 0x20000 | 0x40000 | 0x1000000 | 0x2000000,
-];
+
+
 
 export interface ConnectionOptions {
   readonly host: string;
@@ -64,12 +58,12 @@ export async function connect(options: ConnectionOptions): Promise<Connection> {
 export async function open(port: number, options: ConnectionOptions): Promise<Connection> {
   const frames = wrapEpmdFrame(await socketChannel({ host: options.host, port }));
   const messages = withMeaning(frames);
-  const peer = await handshake(
+  const peer = await initiate(
     { frames, messages },
     {
       self: options.self ?? `posipaki@${options.host}`,
       cookie: options.cookie,
-      flags: options.flags ?? DEFAULT_FLAGS,
+      flags: options.flags ?? MANDATORY_FLAGS,
       creation: options.creation,
       timeoutMs: options.timeoutMs ?? DEFAULT_TIMEOUT_MS,
     },

@@ -13,7 +13,7 @@ import { streamChannel } from "posipaki/port";
 
 import { open } from "./connection.js";
 import { wrapEpmdFrame } from "./frame.js";
-import { decode, decodeName, encode } from "./messages.js";
+import { decode, encode } from "./messages.js";
 import type { Term } from "./terms.js";
 import type { WireMessage } from "./messages.js";
 
@@ -62,7 +62,7 @@ function node(socket: Socket): void {
   frames.onFrame((frame) => {
     void (async () => {
       if (frame[0] === 0x4e) {
-        if (decodeName(frame) === null) return;
+        if (decode(frame, "acceptor").kind !== "name") return;
         await frames.send(encode({ kind: "status", status: "ok" }));
         await frames.send(
           encode({

@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { memoryChannelPair } from "posipaki/port";
-import { decode, decodeName, encode, withMeaning, type WireMessage } from "./messages.js";
+import { decode, encode, withMeaning, type WireMessage } from "./messages.js";
 
 
 const hex = (value: string): Uint8Array => new Uint8Array(Buffer.from(value, "hex"));
@@ -79,7 +79,7 @@ describe("encode", () => {
 
   it("writes a name that the other reading reads back", () => {
     const written = encode({ kind: "name", flags: [0x4, 0x1], creation: 7, name: "posipaki@host" });
-    expect(decodeName(written)).toEqual({ flags: [0x4, 0x1], creation: 7, name: "posipaki@host" });
+    expect(decode(written, "acceptor")).toEqual({ kind: "name", flags: [0x4, 0x1], creation: 7, name: "posipaki@host" });
   });
 
   it("writes a message with no payload as one term", () => {
@@ -98,11 +98,19 @@ describe("encode", () => {
   });
 });
 
-describe("decodeName", () => {
-  it("reads the name an initiating side sent, and says nothing about other frames", () => {
+describe("the other side of a connection", () => {
+  it("reads the same 'N' as a name, and a status as a status either way", () => {
     const name = encode({ kind: "name", flags: [0x4, 0], creation: 5, name: "posipaki@host" });
-    expect(decodeName(name)).toEqual({ flags: [0x4, 0], creation: 5, name: "posipaki@host" });
-    expect(decodeName(hex("736f6b"))).toBeNull();
+    expect(decode(name, "acceptor")).toEqual({ kind: "name", flags: [0x4, 0], creation: 5, name: "posipaki@host" });
+    expect(decode(hex("736f6b"), "acceptor")).toEqual({ kind: "status", status: "ok" });
+  });
+
+  it("reads a name as a challenge when the wrong side reads it, and says so with nonsense", () => {
+    // The same octets, and a name that is not the one the frame carried: this is why the side is a parameter.
+    const name = encode({ kind: "name", flags: [0x4, 0], creation: 5, name: "posipaki@host" });
+    const asChallenge = decode(name, "initiator");
+    expect(asChallenge.kind).toBe("challenge");
+    expect(asChallenge.kind === "challenge" ? asChallenge.name : "posipaki@host").not.toBe("posipaki@host");
   });
 });
 
