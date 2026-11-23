@@ -14,30 +14,37 @@
     },
     "packages/durable-actor": {
       "name": "posipaki-durable-actor",
-      "version": "0.1.0",
+      "version": "0.4.0",
       "dependencies": {
-        "posipaki": "^0.50.0",
+        "posipaki": "^0.51.0",
+      },
+    },
+    "packages/posipaki-epmd": {
+      "name": "posipaki-epmd",
+      "version": "0.0.1",
+      "bin": {
+        "posipaki-epmd": "./src/index.ts",
       },
     },
     "packages/remote-bwrap": {
       "name": "posipaki-remote-bwrap",
-      "version": "0.50.0",
+      "version": "0.51.0",
       "dependencies": {
-        "posipaki": "^0.50.0",
+        "posipaki": "^0.51.0",
       },
     },
     "packages/remote-podman": {
       "name": "posipaki-remote-podman",
-      "version": "0.50.0",
+      "version": "0.51.0",
       "dependencies": {
-        "posipaki": "^0.50.0",
+        "posipaki": "^0.51.0",
       },
     },
     "packages/remote-ssh": {
       "name": "posipaki-remote-ssh",
-      "version": "0.50.0",
+      "version": "0.51.0",
       "dependencies": {
-        "posipaki": "^0.50.0",
+        "posipaki": "^0.51.0",
       },
     },
   },
@@ -322,6 +329,8 @@
     "posipaki": ["posipaki@root:", {}],
 
     "posipaki-durable-actor": ["posipaki-durable-actor@workspace:packages/durable-actor"],
+
+    "posipaki-epmd": ["posipaki-epmd@workspace:packages/posipaki-epmd"],
 
     "posipaki-remote-bwrap": ["posipaki-remote-bwrap@workspace:packages/remote-bwrap"],
 

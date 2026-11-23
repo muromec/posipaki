@@ -1,0 +1,17 @@
+{
+  "name": "posipaki-epmd",
+  "version": "0.0.1",
+  "description": "Talk to an Erlang node over its own distribution protocol",
+  "homepage": "https://posipaki-docs.muromec.nl/",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/muromec/posipaki.git"
+  },
+  "type": "module",
+  "bin": {
+    "posipaki-epmd": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts"
+  }
+}
