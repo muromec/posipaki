@@ -13,6 +13,7 @@
 
 import { mapChannel, type Channel } from "posipaki/port";
 
+import { readControl, writeControl, type Control } from "./control.js";
 import { TermReader, write, type Term } from "./terms.js";
 import { withTimeout } from "./timeout.js";
 
@@ -40,7 +41,7 @@ export type WireMessage =
   | { readonly kind: "status"; readonly status: string }
   | { readonly kind: "reply"; readonly challenge: number; readonly digest: Uint8Array }
   | { readonly kind: "ack"; readonly digest: Uint8Array }
-  | { readonly kind: "message"; readonly control: Term; readonly payload: Term | null };
+  | { readonly kind: "message"; readonly control: Control; readonly payload: Term | null };
 
 /** The octets of a frame as bytes a reader can index. */
 function bytes(frame: Uint8Array): Buffer {
@@ -84,7 +85,7 @@ export function decode(frame: Uint8Array): WireMessage {
       }
       const terms = new TermReader(body.subarray(2));
       if (terms.done()) throw new Error("a distribution message carried no control message");
-      const control = terms.term();
+      const control = readControl(terms.term());
       if (terms.done()) return { kind: "message", control, payload: null };
       if (terms.peek() !== VERSION) {
         throw new Error(`the message after a control began with ${terms.peek()}, not ${VERSION}`);
@@ -141,7 +142,7 @@ export function encode(message: WireMessage): Uint8Array {
       return head;
     }
     case "message": {
-      const parts = [Buffer.from([PASS_THROUGH, VERSION]), write(message.control)];
+      const parts = [Buffer.from([PASS_THROUGH, VERSION]), write(writeControl(message.control))];
       if (message.payload !== null) parts.push(Buffer.from([VERSION]), write(message.payload));
       return Buffer.concat(parts);
     }

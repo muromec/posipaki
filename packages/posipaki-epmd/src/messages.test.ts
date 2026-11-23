@@ -45,12 +45,8 @@ describe("decode", () => {
     expect(said).toEqual({
       kind: "message",
       control: {
-        kind: "tuple",
-        items: [
-          { kind: "int", value: 2 },
-          { kind: "atom", name: "" },
-          { kind: "pid", node: "posipaki@tomato", id: 1, serial: 0, creation: 0x5bc4a774 },
-        ],
+        kind: "send",
+        to: { kind: "pid", node: "posipaki@tomato", id: 1, serial: 0, creation: 0x5bc4a774 },
       },
       payload: { kind: "binary", bytes: Buffer.from("hello robot", "utf8") },
     });
@@ -74,7 +70,7 @@ describe("encode", () => {
       { kind: "ack", digest: hex("ffeeddccbbaa99887766554433221100") },
       {
         kind: "message",
-        control: { kind: "tuple", items: [{ kind: "int", value: 6 }, { kind: "atom", name: "" }] },
+        control: { kind: "regSend", from: { kind: "int", value: 1 }, to: "robot" },
         payload: { kind: "tuple", items: [{ kind: "binary", bytes: Buffer.from([1, 2]) }] },
       },
     ];
@@ -89,14 +85,14 @@ describe("encode", () => {
   it("writes a message with no payload as one term", () => {
     const written = encode({
       kind: "message",
-      control: { kind: "tuple", items: [{ kind: "int", value: 2 }] },
+      control: { kind: "send", to: { kind: "atom", name: "" } },
       payload: null,
     });
     expect(written[0]).toBe(0x70);
     expect(written[1]).toBe(131);
     expect(decode(written)).toEqual({
       kind: "message",
-      control: { kind: "tuple", items: [{ kind: "int", value: 2 }] },
+      control: { kind: "send", to: { kind: "atom", name: "" } },
       payload: null,
     });
   });

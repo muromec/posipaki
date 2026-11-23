@@ -22,6 +22,7 @@ import { socketChannel } from "posipaki/port/node";
 import { epmdPort } from "./epmd.js";
 import { wrapEpmdFrame } from "./frame.js";
 import { handshake } from "./handshake.js";
+import { writeControl, type Control } from "./control.js";
 import { inbox, withMeaning, type WireMessage } from "./messages.js";
 import { render, type Term } from "./terms.js";
 
@@ -36,10 +37,6 @@ const FLAGS_HIGH = 0x4;
 const FLAGS_LOW =
   0x4 | 0x10 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x10000 | 0x20000 | 0x40000 | 0x1000000 | 0x2000000;
 
-// The distribution opcodes this entry acts on, as dist.h names them.
-const DOP_SEND = 2;
-const DOP_EXIT = 3;
-const DOP_REG_SEND = 6;
 
 const trace = Boolean(process.env.POSIPAKI_EPMD_TRACE);
 
@@ -82,16 +79,6 @@ function parseArgs(argv: string[]): Options {
   };
 }
 
-/** The opcode of a control message, and the message said `what` when it did not have one. */
-function opcodeOf(control: Term, what: string): number {
-  if (control.kind !== "tuple" || control.items.length === 0) {
-    throw new Error(`${what} was not a tuple: ${render(control)}`);
-  }
-  const opcode = control.items[0];
-  if (opcode.kind !== "int") throw new Error(`${what} began with a ${opcode.kind}, not an opcode`);
-  return opcode.value;
-}
-
 async function main(argv: string[]): Promise<void> {
   const options = parseArgs(argv);
   const port = await epmdPort(await socketChannel({ host: options.host, port: EPMD_PORT }), {
@@ -118,35 +105,24 @@ async function main(argv: string[]): Promise<void> {
   // Our own process id, so the other side has somewhere to answer: a pid is an address this connection carries,
   // and nothing there holds a process for it.
   const ourselves: Term = { kind: "pid", node: options.self, id: 1, serial: 0, creation };
-  const control: Term = {
-    // {DOP_REG_SEND, FromPid, Cookie, ToName}: the cookie slot has been the empty atom since R9B and is not read.
-    kind: "tuple",
-    items: [
-      { kind: "int", value: DOP_REG_SEND },
-      ourselves,
-      { kind: "atom", name: "" },
-      { kind: "atom", name: options.name },
-    ],
-  };
+  const control: Control = { kind: "regSend", from: ourselves, to: options.name };
   // {From, Text}: a bare term carries no sender, so nothing could answer it.
   const payload: Term = {
     kind: "tuple",
     items: [ourselves, { kind: "binary", bytes: Buffer.from(options.message, "utf8") }],
   };
-  if (trace) console.error(`sending ${render(control)} ${render(payload)}`);
+  if (trace) console.error(`sending ${render(writeControl(control))} ${render(payload)}`);
   await messages.send({ kind: "message", control, payload });
 
   for (;;) {
     const said: WireMessage = await heard.next(TIMEOUT_MS, "no answer to the message");
     if (said.kind !== "message") continue;
-    const opcode = opcodeOf(said.control, "a control message");
-    if (trace) console.error(`received ${render(said.control)} ${said.payload === null ? "" : render(said.payload)}`);
-    if (opcode === DOP_EXIT) {
-      const reason = said.control.kind === "tuple" ? said.control.items[3] : undefined;
-      throw new Error(`the node closed the connection: ${reason === undefined ? "no reason given" : render(reason)}`);
+    if (trace) console.error(`received ${render(writeControl(said.control))} ${said.payload === null ? "" : render(said.payload)}`);
+    if (said.control.kind === "exit") {
+      throw new Error(`the node closed the connection: ${render(said.control.reason)}`);
     }
-    if (opcode !== DOP_SEND) continue;
-    if (said.payload === null) throw new Error("the node sent a message on DOP_SEND with nothing after it");
+    if (said.control.kind !== "send") continue;
+    if (said.payload === null) throw new Error("a message for a process came with nothing after its control");
     console.log(render(said.payload));
     break;
   }

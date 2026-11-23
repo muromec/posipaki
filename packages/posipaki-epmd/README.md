@@ -43,6 +43,9 @@ Bottom up, one file each, each with its own tests:
   message of a control and the term after it. `'N'` is the one tag the octets do not tell apart, so this module is
   a client's reading, and `decodeName` is the other.
 - `handshake.ts` — the cookie, proved by both sides hashing the other's challenge, and the point where the wire
+- `control.ts` — what a distribution message's control tuple says: `{2, '', To}` a message for a process,
+  `{6, From, '', ToName}` one for a registered name, `{3, From, To, Reason}` the node closing the connection, and
+  any other opcode named as such rather than skipped.
   widens: the ack is the last two-byte message.
 - `epmd.ts` — where the node listens. Its answer carries no length field at all and ends when epmd closes the
   socket, so it is read to the close instead of being cut into frames.
