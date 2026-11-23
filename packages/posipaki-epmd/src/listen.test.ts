@@ -1,0 +1,88 @@
+// ── a node that accepts connections ────────────────────────────────────────
+//
+// This side's accepting half against this side's initiating half, over a real socket: the two roles of the protocol
+// have to agree before either can be measured against a node that was not written here.
+
+import { afterEach, describe, expect, it } from "vitest";
+
+import type { Channel } from "posipaki/port";
+
+import { open } from "./connection.js";
+import { listen, type Listener } from "./listen.js";
+import type { Peer } from "./handshake.js";
+import type { WireMessage } from "./messages.js";
+
+const COOKIE = "pocookie";
+
+const listeners: Listener[] = [];
+
+afterEach(async () => {
+  for (const listener of listeners.splice(0)) await listener.close();
+});
+
+async function node(): Promise<{ listener: Listener; peers: Peer[]; refused: string[]; said: Promise<string> }> {
+  const peers: Peer[] = [];
+  const refused: string[] = [];
+  let heard: (text: string) => void = () => undefined;
+  const said = new Promise<string>((resolve) => {
+    heard = resolve;
+  });
+  const listener = await listen(
+    { self: "posipaki@127.0.0.1", cookie: COOKIE, creation: 99, timeoutMs: 2_000 },
+    {
+      onConnection(peer: Peer, messages: Channel<WireMessage>) {
+        peers.push(peer);
+        messages.onFrame((message) => {
+          if (message.kind !== "message" || message.payload?.kind !== "binary") return;
+          heard(Buffer.from(message.payload.bytes).toString("utf8"));
+        });
+      },
+      onRefused(error: Error) {
+        refused.push(error.message);
+      },
+    },
+  );
+  listeners.push(listener);
+  return { listener, peers, refused, said };
+}
+
+describe("listen", () => {
+  it("proves the cookie both ways and hands the connection over", async () => {
+    const { listener, peers, said } = await node();
+    const connection = await open(listener.port, {
+      host: "127.0.0.1",
+      node: "posipaki",
+      cookie: COOKIE,
+      self: "probe@127.0.0.1",
+      creation: 7,
+      timeoutMs: 2_000,
+    });
+    expect(connection.peer).toEqual({ name: "posipaki@127.0.0.1" });
+    expect(peers).toEqual([{ name: "probe@127.0.0.1" }]);
+    const ourselves = { kind: "pid" as const, node: "probe@127.0.0.1", id: 1, serial: 0, creation: 7 };
+    await connection.messages.send({
+      kind: "message",
+      control: { kind: "regSend", from: ourselves, to: "posipaki" },
+      payload: { kind: "binary", bytes: Buffer.from("hi", "utf8") },
+    });
+    expect(await said).toBe("hi");
+    await connection.messages.close("done");
+  });
+
+  it("refuses a connection that does not know the cookie, and says so", async () => {
+    const { listener, refused } = await node();
+    await expect(
+      open(listener.port, {
+        host: "127.0.0.1",
+        node: "posipaki",
+        cookie: "another cookie",
+        self: "probe@127.0.0.1",
+        creation: 7,
+        timeoutMs: 400,
+      }),
+    ).rejects.toThrow(/the cookie is not the one it knows/);
+    // The accepting side names the same fact from its end.
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    expect(refused.join(" ")).toContain("does not know the cookie");
+  });
+});
