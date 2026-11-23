@@ -4,8 +4,9 @@ A proof that a process outside the BEAM can speak Erlang's own distribution
 protocol: it asks epmd for a node's port, does the handshake with a cookie, and
 sends one message to a registered name. The answer is printed.
 
-No dependencies. One script, `src/index.ts`, built on `node:net` and
-`node:crypto`.
+One script, `src/index.ts`. The socket is a posipaki port channel
+(`socketChannel` from `posipaki/port/node`); the framing, the handshake and the
+term format are the script's own, over `Channel<Uint8Array>`.
 
 ## Run it
 

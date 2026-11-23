@@ -16,11 +16,13 @@
  *
  * The protocol is documented in erts' Distribution Protocol guide, and the
  * flags and opcodes below carry the names erts/emulator/beam/dist.h gives them.
- * No dependencies: node:net and node:crypto only.
+ * The socket is a posipaki port channel (`posipaki/port/node`); the framing, the
+ * handshake and the term format are this script's own, over `Channel<Uint8Array>`.
  */
 
 import { createHash, randomBytes } from "node:crypto";
-import { connect, type Socket } from "node:net";
+import type { Channel } from "posipaki/port";
+import { socketChannel } from "posipaki/port/node";
 
 // ── the wire's constants ───────────────────────────────────────────────
 
@@ -49,25 +51,28 @@ const trace = Boolean(process.env.POSIPAKI_EPMD_TRACE);
 /** How long one step waits for the peer before the script gives up. */
 const TIMEOUT_MS = 10_000;
 
-// ── a socket as bytes ──────────────────────────────────────────────────
+// ── packets on a channel ───────────────────────────────────────────────
 
-/** Buffers a socket so a caller asks for N bytes instead of watching events. */
-class Reader {
+/** Cuts a channel of bytes into packets by the length each one announces. */
+class Packets {
   private buffer: Buffer = Buffer.alloc(0);
   private waiting: Array<() => void> = [];
   private failure: Error | null = null;
 
-  constructor(socket: Socket) {
-    socket.on("data", (chunk: Buffer) => {
-      this.buffer = Buffer.concat([this.buffer, chunk]);
+  constructor(channel: Channel<Uint8Array>) {
+    channel.onFrame((frame) => {
+      this.buffer = Buffer.concat([
+        this.buffer,
+        Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength),
+      ]);
       this.wake();
     });
-    socket.on("error", (error: Error) => {
-      this.failure = this.failure ?? error;
+    channel.onError((error) => {
+      this.failure = this.failure ?? (error instanceof Error ? error : new Error(String(error)));
       this.wake();
     });
-    socket.on("close", () => {
-      this.failure = this.failure ?? new Error("the connection ended");
+    channel.onClose((reason) => {
+      this.failure = this.failure ?? new Error(reason);
       this.wake();
     });
   }
@@ -88,7 +93,7 @@ class Reader {
     return head;
   }
 
-  /** A packet with a 2-byte length: epmd, and every handshake message. */
+  /** A packet with a 2-byte length: epmd's requests, and every handshake message. */
   async packet2(): Promise<Buffer> {
     const length = await this.bytes(2);
     return this.bytes(length.readUInt16BE(0));
@@ -98,6 +103,15 @@ class Reader {
   async packet4(): Promise<Buffer> {
     const length = await this.bytes(4);
     return this.bytes(length.readUInt32BE(0));
+  }
+
+  /** Everything the peer sent before it closed. epmd answers without a length prefix. */
+  async untilClosed(): Promise<Buffer> {
+    while (this.failure === null) await new Promise<void>((resume) => this.waiting.push(resume));
+    if (this.buffer.length === 0) throw this.failure;
+    const all = this.buffer;
+    this.buffer = Buffer.alloc(0);
+    return all;
   }
 }
 
@@ -115,21 +129,13 @@ function frame4(body: Buffer): Buffer {
 
 // ── epmd: which port does the node listen on ───────────────────────────
 
-/** Everything the peer sends before it closes. epmd's answers carry no length prefix. */
-function readToClose(socket: Socket): Promise<Buffer> {
-  return new Promise<Buffer>((resolve, reject) => {
-    const chunks: Buffer[] = [];
-    socket.on("data", (chunk: Buffer) => chunks.push(chunk));
-    socket.on("error", (error: Error) => reject(error));
-    socket.on("close", () => resolve(Buffer.concat(chunks)));
-  });
-}
-
+/** Asks the port mapper on `host` which port the node called `name` listens on. */
 async function distPort(host: string, name: string): Promise<number> {
-  const socket = connect({ host, port: EPMD_PORT });
-  const answer = readToClose(socket);
-  socket.write(frame2(Buffer.concat([Buffer.from([EPMD_PORT2_REQ]), Buffer.from(name, "utf8")])));
-  const reply = await answer;
+  const channel = await socketChannel({ host, port: EPMD_PORT });
+  const packets = new Packets(channel);
+  const request = frame2(Buffer.concat([Buffer.from([EPMD_PORT2_REQ]), Buffer.from(name, "utf8")]));
+  await channel.send(request);
+  const reply = await packets.untilClosed();
   if (reply.length < 2) throw new Error(`epmd on ${host} answered ${reply.length} bytes and nothing else`);
   if (reply[0] !== EPMD_PORT2_RESP) {
     throw new Error(`epmd answered request ${reply[0]}, not ${EPMD_PORT2_RESP}`);
@@ -167,8 +173,8 @@ interface Peer {
 }
 
 async function handshake(
-  socket: Socket,
-  reader: Reader,
+  channel: Channel<Uint8Array>,
+  packets: Packets,
   options: HandshakeOptions,
 ): Promise<Peer> {
   const name = Buffer.from(options.self, "utf8");
@@ -178,23 +184,23 @@ async function handshake(
   hello.writeUInt32BE(FLAGS_LOW, 5);
   hello.writeUInt32BE(options.creation, 9);
   hello.writeUInt16BE(name.length, 13);
-  socket.write(frame2(Buffer.concat([hello, name])));
+  await channel.send(new Uint8Array(frame2(Buffer.concat([hello, name]))));
 
-  let status = await withTimeout(reader.packet2(), TIMEOUT_MS, "no status from the node");
+  let status = await withTimeout(packets.packet2(), TIMEOUT_MS, "no status from the node");
   while (status[0] === 0x73) {
     const text = status.subarray(1).toString("utf8");
     if (text === "ok" || text === "ok_simultaneous") break;
     if (text === "alive") {
       // A connection from this node name is still registered there: say that
       // ours replaces it rather than give up.
-      socket.write(frame2(Buffer.concat([Buffer.from([0x73]), Buffer.from("true")])));
-      status = await withTimeout(reader.packet2(), TIMEOUT_MS, "no second status");
+      await channel.send(new Uint8Array(frame2(Buffer.concat([Buffer.from([0x73]), Buffer.from("true")]))));
+      status = await withTimeout(packets.packet2(), TIMEOUT_MS, "no second status");
       continue;
     }
     throw new Error(`the node refused the handshake: ${text}`);
   }
 
-  const challenge = await withTimeout(reader.packet2(), TIMEOUT_MS, "no challenge");
+  const challenge = await withTimeout(packets.packet2(), TIMEOUT_MS, "no challenge");
   if (challenge[0] !== 0x4e) {
     throw new Error(`the node sent ${JSON.stringify(String.fromCharCode(challenge[0]))}, not a challenge`);
   }
@@ -208,11 +214,11 @@ async function handshake(
   reply[0] = 0x72; // 'r'
   reply.writeUInt32BE(ourChallenge, 1);
   digest(options.cookie, peerChallenge).copy(reply, 5);
-  socket.write(frame2(reply));
+  await channel.send(new Uint8Array(frame2(reply)));
 
   let ack: Buffer;
   try {
-    ack = await withTimeout(reader.packet2(), TIMEOUT_MS, "no answer to our digest");
+    ack = await withTimeout(packets.packet2(), TIMEOUT_MS, "no answer to our digest");
   } catch (error) {
     // erts sends nothing when the digest is wrong: it drops the connection.
     const why = error instanceof Error ? error.message : String(error);
@@ -473,9 +479,9 @@ function withTimeout<T>(work: Promise<T>, ms: number, reason: string): Promise<T
 }
 
 /** Reads packets until one carries a message for a process of ours. */
-async function firstMessage(reader: Reader): Promise<Term> {
+async function firstMessage(packets: Packets): Promise<Term> {
   for (;;) {
-    const packet = await reader.packet4();
+    const packet = await packets.packet4();
     if (trace) console.error(`received ${packet.toString("hex")}`);
     if (packet.length === 0) continue; // a tick, not a signal
     // No atom cache and no fragments are negotiated here, so erts prefixes every
@@ -549,10 +555,10 @@ function parseArgs(argv: string[]): Options {
 async function main(argv: string[]): Promise<void> {
   const options = parseArgs(argv);
   const port = await distPort(options.host, options.name);
-  const socket = connect({ host: options.host, port });
-  const reader = new Reader(socket);
+  const channel = await socketChannel({ host: options.host, port });
+  const packets = new Packets(channel);
   const creation = randomBytes(4).readUInt32BE(0) || 1;
-  const peer = await handshake(socket, reader, {
+  const peer = await handshake(channel, packets, {
     self: options.self,
     cookie: options.cookie,
     creation,
@@ -578,11 +584,11 @@ async function main(argv: string[]): Promise<void> {
     message,
   ]);
   if (trace) console.error(`sending ${packet.toString("hex")}`);
-  socket.write(frame4(packet));
+  await channel.send(new Uint8Array(frame4(packet)));
 
-  const answer = await withTimeout(firstMessage(reader), TIMEOUT_MS, "no answer to the message");
+  const answer = await withTimeout(firstMessage(packets), TIMEOUT_MS, "no answer to the message");
   console.log(render(answer));
-  socket.end();
+  await channel.close("done");
 }
 
 main(process.argv.slice(2)).catch((error: unknown) => {

@@ -7,11 +7,27 @@
     "type": "git",
     "url": "git+https://github.com/muromec/posipaki.git"
   },
+  "files": [
+    "dist"
+  ],
   "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
-    "posipaki-epmd": "./src/index.ts"
+    "posipaki-epmd": "./dist/index.js"
   },
   "scripts": {
+    "build": "bash ../../scripts/package-build.sh",
+    "prepack": "bash ../../scripts/package-build.sh",
     "start": "bun src/index.ts"
+  },
+  "dependencies": {
+    "posipaki": "^0.51.0"
   }
 }
