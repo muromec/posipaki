@@ -12,3 +12,4 @@ export {
   type ResponseHead,
 } from "./node/listener.js";
 export { BinaryPort, Utf8Port, type ProcessPortArgs } from "./node/process.js";
+export { socketChannel, type SocketOptions } from "./node/socket.js";
