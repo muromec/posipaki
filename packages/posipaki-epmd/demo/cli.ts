@@ -1,0 +1,55 @@
+// ── the command line, as an actor ───────────────────────────────────────────
+//
+// It forks the proxy for the name it was given, sends it one term, prints what comes back and exits. Nothing here
+// waits on a wire: the child's answer is this actor's own in-message, which is what an actor is for.
+
+import { defineActor, defineMessages } from "posipaki";
+
+import { clusterNamed, type NodeRef } from "../src/cluster.js";
+import { ErlangProxy, type EtfRaw } from "../src/proxy.js";
+import { binary, render, tuple } from "../src/terms.js";
+
+export interface CliArgs {
+  /** The node whose process is asked, by name. */
+  readonly node: NodeRef;
+  /** The name registered on that node. */
+  readonly processName: string;
+  /** The text the term will carry. */
+  readonly message: string;
+}
+
+interface Private {
+  readonly args: CliArgs;
+}
+
+/** Asks one name on one node, and ends with the answer printed. */
+export const Cli = defineActor({
+  name: "cli",
+  inMessages: defineMessages<EtfRaw>(),
+  outMessages: defineMessages<never>(),
+
+  setup(args: CliArgs): { public: null; private: Private } {
+    return { public: null, private: { args } };
+  },
+
+  async afterStart() {
+    const args = this.state.private.args;
+    const cluster = clusterNamed(args.node.cluster);
+    // The reference is one proxy's identity, so the pid minted from it here is the pid the child will send from: that
+    // is what makes the answer addressable at all.
+    const ourPid = cluster.address(args.node);
+    console.log(`${args.node.node}@${args.node.host} as ${args.processName}, our pid ${ourPid.id}`);
+
+    const child = await this.fork(ErlangProxy, { node: args.node, processName: args.processName }, {
+      name: args.processName,
+    });
+    await child.send({ type: "ETF_RAW", body: tuple(ourPid, binary(Buffer.from(args.message, "utf8"))) });
+  },
+
+  handlers: {
+    ETF_RAW(message: EtfRaw) {
+      console.log(render(message.body));
+      this.exit("the answer is printed");
+    },
+  },
+});
