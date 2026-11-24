@@ -90,6 +90,9 @@ Bottom up, one file each, each with its own tests:
 - `listen.ts` — the composition for the side that answers: a socket arrives, the handshake proves the cookie, and the
   channel is the caller's.
 - `network.ts` — reaching a pid: a node not yet reached is looked up in the mapper at its host and connected, which is
+- `proxy.ts` — a registered process on a node, as an actor here: `ETF_RAW` in goes to that name as a `DOP_REG_SEND`,
+  and what the node sends to the proxy's pid comes back out as `ETF_RAW`. One proxy, one pid; a term this side cannot
+  write is complained about, not fatal.
   how an answer to somebody else's pid arrives.
 - `args.ts`, `index.ts` — the command line, and the one-message client.
 - `mapper.ts`, `node.ts` — the two programs of the round trip: a mapper for this host, and a node that both accepts

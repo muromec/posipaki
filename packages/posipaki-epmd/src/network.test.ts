@@ -150,3 +150,15 @@ describe("incarnations", () => {
     await client.messages.close("done");
   });
 });
+
+describe("ref", () => {
+  it("gives each proxy its own pid, and never a second one for the same proxy", async () => {
+    const mine = network({ self: "me@127.0.0.1", cookie: COOKIE, creation: 7, locate: async () => 1 });
+    networks.push(mine);
+    const one = mine.ref(PEER);
+    const two = mine.ref(PEER);
+    expect(one.address()).toEqual({ kind: "pid", node: "me@127.0.0.1", id: 1, serial: 0, creation: 7 });
+    expect(one.address()).toBe(one.address());
+    expect(two.address().id).toBe(2);
+  });
+});

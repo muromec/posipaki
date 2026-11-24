@@ -16,6 +16,7 @@ import { open } from "./connection.js";
 import { epmdPort } from "./epmd.js";
 import type { Peer } from "./handshake.js";
 import type { WireMessage } from "./messages.js";
+import type { NodeRef } from "./proxy.js";
 import type { Term } from "./terms.js";
 
 /** A pid, as the wire writes it: a node, an id, a serial, and the incarnation of the node that minted it. */
@@ -45,6 +46,13 @@ export interface Network {
    * to the same node and a pid delivered over the wrong one of them.
    */
   adopt(peer: Peer, messages: Channel<WireMessage>): void;
+  /**
+   * The handle an actor is forked with: the node's name, the way to its channel, and a pid of this side to answer at.
+   *
+   * Every call mints a new pid, because a reply is addressed to one: two proxies on the same node are two pids, and a
+   * message for one of them must not reach the other.
+   */
+  ref(node: string): NodeRef;
   close(): Promise<void>;
 }
 
@@ -63,6 +71,7 @@ function splitNode(node: string): { name: string; host: string } {
 
 export function network(options: NetworkOptions): Network {
   const reached = new Map<string, Promise<Reached>>();
+  let nextId = 1;
   const locate =
     options.locate ??
     (async (node: string): Promise<number> => {
@@ -101,6 +110,19 @@ export function network(options: NetworkOptions): Network {
 
   return {
     channel: async (node: string) => (await connection(node)).messages,
+    ref(node: string): NodeRef {
+      // One ref is one proxy's identity, so its pid is minted once and answered the same way every time: a caller
+      // that puts it in a message and the actor that sends from it are then talking about the same address.
+      let own: PidTerm | null = null;
+      return {
+        name: node,
+        channel: async () => (await connection(node)).messages,
+        address: () => {
+          own ??= { kind: "pid", node: options.self, id: nextId++, serial: 0, creation: options.creation };
+          return own;
+        },
+      };
+    },
     adopt(peer: Peer, messages: Channel<WireMessage>): void {
       messages.onClose(() => reached.delete(peer.name));
       reached.set(peer.name, Promise.resolve({ messages, peer }));
