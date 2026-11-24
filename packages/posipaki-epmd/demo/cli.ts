@@ -34,14 +34,10 @@ export const Cli = defineActor({
     const proxy = await this.fork(ErlangProxy, { node: args.node, processName: args.processName }, {
       name: args.processName,
     });
+    // The pid belongs to the child: it minted it from its own identity when it came up, and asking the cluster for
+    // the pid of a process you hold answers the same one — no state read, and nothing to check for null.
+    const ourPid = cluster.pidOf(proxy);
 
-    // A fork answers its handle before the child has reported anything, so wait for the state it publishes: the pid
-    // the child answers at, which is what makes the reply addressable without either side guessing.
-
-    await proxy.ready();
-    const published = proxy.state;
-    if (published === null) throw new Error("the proxy came up without a pid");
-    const ourPid = published.erlangPid;
     console.log(`${args.node.node}@${args.node.host} as ${args.processName}, our pid ${ourPid.id}`);
 
     await proxy.send({ type: "ETF_RAW", body: tuple(ourPid, binary(Buffer.from(args.message, "utf8"))) });
