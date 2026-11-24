@@ -6,16 +6,15 @@
  *   bun demo/mapper.ts
  *   bun demo/node.ts --name probe@192.168.88.27 --cookie pocookie --say robot@192.168.88.20 --to relay
  *
- * Every connection is an `ErlangNode`, serving one process under this node's own name: what the peer addresses arrives
- * at that process as a term, and what the process answers leaves as an address. This file only wires the two.
+ * `cluster.node` is the answering side — a listener, a registration, and the one process it serves — and the proxy is
+ * the asking side. Both sides of the protocol, without a process standing between the frames and the tables.
  */
 
 import { randomBytes } from "node:crypto";
 
 import { installCluster, makeCluster, refFromName } from "../src/cluster.js";
-import { epmdRegister } from "../src/epmd.js";
-import { listen } from "../src/listen.js";
-import { ErlangNode } from "../src/served.js";
+import { ErlangProxy, type EtfRaw } from "../src/proxy.js";
+import { show } from "../src/processes.js";
 import { binary, tuple } from "../src/terms.js";
 import { Answerer } from "./answerer.js";
 
@@ -49,58 +48,35 @@ async function main(): Promise<void> {
   const creation = randomBytes(4).readUInt32BE(0) || 1;
 
   const cluster = installCluster(makeCluster({ name: "demo", self, cookie, creation }));
-
-  // One process, served on every connection and the sender of what this node says: an answer comes back to the pid,
-  // and this is the process that pid was minted for.
-  const answerer = await Answerer.spawn(undefined);
-  const ourPid = cluster.pidOf(answerer);
-
-  const node = await listen({ self, cookie, creation, host, port }, {
-    onConnection(peer, messages) {
-      // A connection that arrived is the way to that node: a pid on it is answered over this, not over a new one.
-      cluster.adopt(peer, messages);
-      console.log(`${peer.name} connected (incarnation ${peer.creation})`);
-      void ErlangNode.spawn({
-        node: refFromName(peer.name, cluster.name),
-        peer,
-        messages,
-        serves: [{ name: localPart(self), process: answerer }],
-      });
-    },
-    onRefused(error) {
-      console.log(`refused a connection: ${error.message}`);
-    },
-  });
-
   const [mapperHost, mapperPort] = mapperAt.split(":");
-  const registration = await epmdRegister({
-    host: mapperHost ?? "127.0.0.1",
-    mapperPort: Number(mapperPort ?? 4369),
-    name: localPart(self),
-    port: node.port,
+
+  const node = await cluster.node({
+    host,
+    port,
+    mapper: { host: mapperHost ?? "127.0.0.1", port: Number(mapperPort ?? 4369) },
   });
+  // One process, served under this node's name and reachable by its pid: what a peer addresses arrives there.
+  const answerer = await Answerer.spawn(undefined);
+  node.serve(localPart(self), answerer);
   console.log(`${self} listening on ${host}:${node.port}, registered with ${mapperAt}`);
 
   if (say !== null) {
     const where = refFromName(say, cluster.name);
-    const channel = await cluster.channel(where);
-    // What comes back on a connection this side opened arrives the same way as what arrives on an accepted one: the
-    // same process is served on both.
-    void ErlangNode.spawn({ node: where, messages: channel, serves: [{ name: localPart(self), process: answerer }] });
+    // The asking side: a proxy speaks for one name on that node, and what comes back is its out-message.
+    const proxy = await ErlangProxy.spawn(
+      { node: where, processName: to },
+      { toParent: (heard: EtfRaw) => console.log(`  ${to} answered: ${show(heard.body)}`) },
+    );
     console.log(`saying ${JSON.stringify(message)} to ${to} on ${say}`);
-    await channel.send({
-      kind: "message",
-      control: { kind: "regSend", from: ourPid, to },
-      payload: tuple(ourPid, binary(Buffer.from(message, "utf8"))),
-    });
+    // The term carries this process's own pid, so whoever it reaches has somewhere to answer.
+    proxy.send({ type: "ETF_RAW", body: tuple(cluster.pidOf(answerer), binary(Buffer.from(message, "utf8"))) });
   }
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       void (async () => {
-        await cluster.close();
         await node.close();
-        await registration.close();
+        await cluster.close();
         process.exit(0);
       })();
     });

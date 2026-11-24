@@ -4,8 +4,11 @@
 // announce, `terms` reads and writes BEAM terms, `control` names the control message a distribution message carries,
 // `messages` says what a frame is, `handshake` proves the cookie from either side, `epmd` is the port mapper at both
 // ends, `connection` and `listen` are the two roles of a connection, `cluster` is the table of the nodes this runtime
-// can reach — and of the pids its own processes answer at — and `proxy` is an actor that stands for a process on one
-// of them.
+// can reach — and of the pids its own processes answer at, and `node` is this side as a node: a listener, a
+// registration, and the processes it serves.
+//
+// Two actors sit on top: `proxy` stands for a process on another node, and a served process is handed a term as
+// `ETF_RAW` and answers with one.
 //
 // The demos are in `demo/`: they are the only things here that decide anything about a command line.
 
@@ -77,5 +80,15 @@ export {
 } from "./processes.js";
 
 export { ErlangProxy, samePid, type EtfRaw, type ProxyArgs } from "./proxy.js";
+
+export {
+  startNode,
+  type ErlangNode,
+  type EtfAnswered,
+  type EtfAsked,
+  type NodeFacts,
+  type NodeOptions,
+  type ServedProcess,
+} from "./node.js";
 
 export { withTimeout } from "./timeout.js";

@@ -30,6 +30,10 @@ function fakeCluster() {
     processOf: () => null,
     send: async () => undefined,
     adopt: () => undefined,
+    // This double is a cluster a test addresses, not one that serves: nothing asks it for a node.
+    node: async () => {
+      throw new Error("a double starts no node");
+    },
     close: async () => undefined,
   };
   pair.far.onFrame((said: WireMessage) => written.push(said));

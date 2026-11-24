@@ -1,11 +1,13 @@
-// ── a cluster: the nodes this runtime can reach ─────────────────────────────
+// ── a cluster: the nodes this runtime can reach, and the one it is ──────────
 //
-// A node is *named*, never held: `NodeRef` is a cluster and a node in it, and this is the thing that turns a name into
-// a connection. Three jobs, and they are all here because they are all about the same table:
+// A node of another runtime is *named*, never held: `NodeRef` is a cluster and a node in it, and this is the thing
+// that turns a name into a connection. Four jobs, and they are all here because they are all about the same table:
 //
 //   discovery   where a node listens — the mapper at its host, or a caller's own answer
 //   multiplex   one channel per node, shared by every proxy that addresses it
 //   addressing  the pids this side answers at, one per proxy, minted here so two cannot collide
+//   serving     this side as a node — `node()` listens, registers with a mapper, and reads every connection, so a peer
+//               reaches the processes here
 //
 // A connection is opened on first use and kept. A node that restarts is a new incarnation, and a pid from before it is
 // refused rather than delivered to whoever answers now.
@@ -17,6 +19,7 @@ import { open } from "./connection.js";
 import { epmdPort } from "./epmd.js";
 import type { Peer } from "./handshake.js";
 import type { WireMessage } from "./messages.js";
+import { startNode, type ErlangNode, type NodeOptions } from "./node.js";
 import type { Term } from "./terms.js";
 
 /** The cluster a node is looked up in when a reference names none. */
@@ -93,6 +96,8 @@ export interface Cluster {
   send(pid: PidTerm, payload: Term): Promise<void>;
   /** Says a connection this side did not open — one that arrived — so a pid on that node uses it. */
   adopt(peer: Peer, messages: Channel<WireMessage>): void;
+  /** Starts a node under this runtime's name: it listens, registers with the mapper, and serves what is given to it. */
+  node(options?: NodeOptions): Promise<ErlangNode>;
   close(): Promise<void>;
 }
 
@@ -110,6 +115,8 @@ export function makeCluster(options: ClusterOptions): Cluster {
   const name = options.name ?? DEFAULT_CLUSTER;
   const reached = new Map<string, Promise<Reached>>();
   let nextId = 1;
+  /** How to read a connection as this node: set when one is started, so every way a connection is made is served. */
+  let serving: ((messages: Channel<WireMessage>) => void) | null = null;
 
   /** The pid each process answers at, by the symbol the framework gave it, and who each pid names. */
   const pids = new Map<symbol, PidTerm>();
@@ -141,6 +148,8 @@ export function makeCluster(options: ClusterOptions): Cluster {
         ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       });
       opened.messages.onClose(() => reached.delete(key));
+      // A connection this side opened is read as well: a node answers on it, not on a second one.
+      serving?.(opened.messages);
       return { messages: opened.messages, peer: opened.peer };
     })();
     const guarded = made.catch((error: unknown) => {
@@ -151,7 +160,7 @@ export function makeCluster(options: ClusterOptions): Cluster {
     return guarded;
   };
 
-  return {
+  const made: Cluster = {
     name,
     channel: async (ref: NodeRef) => (await connection(ref)).messages,
     pidOf(process: ProcessHandle): PidTerm {
@@ -171,6 +180,11 @@ export function makeCluster(options: ClusterOptions): Cluster {
       const ref = refOf({ kind: "pid", node: peer.name, id: 0, serial: 0, creation: peer.creation }, name);
       reached.set(nodeName(ref), Promise.resolve({ messages, peer }));
       reached.set(peer.name, Promise.resolve({ messages, peer }));
+      // A connection a peer opened is the way to it until it ends: after that a pid on that node opens a new one.
+      messages.onClose(() => {
+        reached.delete(nodeName(ref));
+        reached.delete(peer.name);
+      });
     },
     async send(pid: PidTerm, payload: Term): Promise<void> {
       const where = await connection(refOf(pid, name));
@@ -182,15 +196,36 @@ export function makeCluster(options: ClusterOptions): Cluster {
       }
       await where.messages.send({ kind: "message", control: { kind: "send", to: pid }, payload });
     },
+    async node(nodeOptions: NodeOptions = {}): Promise<ErlangNode> {
+      if (serving !== null) {
+        throw new Error(`the cluster ${name} already runs a node`);
+      }
+      const started = await startNode(
+        {
+          cluster: made,
+          self: options.self,
+          cookie: options.cookie,
+          creation: options.creation,
+          ...(options.flags === undefined ? {} : { flags: options.flags }),
+          ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
+        },
+        nodeOptions,
+      );
+      // From here on every connection is read as this node, however it was made: by a peer that arrived, or by this
+      // side reaching out and its answer coming back on the same one.
+      serving = (messages) => started.attach(messages);
+      return started;
+    },
     async close(): Promise<void> {
       const all = [...reached.values()];
       reached.clear();
-      for (const made of all) {
-        const found = await made.catch(() => null);
+      for (const pending of all) {
+        const found = await pending.catch(() => null);
         await found?.messages.close("this side is done").catch(() => undefined);
       }
     },
   };
+  return made;
 }
 
 // ── the clusters of this runtime ───────────────────────────────────────────

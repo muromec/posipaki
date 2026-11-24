@@ -1,0 +1,244 @@
+// ── a node, from this side: the processes this side serves ──────────────────
+//
+// The mirror of the proxy. A proxy is one process of another node, seen from here; a node is this side, seen from
+// there: a listener, the registration that makes it findable in a mapper, and the processes it answers for.
+//
+// It is not a process. Nothing waits in a mailbox for a frame — a connection is read where its frames arrive — and a
+// served process is an ordinary actor: it hears one term as an in-message, `{from, body}`, and answers with one
+// out-message, `{to, body}`.
+//
+// The two tables are the whole of the routing: a name a node sends to, and a pid the cluster minted for a process this
+// node serves. A pid for a process it does not serve names nobody here, however well the cluster knows it.
+
+import type { Message, SenderInfo } from "posipaki";
+import type { Channel } from "posipaki/port";
+
+import type { Cluster, PidTerm } from "./cluster.js";
+import type { Control } from "./control.js";
+import { epmdRegister, type Registration } from "./epmd.js";
+import { listen, type Listener } from "./listen.js";
+import type { WireMessage } from "./messages.js";
+import { forHere, forWire, type RemoteProcess, type VisibleTerm } from "./processes.js";
+import { atom, type Term } from "./terms.js";
+
+/** A term from a node, and who asked. `from` is absent when the wire did not say: a send addressed to us carries none. */
+export interface EtfAsked {
+  type: "ETF_RAW";
+  from?: RemoteProcess;
+  body: VisibleTerm;
+}
+
+/** A term to a process, as a served process answers. */
+export interface EtfAnswered {
+  type: "ETF_RAW";
+  to: RemoteProcess;
+  body: VisibleTerm;
+}
+
+/**
+ * A process this node serves, by the handle its own framework gave it.
+ *
+ * `send` is where a term from a node arrives. The process's own out-messages leave through `subscribe("message")`,
+ * together with its EXIT, which travels on the same channel and is told apart by type.
+ */
+export interface ServedProcess {
+  readonly pname: string;
+  readonly id: symbol;
+  send(message: Message): unknown;
+  subscribe(channel: "message", cb: (message: Message, from: SenderInfo) => void): () => void;
+}
+
+/** What a node is, before it has a port: the identity its connections are proved with, and the cluster it belongs to. */
+export interface NodeFacts {
+  /** The cluster this node mints pids in, and sends through when a served process answers a pid of another node. */
+  readonly cluster: Cluster;
+  /** The name this node answers to on the wire, `name@host`: the same one every pid it mints carries. */
+  readonly self: string;
+  readonly cookie: string;
+  /** This node's incarnation, which every pid it writes carries. */
+  readonly creation: number;
+  readonly flags?: readonly [number, number];
+  readonly timeoutMs?: number;
+}
+
+export interface NodeOptions {
+  /** The port to listen on. Default 0: the OS picks one, and the handle answers it. */
+  readonly port?: number;
+  /** The interface to bind. Default `0.0.0.0` — a node bound to loopback is reachable from this host only. */
+  readonly host?: string;
+  /** Where to register the node. Absent leaves it findable only by whoever is told the port. */
+  readonly mapper?: { readonly host: string; readonly port: number };
+}
+
+/** A node this side runs: what it answers to, where it listens, and the processes it serves. */
+export interface ErlangNode {
+  /** The name it answers to on the wire, `name@host`. */
+  readonly name: string;
+  readonly port: number;
+  /** Serves a process under a name: what another node addresses it by. A name already served is refused. */
+  serve(name: string, process: ServedProcess): void;
+  /** Serves the processes on a connection whose frames nobody else reads — one this side opened. */
+  attach(messages: Channel<WireMessage>): void;
+  close(): Promise<void>;
+}
+
+/** Starts a node: listens, registers with the mapper when one is named, and serves what `serve` is given. */
+export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Promise<ErlangNode> {
+  const cluster = facts.cluster;
+  const byName = new Map<string, ServedProcess>();
+  const byId = new Map<symbol, ServedProcess>();
+  /** How to stop watching each served process's out-messages, by the process's own id. */
+  const leaving = new Map<symbol, () => void>();
+  /** How to stop reading each connection's frames. */
+  const reading = new Map<Channel<WireMessage>, () => void>();
+
+  /** One pid of another node, and the way back to it: whatever connection reaches that node carries the answer. */
+  const remote = (pid: PidTerm): RemoteProcess => ({
+    pid,
+    send: (body) => cluster.send(pid, forWire(body, (handle) => cluster.pidOf(handle))),
+  });
+
+  /** The process a pid names, when this node serves it. A pid of a process it does not serve names nobody here. */
+  const byPid = (address: Term): ServedProcess | null => {
+    if (address.kind !== "pid") return null;
+    const holder = cluster.processOf(address);
+    return holder === null ? null : (byId.get(holder.id) ?? null);
+  };
+
+  const delivered = (said: WireMessage): void => {
+    if (said.kind !== "message") return;
+    const control = said.control;
+    if (control.kind !== "send" && control.kind !== "regSend") return;
+
+    const process = control.kind === "regSend" ? (byName.get(control.to) ?? null) : byPid(control.to);
+    if (process === null) {
+      // erts drops a message for a name nobody answers without a word. This side says it once and keeps the
+      // connection: another node's bookkeeping is not a reason to fail a wire.
+      console.error(`erlang-node: ${facts.self} was addressed ${described(control)}, which serves nobody here`);
+      return;
+    }
+
+    const asked: EtfAsked = {
+      type: "ETF_RAW",
+      ...(control.kind === "regSend" && control.from.kind === "pid" ? { from: remote(control.from) } : {}),
+      body: forHere(said.payload ?? atom(""), {
+        here: (pid) => cluster.processOf(pid),
+        there: (pid) => remote(pid),
+      }),
+    };
+    void process.send(asked);
+  };
+
+  const attach = (messages: Channel<WireMessage>): void => {
+    if (reading.has(messages)) return;
+    reading.set(messages, messages.onFrame(delivered));
+    messages.onClose(() => reading.delete(messages));
+  };
+
+  const forget = (process: ServedProcess): void => {
+    for (const [name, served] of byName) {
+      if (served.id === process.id) byName.delete(name);
+    }
+    byId.delete(process.id);
+    leaving.get(process.id)?.();
+    leaving.delete(process.id);
+  };
+
+  const serve = (name: string, process: ServedProcess): void => {
+    const known = byName.get(name);
+    if (known !== undefined && known.id !== process.id) {
+      throw new Error(`${facts.self} already serves ${name} with ${known.pname}`);
+    }
+    byName.set(name, process);
+    if (byId.has(process.id)) return;
+
+    byId.set(process.id, process);
+    // The address a node will write for this process, minted now: the cluster answers by it, and this node looks it up.
+    cluster.pidOf({ pname: process.pname, id: process.id });
+    leaving.set(
+      process.id,
+      process.subscribe("message", (message) => {
+        if (message.type === "EXIT") {
+          forget(process);
+          return;
+        }
+        if (!isAnswer(message)) return;
+        void message.to.send(message.body);
+      }),
+    );
+  };
+
+  const listener: Listener = await listen(
+    {
+      self: facts.self,
+      cookie: facts.cookie,
+      creation: facts.creation,
+      ...(options.host === undefined ? {} : { host: options.host }),
+      ...(options.port === undefined ? {} : { port: options.port }),
+      ...(facts.flags === undefined ? {} : { flags: facts.flags }),
+      ...(facts.timeoutMs === undefined ? {} : { timeoutMs: facts.timeoutMs }),
+    },
+    {
+      onConnection(peer, messages) {
+        // A connection that arrived is how a pid on that node is answered: the cluster sends over this one rather than
+        // opening a second, and this node reads what comes back.
+        cluster.adopt(peer, messages);
+        attach(messages);
+      },
+      onRefused(error) {
+        console.error(`erlang-node: ${facts.self} refused a connection: ${error.message}`);
+      },
+    },
+  );
+
+  let registration: Registration | null = null;
+  try {
+    if (options.mapper !== undefined) {
+      registration = await epmdRegister({
+        host: options.mapper.host,
+        mapperPort: options.mapper.port,
+        name: localPart(facts.self),
+        port: listener.port,
+      });
+    }
+  } catch (error) {
+    await listener.close();
+    throw error;
+  }
+
+  return {
+    name: facts.self,
+    port: listener.port,
+    serve,
+    attach,
+    async close(): Promise<void> {
+      await registration?.close();
+      // Unregistered first, so nothing new arrives while the connections are let go.
+      for (const stop of reading.values()) stop();
+      reading.clear();
+      for (const stop of leaving.values()) stop();
+      leaving.clear();
+      byName.clear();
+      byId.clear();
+      await listener.close();
+    },
+  };
+}
+
+/** Whether an out-message of a served process is a term to send. Its EXIT arrives on the same channel. */
+function isAnswer(message: Message): message is EtfAnswered {
+  return message.type === "ETF_RAW";
+}
+
+/** How an address reads in a refusal. */
+function described(control: Control): string {
+  if (control.kind === "regSend") return `the name ${control.to}`;
+  if (control.kind !== "send" || control.to.kind !== "pid") return "an address this side does not read";
+  return `the pid ${control.to.node}.${control.to.id}`;
+}
+
+/** The part of a node name the mapper knows: `probe` for `probe@192.168.88.27`. */
+function localPart(self: string): string {
+  const at = self.indexOf("@");
+  return at <= 0 ? self : self.slice(0, at);
+}

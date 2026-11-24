@@ -1,34 +1,56 @@
 // ── the process a node is served by ─────────────────────────────────────────
 //
-// What a served process looks like from inside: it is handed a term and who asked, it prints them, and it answers by
-// sending a term back to a reference. It never sees an address — and the reference it answers need not be the asker:
-// a term can carry another process, and this one answers that.
+// What a served process looks like from inside: it is handed a term and who asked, it prints them, and it answers the
+// process the term itself names — not the one that asked — which is what makes an answer from one node reach a second
+// one. It never sees an address.
+//
+// It answers one word. Two of these facing each other would otherwise answer each other for ever, each term naming the
+// other side: the same rule `robot.erl` keeps, and for the same reason.
 
 import { defineActor, defineMessages } from "posipaki";
 
-import { processTerm, remoteTerm, show, type VisibleTerm } from "../src/processes.js";
-import type { RemoteProcess } from "../src/processes.js";
-import type { Asked } from "../src/served.js";
+import type { EtfAnswered, EtfAsked } from "../src/node.js";
+import { processTerm, remoteTerm, show, type RemoteProcess, type VisibleTerm } from "../src/processes.js";
 import { atom, binary, tuple } from "../src/terms.js";
 
-/** The process a term names, when it names one: `{Pid, …}` is how a peer hands over who to answer. */
+/** The word the term carries, when it carries one: `{Pid, Text}` is how a peer asks. */
+function wordIn(body: VisibleTerm): string | null {
+  if (body.kind !== "tuple") return null;
+  const last = body.items[body.items.length - 1];
+  return last?.kind === "binary" ? last.bytes.toString("utf8") : null;
+}
+
+/** The process a term names, when it names one: the first item of `{Pid, …}`. */
 function namedIn(body: VisibleTerm): RemoteProcess | null {
   if (body.kind !== "tuple") return null;
   const first = body.items[0];
   return first?.kind === "remote" ? first.process : null;
 }
 
-/** Says what it was asked, and answers the process it names, or the asker when it names none. */
+/** Says what it was asked, and answers the process the term names when the word is `hi`. */
 export const Answerer = defineActor({
   name: "answerer",
-  inMessages: defineMessages<Asked>(),
-  outMessages: defineMessages<never>(),
+  inMessages: defineMessages<EtfAsked>(),
+  outMessages: defineMessages<EtfAnswered>(),
   handlers: {
-    ETF_RAW(asked: Asked) {
-      console.log(`  asked by ${show(remoteTerm(asked.from))}: ${show(asked.body)}`);
-      const to = namedIn(asked.body) ?? asked.from;
+    ETF_RAW(asked: EtfAsked) {
+      const askedBy = asked.from === undefined ? "nobody the wire named" : show(remoteTerm(asked.from));
+      console.log(`  asked by ${askedBy}: ${show(asked.body)}`);
+      const to = namedIn(asked.body);
+      if (to === null) {
+        console.log("  and nothing to answer: the term names no process");
+        return;
+      }
+      if (wordIn(asked.body) !== "hi") {
+        console.log("  and nothing to answer: only a hi is answered");
+        return;
+      }
       const words = process.env.POSIPAKI_WORDS ?? "answering";
-      void to.send(tuple(processTerm(this.self), binary(Buffer.from(words, "utf8")), atom("done")));
+      this.emit({
+        type: "ETF_RAW",
+        to,
+        body: tuple(processTerm(this.self), binary(Buffer.from(words, "utf8")), atom("done")),
+      });
     },
   },
 });
