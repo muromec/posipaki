@@ -47,6 +47,8 @@ interface Private {
   readonly cluster: Cluster;
   readonly pid: PidTerm;
   readonly messages: Channel<WireMessage>;
+  /** The pid of the process this proxy speaks for: the one the caller put in its term, and the one an answer names. */
+  readonly caller: PidTerm | null;
   stopReading: () => void;
 }
 
@@ -74,9 +76,15 @@ export const ErlangProxy = defineActor({
       node: args.node,
       processName: args.processName,
       cluster,
-      // One pid per proxy: a reply is addressed to it, and one connection carries every proxy of that node.
-      // The pid belongs to this process: minted from its own identity, so whoever holds this actor can ask for it.
+      // This proxy's own pid, from its own identity: the address a node answers when it is this process it was told
+      // about.
       pid: cluster.pidOf(this.self),
+      // And the caller's, because the caller is the one that wants the answer: it puts its own pid in the term it
+      // sends, so a reply comes back addressed to a process this connection does not belong to.
+      caller:
+        this.ctx.parentName === null || this.ctx.parentId === null
+          ? null
+          : cluster.pidOf({ pname: this.ctx.parentName, id: this.ctx.parentId }),
       messages,
       stopReading: () => undefined,
     };
@@ -84,8 +92,8 @@ export const ErlangProxy = defineActor({
     // Subscribed before the actor is up, so a reply that follows the first send cannot arrive before a reader exists.
     held.stopReading = messages.onFrame((said: WireMessage) => {
       if (said.kind !== "message" || said.payload === null) return;
-      if (said.control.kind !== "send" || !samePid(said.control.to, held.pid)) return;
-      this.emit({ type: "ETF_RAW", body: said.payload });
+      if (said.control.kind !== "send") return;
+      if (named(said.control.to, held)) this.emit({ type: "ETF_RAW", body: said.payload });
     });
     messages.onClose((reason) => this.exit(`the connection to ${args.node.node} ended: ${reason}`));
 
@@ -121,3 +129,8 @@ export const ErlangProxy = defineActor({
     },
   },
 });
+
+/** Whether an address is one this proxy speaks for: its own, or the caller's. */
+function named(to: Term, held: Private): boolean {
+  return samePid(to, held.pid) || (held.caller !== null && samePid(to, held.caller));
+}

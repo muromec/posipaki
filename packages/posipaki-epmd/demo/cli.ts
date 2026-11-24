@@ -34,9 +34,9 @@ export const Cli = defineActor({
     const proxy = await this.fork(ErlangProxy, { node: args.node, processName: args.processName }, {
       name: args.processName,
     });
-    // The pid belongs to the child: it minted it from its own identity when it came up, and asking the cluster for
-    // the pid of a process you hold answers the same one — no state read, and nothing to check for null.
-    const ourPid = cluster.pidOf(proxy);
+    // The caller puts its *own* pid in the term, because the answer is for this process: it comes back to this pid, and
+    // the child forwards it — a message addressed to its parent — when it arrives on its connection.
+    const ourPid = cluster.pidOf(this.self);
 
     console.log(`${args.node.node}@${args.node.host} as ${args.processName}, our pid ${ourPid.id}`);
 
