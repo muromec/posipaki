@@ -15,7 +15,7 @@ import type { Channel } from "posipaki/port";
 
 import type { Cluster, PidTerm } from "./cluster.js";
 import type { Control } from "./control.js";
-import { epmdRegister, type Registration } from "./epmd.js";
+import type { Registration } from "./epmd.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
 import { forHere, forWire, type RemoteProcess, type VisibleTerm } from "./processes.js";
@@ -48,6 +48,9 @@ export interface ServedProcess {
   subscribe(channel: "message", cb: (message: Message, from: SenderInfo) => void): () => void;
 }
 
+/** How a node tells a mapper where it listens, or `false` for a node nobody can look up. */
+export type Announce = ((port: number) => Promise<Registration>) | false;
+
 /** What a node is, before it has a port: the identity its connections are proved with, and the cluster it belongs to. */
 export interface NodeFacts {
   /** The cluster this node mints pids in, and sends through when a served process answers a pid of another node. */
@@ -57,6 +60,8 @@ export interface NodeFacts {
   readonly cookie: string;
   /** This node's incarnation, which every pid it writes carries. */
   readonly creation: number;
+  /** How this node makes itself findable: what a peer's lookup asks its host's mapper, or `false` for neither. */
+  readonly announce: Announce;
   readonly flags?: readonly [number, number];
   readonly timeoutMs?: number;
 }
@@ -66,8 +71,6 @@ export interface NodeOptions {
   readonly port?: number;
   /** The interface to bind. Default `0.0.0.0` — a node bound to loopback is reachable from this host only. */
   readonly host?: string;
-  /** Where to register the node. Absent leaves it findable only by whoever is told the port. */
-  readonly mapper?: { readonly host: string; readonly port: number };
 }
 
 /** A node this side runs: what it answers to, where it listens, and the processes it serves. */
@@ -82,7 +85,7 @@ export interface ErlangNode {
   close(): Promise<void>;
 }
 
-/** Starts a node: listens, registers with the mapper when one is named, and serves what `serve` is given. */
+/** Starts a node: listens, announces itself where it is told, and serves what `serve` is given. */
 export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Promise<ErlangNode> {
   const cluster = facts.cluster;
   const byName = new Map<string, ServedProcess>();
@@ -193,14 +196,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
 
   let registration: Registration | null = null;
   try {
-    if (options.mapper !== undefined) {
-      registration = await epmdRegister({
-        host: options.mapper.host,
-        mapperPort: options.mapper.port,
-        name: localPart(facts.self),
-        port: listener.port,
-      });
-    }
+    registration = facts.announce === false ? null : await facts.announce(listener.port);
   } catch (error) {
     await listener.close();
     throw error;

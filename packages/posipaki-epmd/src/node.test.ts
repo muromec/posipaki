@@ -67,7 +67,8 @@ afterEach(async () => {
 });
 
 async function serving(): Promise<Serving> {
-  const cluster = installCluster(makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7 }));
+  // A node is only asked where to listen: a test names the port itself and leaves the box's mapper out of it.
+  const cluster = installCluster(makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7, announce: false }));
   const node = await cluster.node({ host: "127.0.0.1", port: 0 });
   const answerer = await Answerer.spawn(undefined);
   node.serve("answer", answerer);
@@ -181,14 +182,40 @@ describe("a node", () => {
     expect(() => node.serve("answer", other)).toThrow(/already serves answer/);
   });
 
+  it("announces itself under the name it answers to, and lets the registration go on close", async () => {
+    const told: Array<{ node: string; host: string; port: number }> = [];
+    const closed: string[] = [];
+    const cluster = installCluster(
+      makeCluster({
+        name: CLUSTER,
+        self: SELF,
+        cookie: COOKIE,
+        creation: 7,
+        announce: async (ref, port) => {
+          told.push({ node: ref.node, host: ref.host, port });
+          return {
+            close: async () => {
+              closed.push("registration");
+            },
+          };
+        },
+      }),
+    );
+    const node = await cluster.node({ host: "127.0.0.1", port: 0 });
+    // The host is the one its own name carries: what a peer's lookup asks, answered by the same mapper.
+    expect(told).toEqual([{ node: "probe", host: "127.0.0.1", port: node.port }]);
+    await node.close();
+    expect(closed).toEqual(["registration"]);
+  });
+
   it("runs one node per cluster", async () => {
     const { cluster } = await serving();
     await expect(cluster.node({ host: "127.0.0.1", port: 0 })).rejects.toThrow(/already runs a node/);
   });
 
   it("stops listening when it is closed", async () => {
-    const cluster = installCluster(makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7 }));
-    const node = await startNode({ cluster, self: SELF, cookie: COOKIE, creation: 7 }, { host: "127.0.0.1", port: 0 });
+    const cluster = installCluster(makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7, announce: false }));
+    const node = await startNode({ cluster, self: SELF, cookie: COOKIE, creation: 7, announce: false }, { host: "127.0.0.1", port: 0 });
     const port = node.port;
     await node.close();
     await expect(open(port, { host: "127.0.0.1", node: "probe", cookie: COOKIE, self: PEER, creation: 9 })).rejects.toThrow();

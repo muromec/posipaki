@@ -16,10 +16,10 @@ import type { Channel } from "posipaki/port";
 import { socketChannel } from "posipaki/port/node";
 
 import { open } from "./connection.js";
-import { epmdPort } from "./epmd.js";
+import { epmdPort, epmdRegister, type Registration } from "./epmd.js";
 import type { Peer } from "./handshake.js";
 import type { WireMessage } from "./messages.js";
-import { startNode, type ErlangNode, type NodeOptions } from "./node.js";
+import { startNode, type Announce, type ErlangNode, type NodeOptions } from "./node.js";
 import type { Term } from "./terms.js";
 
 /** The cluster a node is looked up in when a reference names none. */
@@ -70,6 +70,13 @@ export interface ClusterOptions {
   readonly timeoutMs?: number;
   /** Where a node is. Default: the mapper at the node's host. */
   readonly locate?: (ref: NodeRef) => Promise<number>;
+  /**
+   * How this runtime's own node is announced, given its reference and the port it listens on.
+   *
+   * Default: the mapper at that reference's host, the same one `locate` asks — the two directions of one fact.
+   * `false` runs a node nobody can look up, for a caller that names the port itself.
+   */
+  readonly announce?: ((ref: NodeRef, port: number) => Promise<Registration>) | false;
 }
 
 /** What this runtime knows a process by: its name in the tree, and the symbol the framework gave it. */
@@ -109,6 +116,19 @@ export type PidTerm = Extract<Term, { kind: "pid" }>;
 interface Reached {
   readonly messages: Channel<WireMessage>;
   readonly peer: Peer;
+}
+
+/** How a cluster's node announces itself: the cluster's own way of telling, or the mapper at the node's host. */
+function announcing(name: string, options: ClusterOptions): Announce {
+  if (options.announce === false) return false;
+  const ref = refFromName(options.self, name);
+  const tell = options.announce ?? mapperAt;
+  return async (port: number) => tell(ref, port);
+}
+
+/** The mapper at a node's own host: the one `locate` asks when it looks a node up. */
+function mapperAt(ref: NodeRef, port: number): Promise<Registration> {
+  return epmdRegister({ host: ref.host, name: ref.node, port });
 }
 
 export function makeCluster(options: ClusterOptions): Cluster {
@@ -200,12 +220,14 @@ export function makeCluster(options: ClusterOptions): Cluster {
       if (serving !== null) {
         throw new Error(`the cluster ${name} already runs a node`);
       }
+      const announce = announcing(name, options);
       const started = await startNode(
         {
           cluster: made,
           self: options.self,
           cookie: options.cookie,
           creation: options.creation,
+          announce,
           ...(options.flags === undefined ? {} : { flags: options.flags }),
           ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
         },

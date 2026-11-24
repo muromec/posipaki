@@ -41,24 +41,17 @@ async function main(): Promise<void> {
   const cookie = flag(argv, "cookie");
   const host = flag(argv, "host", "0.0.0.0");
   const port = Number(flag(argv, "port", "0"));
-  const mapperAt = flag(argv, "mapper", "127.0.0.1:4369");
   const say = argv.includes("--say") ? flag(argv, "say") : null;
   const to = flag(argv, "to", "relay");
   const message = flag(argv, "message", "hi");
   const creation = randomBytes(4).readUInt32BE(0) || 1;
 
   const cluster = installCluster(makeCluster({ name: "demo", self, cookie, creation }));
-  const [mapperHost, mapperPort] = mapperAt.split(":");
-
-  const node = await cluster.node({
-    host,
-    port,
-    mapper: { host: mapperHost ?? "127.0.0.1", port: Number(mapperPort ?? 4369) },
-  });
+  const node = await cluster.node({ host, port });
   // One process, served under this node's name and reachable by its pid: what a peer addresses arrives there.
   const answerer = await Answerer.spawn(undefined);
   node.serve(localPart(self), answerer);
-  console.log(`${self} listening on ${host}:${node.port}, registered with ${mapperAt}`);
+  console.log(`${self} listening on ${host}:${node.port}`);
 
   if (say !== null) {
     const where = refFromName(say, cluster.name);
