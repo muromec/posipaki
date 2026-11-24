@@ -7,7 +7,8 @@ import { defineActor, defineMessages } from "posipaki";
 
 import { clusterNamed, type NodeRef } from "../src/cluster.js";
 import { ErlangProxy, type EtfRaw } from "../src/proxy.js";
-import { binary, render, tuple } from "../src/terms.js";
+import { processTerm, show } from "../src/processes.js";
+import { binary, tuple } from "../src/terms.js";
 
 export interface CliArgs {
   /** The node whose process is asked, by name. */
@@ -34,19 +35,15 @@ export const Cli = defineActor({
     const proxy = await this.fork(ErlangProxy, { node: args.node, processName: args.processName }, {
       name: args.processName,
     });
-    // The caller puts its *own* pid in the term, because the answer is for this process: it comes back to this pid, and
-    // the child forwards it — a message addressed to its parent — when it arrives on its connection.
-    const ourPid = cluster.pidOf(this.self);
-
-    console.log(`${args.node.node}@${args.node.host} as ${args.processName}, our pid ${ourPid.id}`);
-
-    await proxy.send({ type: "ETF_RAW", body: tuple(ourPid, binary(Buffer.from(args.message, "utf8"))) });
+    // The actor names a process and nothing else: the term carries `this.self`, and the proxy's layers turn it into an
+    // address on the way out and back into a handle on the way in.
+    await proxy.send({ type: "ETF_RAW", body: tuple(processTerm(this.self), binary(Buffer.from(args.message, "utf8"))) });
     // Nothing else needs the handle: a child lives and ends with this actor.
     return { public: null, private: { args } };
   },
   handlers: {
     ETF_RAW(message: EtfRaw) {
-      console.log(render(message.body));
+      console.log(show(message.body));
       this.exit("the answer is printed");
     },
   },

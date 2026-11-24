@@ -8,17 +8,24 @@
 // A tag this file does not know is refused where it is read: an unused byte is a fault in this file or a peer
 // speaking something else, and both are worth a sentence that names the byte.
 
-export type Term =
+/**
+ * A BEAM term.
+ *
+ * `Also` is the leaf a layer adds to a term it has not written yet: a process of this side before it crosses, a
+ * process of the other node after it has. Everything here is a term whose leaves are only the wire's own.
+ */
+export type Term<Also = never> =
   | { kind: "atom"; name: string }
   | { kind: "int"; value: number }
   | { kind: "float"; value: number }
   | { kind: "binary"; bytes: Buffer }
   | { kind: "string"; value: string }
-  | { kind: "tuple"; items: Term[] }
-  | { kind: "list"; items: Term[] }
-  | { kind: "map"; pairs: Array<[Term, Term]> }
+  | { kind: "tuple"; items: Term<Also>[] }
+  | { kind: "list"; items: Term<Also>[] }
+  | { kind: "map"; pairs: Array<[Term<Also>, Term<Also>]> }
   | { kind: "pid"; node: string; id: number; serial: number; creation: number }
-  | { kind: "ref"; node: string };
+  | { kind: "ref"; node: string }
+  | Also;
 
 // ── the terms this side composes ────────────────────────────────────────────
 //
@@ -41,22 +48,22 @@ export function binary(bytes: Uint8Array): Term {
 }
 
 /** A process id on `node`, minted by the incarnation `creation` names. */
-export function pid(node: string, id: number, serial: number, creation: number): Term {
+export function pid(node: string, id: number, serial: number, creation: number): Extract<Term, { kind: "pid" }> {
   return { kind: "pid", node, id, serial, creation };
 }
-/** A tuple, which is what a message with an address in it always is. */
 
-export function tuple(...items: Term[]): Term {
+/** A tuple, which is what a message with an address in it always is. */
+export function tuple<Also = never>(...items: Term<Also>[]): Term<Also> {
   return { kind: "tuple", items };
 }
 
 /** A list, in the order it will be read. */
-export function list(...items: Term[]): Term {
+export function list<Also = never>(...items: Term<Also>[]): Term<Also> {
   return { kind: "list", items };
 }
 
 /** A map, as its pairs. */
-export function map(...pairs: Array<[Term, Term]>): Term {
+export function map<Also = never>(...pairs: Array<[Term<Also>, Term<Also>]>): Term<Also> {
   return { kind: "map", pairs };
 }
 

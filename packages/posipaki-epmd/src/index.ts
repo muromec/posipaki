@@ -64,6 +64,18 @@ export {
   type ProcessHandle,
 } from "./cluster.js";
 
+export {
+  forHere,
+  forWire,
+  processTerm,
+  remoteTerm,
+  show,
+  type LocalProcess,
+  type RemoteInTerm,
+  type RemoteProcess,
+  type VisibleTerm,
+} from "./processes.js";
+
 export { ErlangProxy, samePid, type EtfRaw, type ProxyArgs } from "./proxy.js";
 
 export { withTimeout } from "./timeout.js";
