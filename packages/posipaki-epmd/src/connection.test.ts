@@ -100,11 +100,11 @@ function node(socket: Socket): void {
 
 /** A message to whatever is registered under `name`, from a process of ours. */
 function toName(name: string, text: string, creation: number): WireMessage {
-  const ourselves: Term = { kind: "pid", node: "posipaki@127.0.0.1", id: 1, serial: 0, creation };
+  const ourPid: Term = { kind: "pid", node: "posipaki@127.0.0.1", id: 1, serial: 0, creation };
   return {
     kind: "message",
-    control: { kind: "regSend", from: ourselves, to: name },
-    payload: { kind: "tuple", items: [ourselves, { kind: "binary", bytes: Buffer.from(text, "utf8") }] },
+    control: { kind: "regSend", from: ourPid, to: name },
+    payload: { kind: "tuple", items: [ourPid, { kind: "binary", bytes: Buffer.from(text, "utf8") }] },
   };
 }
 

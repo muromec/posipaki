@@ -63,7 +63,7 @@ async function main(): Promise<void> {
   const creation = randomBytes(4).readUInt32BE(0) || 1;
 
   const cluster = installCluster(makeCluster({ name: "demo", self, cookie, creation }));
-  const ourselves: Term = { kind: "pid", node: self, id: 1, serial: 0, creation };
+  const ourPid: Term = { kind: "pid", node: self, id: 1, serial: 0, creation };
 
   /** Answer the pid this message carried, on whichever node it names. */
   const answer = async (said: WireMessage): Promise<void> => {
@@ -118,10 +118,10 @@ async function main(): Promise<void> {
     console.log(`saying ${JSON.stringify(message)} to ${to} on ${say}`);
     await channel.send({
       kind: "message",
-      control: { kind: "regSend", from: ourselves, to },
+      control: { kind: "regSend", from: ourPid, to },
       payload: {
         kind: "tuple",
-        items: [ourselves, { kind: "binary", bytes: Buffer.from(message, "utf8") }],
+        items: [ourPid, { kind: "binary", bytes: Buffer.from(message, "utf8") }],
       },
     });
   }

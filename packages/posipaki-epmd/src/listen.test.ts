@@ -59,10 +59,10 @@ describe("listen", () => {
     });
     expect(connection.peer).toMatchObject({ name: "posipaki@127.0.0.1" });
     expect(peers).toMatchObject([{ name: "probe@127.0.0.1" }]);
-    const ourselves = { kind: "pid" as const, node: "probe@127.0.0.1", id: 1, serial: 0, creation: 7 };
+    const ourPid = { kind: "pid" as const, node: "probe@127.0.0.1", id: 1, serial: 0, creation: 7 };
     await connection.messages.send({
       kind: "message",
-      control: { kind: "regSend", from: ourselves, to: "posipaki" },
+      control: { kind: "regSend", from: ourPid, to: "posipaki" },
       payload: { kind: "binary", bytes: Buffer.from("hi", "utf8") },
     });
     expect(await said).toBe("hi");
