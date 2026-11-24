@@ -19,7 +19,7 @@ import type { Registration } from "./epmd.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
 import { forHere, forWire, type RemoteProcess, type VisibleTerm } from "./processes.js";
-import { atom, type Term } from "./terms.js";
+import { atom, render, type Term } from "./terms.js";
 
 /** A term from a node, and who asked. `from` is absent when the wire did not say: a send addressed to us carries none. */
 export interface EtfAsked {
@@ -46,6 +46,19 @@ export interface ServedProcess {
   readonly id: symbol;
   send(message: Message): unknown;
   subscribe(channel: "message", cb: (message: Message, from: SenderInfo) => void): () => void;
+}
+
+/** A watch a peer set on a process of this node, until the process ends or the peer cancels it. */
+interface Watch {
+  /** The address the peer used: a pid, or a name. The answer carries this, not the pid it resolved to. */
+  readonly asked: Term;
+  /** The pid that asked, which is where the answer goes. */
+  readonly watcher: Term;
+  /** The reference the peer minted for this watch, echoed back unchanged. */
+  readonly ref: Term;
+  readonly process: ServedProcess;
+  /** The connection the watch came in on: the answer goes back the way it was asked for. */
+  readonly messages: Channel<WireMessage>;
 }
 
 /** How a node tells a mapper where it listens, or `false` for a node nobody can look up. */
@@ -95,6 +108,11 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
   /** How to stop reading each connection's frames. */
   const reading = new Map<Channel<WireMessage>, () => void>();
 
+  /** Watches a peer set, by the octets of the ref it minted: one table, walked when a process ends. */
+  const watches = new Map<string, Watch>();
+  /** The answers on their way out: `close` lets them finish before the connections they go over are let go. */
+  const sending = new Set<Promise<void>>();
+
   /** One pid of another node, and the way back to it: whatever connection reaches that node carries the answer. */
   const remote = (pid: PidTerm): RemoteProcess => ({
     pid,
@@ -108,9 +126,72 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     return holder === null ? null : (byId.get(holder.id) ?? null);
   };
 
-  const delivered = (said: WireMessage): void => {
+  /** One answer to a watch, addressed as the peer asked it: what it watched, the pid that asked, and the ref. */
+  const answerWatch = (messages: Channel<WireMessage>, asked: Term, watcher: Term, ref: Term, reason: Term): void => {
+    const sent = messages
+      .send({
+        kind: "message",
+        control: { kind: "monitorExit", from: asked, to: watcher, ref, reason },
+        payload: null,
+      })
+      .catch((error: unknown) => {
+        // The wire went first: the peer is not there to be told, and a second complaint about it is noise.
+        console.error(
+          `erlang-node: ${facts.self} could not say why a process ended: ${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+    sending.add(sent);
+    void sent.finally(() => sending.delete(sent));
+  };
+
+  /** Records a watch a peer set, or answers `noproc` when the address names nobody here. */
+  const startWatch = (messages: Channel<WireMessage>, from: Term, to: Term, ref: Term): void => {
+    if (ref.kind !== "ref" || from.kind !== "pid") {
+      console.error(`erlang-node: ${facts.self} was asked to watch without a ref to answer by: ${render(ref)}`);
+      return;
+    }
+    const process = to.kind === "atom" ? (byName.get(to.name) ?? null) : byPid(to);
+    if (process === null) {
+      // An address nobody answers is a watch that ends at once: erts says `noproc` rather than leaving it open.
+      answerWatch(messages, to, from, ref, atom("noproc"));
+      return;
+    }
+    watches.set(ref.bytes.toString("hex"), { asked: to, watcher: from, ref, process, messages });
+  };
+
+  /** Forgets a watch the peer cancelled. Its ref is the whole of the key, so nothing else has to be named. */
+  const stopWatch = (ref: Term): void => {
+    if (ref.kind === "ref") watches.delete(ref.bytes.toString("hex"));
+  };
+
+  /**
+   * Tells every peer watching `process` that it ended.
+   *
+   * What goes on the wire is `normal`: a reason this side was given is prose for its own log, and a crash arrives on the
+   * process's error path rather than on its out-messages, so a crash is not told apart here yet.
+   */
+  const answerEnded = (process: ServedProcess): void => {
+    for (const [key, watch] of watches) {
+      if (watch.process !== process) continue;
+      watches.delete(key);
+      answerWatch(watch.messages, watch.asked, watch.watcher, watch.ref, atom("normal"));
+    }
+  };
+
+  /** What a peer says, read on the connection it said it on: a message goes to the process it names, a watch is kept. */
+  const deliveredOn = (messages: Channel<WireMessage>) => (said: WireMessage): void => {
     if (said.kind !== "message") return;
     const control = said.control;
+    if (control.kind === "monitor") {
+      startWatch(messages, control.from, control.to, control.ref);
+      return;
+    }
+    if (control.kind === "demonitor") {
+      stopWatch(control.ref);
+      return;
+    }
     if (control.kind !== "send" && control.kind !== "regSend") return;
 
     const process = control.kind === "regSend" ? (byName.get(control.to) ?? null) : byPid(control.to);
@@ -134,8 +215,14 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
 
   const attach = (messages: Channel<WireMessage>): void => {
     if (reading.has(messages)) return;
-    reading.set(messages, messages.onFrame(delivered));
-    messages.onClose(() => reading.delete(messages));
+    reading.set(messages, messages.onFrame(deliveredOn(messages)));
+    messages.onClose(() => {
+      reading.delete(messages);
+      // Nothing is owed to a watcher that is no longer there: a watch goes with the wire it came in on.
+      for (const [key, watch] of watches) {
+        if (watch.messages === messages) watches.delete(key);
+      }
+    });
   };
 
   const forget = (process: ServedProcess): void => {
@@ -162,6 +249,8 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
       process.id,
       process.subscribe("message", (message) => {
         if (message.type === "EXIT") {
+          // The watchers hear it before the process is forgotten: the name it was watched by is what they are told.
+          answerEnded(process);
           forget(process);
           return;
         }
@@ -216,6 +305,10 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
       leaving.clear();
       byName.clear();
       byId.clear();
+      watches.clear();
+      // The answers already queued go out before the wire they go over: a peer that watched a process reads why it
+      // ended, and `noconnection` is a different fact.
+      await Promise.allSettled([...sending]);
       await listener.close();
     },
   };

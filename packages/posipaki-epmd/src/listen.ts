@@ -43,6 +43,9 @@ export interface Listener {
   close(): Promise<void>;
 }
 
+/** How long a connection that is ending has to take what was written to it, before it is destroyed. */
+const CLOSE_GRACE_MS = 250;
+
 /** A node that accepts connections, and proves the cookie on each of them before handing it over. */
 export async function listen(options: ListenOptions, handlers: ListenerHandlers): Promise<Listener> {
   const sockets = new Set<Socket>();
@@ -80,7 +83,12 @@ export async function listen(options: ListenOptions, handlers: ListenerHandlers)
   return {
     port,
     close: async () => {
-      for (const socket of sockets) socket.destroy();
+      // `end` rather than `destroy`: a frame written a moment before the close still has to reach the peer, and a
+      // destroyed socket drops what is in flight. A peer that does not take the last bytes is let go after a grace.
+      for (const socket of sockets) {
+        socket.end();
+        setTimeout(() => socket.destroy(), CLOSE_GRACE_MS).unref();
+      }
       await new Promise<void>((resolve) => server.close(() => resolve()));
     },
   };

@@ -22,7 +22,7 @@ import type { Channel } from "posipaki/port";
 import { clusterNamed, type Cluster, type NodeRef, type PidTerm } from "./cluster.js";
 import type { WireMessage } from "./messages.js";
 import { forHere, forWire, type RemoteProcess, type VisibleTerm } from "./processes.js";
-import { unwritable, type Term } from "./terms.js";
+import type { Term } from "./terms.js";
 
 /** The one message shape a proxy has: the BEAM term itself, in and out. */
 export interface EtfRaw {
@@ -124,21 +124,13 @@ export const ErlangProxy = defineActor({
     /**
      * One term to the name this proxy stands for. A node with nobody registered under it says nothing back.
      *
-     * The caller may name processes in the term — `processTerm(this.self)` — and they become addresses on the way
-     * out; a term that has not been through that walk is refused rather than written.
+     * The caller may name processes in the term — `processTerm(this.self)` — and they become addresses on the way out.
      */
     async send(body: VisibleTerm): Promise<void> {
       const held = this.state.private;
       // Every process the caller left in the term becomes an address here: what crosses is a term, and a term holds
       // pids.
       const wire = forWire(body, (handle) => held.cluster.pidOf(handle));
-      const why = unwritable(wire);
-      if (why !== null) {
-        // Loud, and not fatal: the caller asked for a term this side cannot put on the wire, and the connection and
-        // every other proxy on it have nothing to do with that.
-        console.error(`erlang-proxy: ${held.processName} on ${held.node.node}: ${why}`);
-        return;
-      }
       await held.messages.send({
         kind: "message",
         control: { kind: "regSend", from: held.pid, to: held.processName },

@@ -4,15 +4,18 @@
 // of signal this is — the numbers are erts' own, from the `dop` enum in erts/emulator/beam/dist.h — and its fields
 // are pids, names and a reason.
 //
-// Three are this client's business: a message sent to a process of ours, the registered send this side writes, and
-// the exit a node closes a connection with. Anything else is a signal for a node table this script does not keep,
-// and it is named as other rather than silently skipped.
+// Six are this client's business: a message sent to a process of ours, the registered send this side writes, the exit a
+// node closes a connection with, and the three a monitor is made of. Anything else is a signal for a node table this
+// script does not keep, and it is named as other rather than silently skipped.
 
 import { atom, integer, render, tuple, type Term } from "./terms.js";
 
 const DOP_SEND = 2;
 const DOP_EXIT = 3;
 const DOP_REG_SEND = 6;
+const DOP_MONITOR_P = 19;
+const DOP_DEMONITOR_P = 20;
+const DOP_MONITOR_P_EXIT = 21;
 
 /** One control message, in the vocabulary of the opcode it carries. */
 export type Control =
@@ -22,15 +25,26 @@ export type Control =
   | { readonly kind: "regSend"; readonly from: Term; readonly to: string }
   /** `{DOP_EXIT, From, To, Reason}`: the node is closing the connection. */
   | { readonly kind: "exit"; readonly from: Term; readonly to: Term; readonly reason: Term }
+  /** `{DOP_MONITOR_P, FromPid, ToProc, Ref}`: a peer watching one of this node's processes. `to` is a pid or a name. */
+  | { readonly kind: "monitor"; readonly from: Term; readonly to: Term; readonly ref: Term }
+  /** `{DOP_DEMONITOR_P, FromPid, ToProc, Ref}`: the same three fields, so the watch is cancelled by its ref. */
+  | { readonly kind: "demonitor"; readonly from: Term; readonly to: Term; readonly ref: Term }
+  /** `{DOP_MONITOR_P_EXIT, FromProc, ToPid, Ref, Reason}`: the watched thing ended, and this is why. */
+  | { readonly kind: "monitorExit"; readonly from: Term; readonly to: Term; readonly ref: Term; readonly reason: Term }
   /** A signal this client does not act on, with the opcode it carried. */
   | { readonly kind: "other"; readonly opcode: number; readonly items: readonly Term[] };
 
 /** A name out of a control message's field, which is an atom on this wire. */
-function nameOf(field: Term | undefined, what: string): string {
-  if (field === undefined || field.kind !== "atom") {
-    throw new Error(`a control message named nothing where ${what} belonged: ${field?.kind ?? "no field"}`);
+function nameOf(value: Term | undefined, what: string): string {
+  if (value === undefined || value.kind !== "atom") {
+    throw new Error(`a control message named nothing where ${what} belonged: ${value?.kind ?? "no field"}`);
   }
-  return field.name;
+  return value.name;
+}
+
+/** A field of a control tuple, or the empty atom a missing one reads as: a shape this side can then refuse by name. */
+function field(term: Term, index: number): Term {
+  return term.kind === "tuple" ? (term.items[index] ?? atom("")) : atom("");
 }
 
 /** Reads a control message, or says which shape it had instead of a shape this wire knows. */
@@ -46,15 +60,23 @@ export function readControl(term: Term): Control {
   switch (head.value) {
     case DOP_SEND:
       // {DOP_SEND, '', To}: the second field is the cookie slot, which erts has not read since R9B.
-      return { kind: "send", to: term.items[2] ?? { kind: "atom", name: "" } };
+      return { kind: "send", to: field(term, 2) };
     case DOP_REG_SEND:
-      return { kind: "regSend", from: term.items[1] ?? { kind: "atom", name: "" }, to: nameOf(term.items[3], "the name to send to") };
+      return { kind: "regSend", from: field(term, 1), to: nameOf(term.items[3], "the name to send to") };
     case DOP_EXIT:
+      return { kind: "exit", from: field(term, 1), to: field(term, 2), reason: field(term, 3) };
+    case DOP_MONITOR_P:
+      // {DOP_MONITOR_P, FromPid, ToProc, Ref}: ToProc is a pid or a name, and the ref is the watcher's own to echo.
+      return { kind: "monitor", from: field(term, 1), to: field(term, 2), ref: field(term, 3) };
+    case DOP_DEMONITOR_P:
+      return { kind: "demonitor", from: field(term, 1), to: field(term, 2), ref: field(term, 3) };
+    case DOP_MONITOR_P_EXIT:
       return {
-        kind: "exit",
-        from: term.items[1] ?? { kind: "atom", name: "" },
-        to: term.items[2] ?? { kind: "atom", name: "" },
-        reason: term.items[3] ?? { kind: "atom", name: "" },
+        kind: "monitorExit",
+        from: field(term, 1),
+        to: field(term, 2),
+        ref: field(term, 3),
+        reason: field(term, 4),
       };
     default:
       return { kind: "other", opcode: head.value, items: term.items };
@@ -71,6 +93,13 @@ export function writeControl(control: Control): Term {
       return tuple(integer(DOP_REG_SEND), control.from, atom(""), atom(control.to));
     case "exit":
       return tuple(integer(DOP_EXIT), control.from, control.to, control.reason);
+    case "monitor":
+      return tuple(integer(DOP_MONITOR_P), control.from, control.to, control.ref);
+    case "demonitor":
+      return tuple(integer(DOP_DEMONITOR_P), control.from, control.to, control.ref);
+    case "monitorExit":
+      // {DOP_MONITOR_P_EXIT, FromProc, ToPid, Ref, Reason}: what was watched, as it was asked for, and why it ended.
+      return tuple(integer(DOP_MONITOR_P_EXIT), control.from, control.to, control.ref, control.reason);
     case "other":
       // A signal this client does not act on is not one it can write: its fields are the opcode's own.
       throw new Error(`a control message of opcode ${control.opcode} is not one this side writes`);

@@ -24,7 +24,6 @@ export {
   render,
   TermReader,
   tuple,
-  unwritable,
   write,
   type Term,
 } from "./terms.js";

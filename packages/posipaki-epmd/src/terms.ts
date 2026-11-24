@@ -24,7 +24,13 @@ export type Term<Also = never> =
   | { kind: "list"; items: Term<Also>[] }
   | { kind: "map"; pairs: Array<[Term<Also>, Term<Also>]> }
   | { kind: "pid"; node: string; id: number; serial: number; creation: number }
-  | { kind: "ref"; node: string }
+  /**
+   * A reference, as the node that minted it wrote it: `bytes` is the whole term, tag and words.
+   *
+   * A monitor names its watch by a reference the watching node made, and the answer carries that same one back, so
+   * the octets are kept rather than decoded: what this side hands back is provably what it was given.
+   */
+  | { kind: "ref"; node: string; bytes: Buffer }
   | Also;
 
 // ── the terms this side composes ────────────────────────────────────────────
@@ -50,6 +56,26 @@ export function binary(bytes: Uint8Array): Term {
 /** A process id on `node`, minted by the incarnation `creation` names. */
 export function pid(node: string, id: number, serial: number, creation: number): Extract<Term, { kind: "pid" }> {
   return { kind: "pid", node, id, serial, creation };
+}
+
+/**
+ * A reference as a node mints one: `NEWER_REFERENCE_EXT`, with the words left uninterpreted.
+ *
+ * This side sets no watches of its own, so nothing here mints one in anger; a peer of its tests needs the octets a node
+ * would write, and this is those.
+ */
+export function reference(
+  node: string,
+  creation: number,
+  words: readonly number[] = [0, 0, 0, 0],
+): Extract<Term, { kind: "ref" }> {
+  const head = Buffer.alloc(3);
+  head[0] = 90; // NEWER_REFERENCE_EXT
+  head.writeUInt16BE(words.length, 1);
+  const body = Buffer.alloc(4 + words.length * 4);
+  body.writeUInt32BE(creation, 0);
+  words.forEach((word, index) => body.writeUInt32BE(word, 4 + index * 4));
+  return { kind: "ref", node, bytes: Buffer.concat([head, atomBytes(node), body]) };
 }
 
 /** A tuple, which is what a message with an address in it always is. */
@@ -143,18 +169,22 @@ export class TermReader {
           creation: this.u32(),
         };
       case 90: {
+        // NEWER_REFERENCE_EXT is what a node mints now: the count of words comes first, then the node, the creation
+        // and the words themselves.
+        const words = this.u16();
         const node = this.atomName();
         this.u32();
-        this.u32();
-        return { kind: "ref", node };
+        for (let left = words; left > 0; left -= 1) this.u32();
+        return { kind: "ref", node, bytes: this.buffer.subarray(start, this.offset) };
       }
       case 114:
       case 101: {
-        const ids = this.u16();
+        // The two older forms, which a node accepts but no longer writes: 114 carries a count, 101 is one word.
+        const words = tag === 114 ? this.u16() : 1;
         const node = this.atomName();
-        this.u32();
-        for (let left = ids; left > 0; left -= 1) this.u32();
-        return { kind: "ref", node };
+        this.u8();
+        for (let left = words; left > 0; left -= 1) this.u32();
+        return { kind: "ref", node, bytes: this.buffer.subarray(start, this.offset) };
       }
       default:
         throw new Error(`the term format tag ${tag} at byte ${start} is not read by this script`);
@@ -241,9 +271,8 @@ export function render(term: Term): string {
 /**
  * The octets of a term.
  *
- * This is the only encoder: a message is built with the constructors above, and written here. A reference is read
- * from a node but never written — nothing this side says is identified by one, and an id it cannot mint would be a
- * lie about its node — so it is refused with that sentence.
+ * This is the only encoder: a message is built with the constructors above, and written here. A reference goes back as
+ * the octets it arrived as: an id this side minted would be a lie about its node, so it only ever echoes one.
  */
 export function write(term: Term): Buffer {
   switch (term.kind) {
@@ -293,7 +322,8 @@ export function write(term: Term): Buffer {
     case "pid":
       return pidBytes(term.node, term.id, term.serial, term.creation);
     case "ref":
-      throw new Error("a reference is read from a node, never written by this script");
+      // Echoed, never minted: the octets it arrived as are what goes back, so the peer reads its own id.
+      return term.bytes;
   }
 }
 
@@ -331,18 +361,4 @@ function binaryBytes(data: Uint8Array): Buffer {
   head[0] = 109; // BINARY_EXT
   head.writeUInt32BE(data.length, 1);
   return Buffer.concat([head, data]);
-}
-/**
- * Why a term cannot go on this wire, or null when it can.
- *
- * `write` refuses what it cannot compose — a reference, because an id it cannot mint would be a lie about its node —
- * and a caller that has to send a term it did not build wants to ask before anything is written.
- */
-export function unwritable(term: Term): string | null {
-  try {
-    write(term);
-    return null;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
 }

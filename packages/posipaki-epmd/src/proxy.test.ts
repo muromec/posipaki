@@ -10,7 +10,7 @@ import { memoryChannelPair } from "posipaki/port";
 import { forgetCluster, installCluster, nodeRef, type Cluster, type NodeRef, type PidTerm } from "./cluster.js";
 import type { WireMessage } from "./messages.js";
 import { ErlangProxy, type EtfRaw } from "./proxy.js";
-import type { Term } from "./terms.js";
+import { reference, type Term } from "./terms.js";
 
 const CLUSTER = "test";
 const REF: NodeRef = nodeRef("robot", "192.168.88.20", CLUSTER);
@@ -117,18 +117,15 @@ describe("ErlangProxy", () => {
     expect(proxy.state?.erlangPid).toEqual(PID);
   });
 
-  it("complains about a term it cannot write, and carries on", async () => {
+  it("carries a reference a peer gave it, as the octets it arrived as", async () => {
     const { written } = fakeCluster();
     const { proxy } = await proxyOf();
-    const complained = vi.spyOn(console, "error").mockImplementation(() => undefined);
-    proxy.send(say({ kind: "ref", node: "robot@192.168.88.20" }));
-    await settle();
-    expect(complained).toHaveBeenCalled();
-    expect(String(complained.mock.calls[0]?.[0])).toContain("reference");
-    expect(written).toEqual([]);
-    proxy.send(say(atomOf("still here")));
+    // A reference is not this side's to mint: what goes out is what a node sent it, byte for byte.
+    proxy.send(say(reference("robot@192.168.88.20", 9)));
     await settle();
     expect(written).toHaveLength(1);
+    const said = written[0];
+    expect(said.kind === "message" ? said.payload?.kind : null).toBe("ref");
   });
 
   it("says which clusters exist when the reference names one there is not", async () => {

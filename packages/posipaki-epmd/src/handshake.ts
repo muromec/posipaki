@@ -155,10 +155,29 @@ export async function accept(ports: HandshakePorts, options: HandshakeOptions): 
   return { name: named.name, creation: named.creation, flags: named.flags };
 }
 
-/** The flags a node refuses a connection without: dist.h's DFLAG_DIST_MANDATORY_25 and DFLAG_UNLINK_ID. */
+/**
+ * The flags this side offers: dist.h's `DFLAG_DIST_MANDATORY` (everything a node refuses a connection without), the two
+ * a monitor needs, and nothing else.
+ *
+ * `DFLAG_DIST_MONITOR` (`0x08`) is what makes a node send `DOP_MONITOR_P` rather than fall back to a link this side
+ * cannot answer; `DFLAG_DIST_MONITOR_NAME` (`0x20`) is what lets a watch name a registered process.
+ */
 export const MANDATORY_FLAGS: readonly [high: number, low: number] = [
   0x4,
-  0x4 | 0x10 | 0x80 | 0x100 | 0x200 | 0x400 | 0x800 | 0x10000 | 0x20000 | 0x40000 | 0x1000000 | 0x2000000,
+  0x4 |
+    0x8 |
+    0x10 |
+    0x20 |
+    0x80 |
+    0x100 |
+    0x200 |
+    0x400 |
+    0x800 |
+    0x10000 |
+    0x20000 |
+    0x40000 |
+    0x1000000 |
+    0x2000000,
 ];
 
 /** How long a handshake step waits when the caller does not say. */

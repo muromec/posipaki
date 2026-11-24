@@ -14,7 +14,7 @@ import { listen } from "./listen.js";
 import type { WireMessage } from "./messages.js";
 import { startNode, type ErlangNode, type EtfAnswered, type EtfAsked } from "./node.js";
 import { processTerm, show, type RemoteProcess, type VisibleTerm } from "./processes.js";
-import { atom, binary, pid, tuple } from "./terms.js";
+import { atom, binary, pid, reference, tuple } from "./terms.js";
 
 const CLUSTER = "node-test";
 const COOKIE = "pocookie";
@@ -219,5 +219,100 @@ describe("a node", () => {
     const port = node.port;
     await node.close();
     await expect(open(port, { host: "127.0.0.1", node: "probe", cookie: COOKIE, self: PEER, creation: 9 })).rejects.toThrow();
+  });
+  /** A term the served process answers, so a frame that came before it is known to have been read. */
+  const beat = (peer: Channel<WireMessage>): Promise<void> =>
+    peer.send({
+      kind: "message",
+      control: { kind: "regSend", from: PEER_PID, to: "answer" },
+      payload: atom("still here"),
+    });
+
+  it("reports a watched process's end to the pid that asked, with the ref it minted", async () => {
+    const { cluster, answerer, peer, frames } = await serving();
+    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    const ref = reference(PEER, 9);
+    await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
+    // Frames on one connection are read in the order they arrive, so an answer proves the watch was recorded.
+    await beat(peer);
+    await until(() => frames.length === 1, "the watch to be read");
+    await answerer.stop();
+    await until(() => frames.length === 2, "the ending to be reported");
+
+    expect(frames[1]?.kind === "message" && frames[1].control).toEqual({
+      kind: "monitorExit",
+      from: address,
+      to: PEER_PID,
+      ref,
+      reason: atom("normal"),
+    });
+  });
+
+  it("answers a watch set on a name with that name, not the pid it resolved to", async () => {
+    const { answerer, peer, frames } = await serving();
+    const ref = reference(PEER, 10);
+    await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: atom("answer"), ref }, payload: null });
+    await beat(peer);
+    await until(() => frames.length === 1, "the watch to be read");
+    await answerer.stop();
+    await until(() => frames.length === 2, "the ending to be reported");
+
+    // A name is what the peer matched this answer against, so a name is what comes back.
+    expect(frames[1]?.kind === "message" && frames[1].control).toEqual({
+      kind: "monitorExit",
+      from: atom("answer"),
+      to: PEER_PID,
+      ref,
+      reason: atom("normal"),
+    });
+  });
+
+  it("answers noproc at once for an address that serves nobody, and keeps the connection", async () => {
+    const { peer, frames } = await serving();
+    const ref = reference(PEER, 11);
+    await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: atom("nobody"), ref }, payload: null });
+    await until(() => frames.length === 1, "the answer to a watch on nobody");
+
+    expect(frames[0]?.kind === "message" && frames[0].control).toEqual({
+      kind: "monitorExit",
+      from: atom("nobody"),
+      to: PEER_PID,
+      ref,
+      reason: atom("noproc"),
+    });
+
+    // The connection is still the peer's: an address nobody answers says nothing about the wire.
+    await beat(peer);
+    await until(() => heard.length === 1, "the term that came after");
+  });
+
+  it("forgets a watch the peer cancelled: the process ends and nothing is said about it", async () => {
+    const { cluster, answerer, peer, frames } = await serving();
+    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    const ref = reference(PEER, 12);
+    await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
+    await beat(peer);
+    await until(() => frames.length === 1, "the watch to be read");
+    await peer.send({ kind: "message", control: { kind: "demonitor", from: PEER_PID, to: address, ref }, payload: null });
+    await beat(peer);
+    await until(() => frames.length === 2, "the cancel to be read");
+    await answerer.stop();
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(frames).toHaveLength(2);
+  });
+
+  it("lets the ending it reported finish before the connection it goes over is let go", async () => {
+    const { cluster, answerer, node, peer, frames } = await serving();
+    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    const ref = reference(PEER, 13);
+    await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
+    await beat(peer);
+    await until(() => frames.length === 1, "the watch to be read");
+    // The end and the close happen in one turn: the peer that watched the process reads why it ended, and
+    // `noconnection` would be a different fact.
+    await answerer.stop();
+    await node.close();
+    expect(frames).toHaveLength(2);
   });
 });
