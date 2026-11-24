@@ -20,6 +20,8 @@ export interface CliArgs {
 
 interface Private {
   readonly args: CliArgs;
+
+
 }
 
 /** Asks one name on one node, and ends with the answer printed. */
@@ -28,22 +30,20 @@ export const Cli = defineActor({
   inMessages: defineMessages<EtfRaw>(),
   outMessages: defineMessages<never>(),
 
-  setup(args: CliArgs): { public: null; private: Private } {
-    return { public: null, private: { args } };
-  },
-
-  async afterStart() {
-    const args = this.state.private.args;
+  async setup(args: CliArgs): Promise<{ public: null; private: Private }> {
     const cluster = clusterNamed(args.node.cluster);
+
     // The reference is one proxy's identity, so the pid minted from it here is the pid the child will send from: that
     // is what makes the answer addressable at all.
     const ourPid = cluster.address(args.node);
     console.log(`${args.node.node}@${args.node.host} as ${args.processName}, our pid ${ourPid.id}`);
 
-    const child = await this.fork(ErlangProxy, { node: args.node, processName: args.processName }, {
+    const proxy = await this.fork(ErlangProxy, { node: args.node, processName: args.processName }, {
       name: args.processName,
     });
-    await child.send({ type: "ETF_RAW", body: tuple(ourPid, binary(Buffer.from(args.message, "utf8"))) });
+    await proxy.send({ type: "ETF_RAW", body: tuple(ourPid, binary(Buffer.from(args.message, "utf8"))) });
+    // Nothing else needs the handle: a child lives and ends with this actor.
+    return { public: null, private: { args } };
   },
 
   handlers: {
