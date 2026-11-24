@@ -1,79 +1,62 @@
-#!/usr/bin/env bun
-/**
- * Sends a message to a name on an Erlang node over the distribution protocol.
- *
- * The connection is `connection.ts`'s; this file is the entry: it takes the command line, sends one
- * `{DOP_REG_SEND, FromPid, '', ToName}` carrying `{From, Text}`, and prints what comes back.
- *
- *   erlc robot.erl
- *   erl -sname robot -setcookie pocookie -noshell -eval 'robot:start().'
- *
- *   bun src/index.ts <host> <cookie>
- *   bun src/index.ts <host> <cookie> --to echo --message ping
- *
- * The flags are `args.ts`'s. POSIPAKI_EPMD_TRACE=1 prints what this side sends and receives.
- */
+// ── posipaki-epmd ───────────────────────────────────────────────────────────
+//
+// Talk to an Erlang node over its own distribution protocol. Bottom up: `frame` cuts packets by the length they
+// announce, `terms` reads and writes BEAM terms, `control` names the control message a distribution message carries,
+// `messages` says what a frame is, `handshake` proves the cookie from either side, `epmd` is the port mapper at both
+// ends, `connection` and `listen` are the two roles of a connection, `cluster` is the table of the nodes this runtime
+// can reach, and `proxy` is an actor that stands for a process on one of them.
+//
+// The demos are in `demo/`: they are the only things here that decide anything about a command line.
 
-import { randomBytes } from "node:crypto";
+export { wrapEpmdFrame, type EpmdFrame, type Framed, type Prefix } from "./frame.js";
 
-import { parseArgs } from "./args.js";
-import { connect } from "./connection.js";
-import { inbox, type WireMessage } from "./messages.js";
-import { render, type Term } from "./terms.js";
+export {
+  atom,
+  binary,
+  integer,
+  pid,
+  render,
+  TermReader,
+  tuple,
+  unwritable,
+  write,
+  type Term,
+} from "./terms.js";
 
-/** How long the answer may take before the entry gives up on it. */
-const TIMEOUT_MS = 10_000;
+export { readControl, writeControl, type Control } from "./control.js";
 
-/** Whether to print what this side sends and receives: `POSIPAKI_EPMD_TRACE=1`. */
-const trace = Boolean(process.env.POSIPAKI_EPMD_TRACE);
+export { decode, encode, inbox, withMeaning, type Side, type WireMessage } from "./messages.js";
 
-async function main(argv: string[]): Promise<void> {
-  const options = parseArgs(argv);
-  // The incarnation this node claims. Every pid it writes carries it, so it is decided here and passed down.
-  const creation = randomBytes(4).readUInt32BE(0) || 1;
-  const connection = await connect({
-    host: options.host,
-    node: options.node,
-    cookie: options.cookie,
-    self: options.self,
-    creation,
-    timeoutMs: TIMEOUT_MS,
-  });
-  console.log(`${connection.peer.name} at ${options.host}:${connection.port}`);
+export {
+  accept,
+  DEFAULT_TIMEOUT_MS,
+  digest,
+  initiate,
+  MANDATORY_FLAGS,
+  type HandshakeOptions,
+  type HandshakePorts,
+  type Peer,
+} from "./handshake.js";
 
-  const heard = inbox(connection.messages);
-  // Our own process id, so the other side has somewhere to answer: a pid is an address this connection carries,
-  // and nothing there holds a process for it.
-  const ourselves: Term = { kind: "pid", node: options.self, id: 1, serial: 0, creation };
-  // {From, Text}: a bare term carries no sender, so nothing could answer it.
-  const payload: Term = {
-    kind: "tuple",
-    items: [ourselves, { kind: "binary", bytes: Buffer.from(options.message, "utf8") }],
-  };
-  if (trace) console.error(`sending to ${options.to}: ${render(payload)}`);
-  await connection.messages.send({
-    kind: "message",
-    control: { kind: "regSend", from: ourselves, to: options.to },
-    payload,
-  });
+export { epmdPort, epmdRegister, serveEpmd, type Lookup, type Mapper, type Registration } from "./epmd.js";
 
-  for (;;) {
-    const said: WireMessage = await heard.next(TIMEOUT_MS, "no answer to the message");
-    if (said.kind !== "message") continue;
-    if (trace) console.error(`received a ${said.control.kind}${said.payload === null ? "" : `: ${render(said.payload)}`}`);
-    if (said.control.kind === "exit") {
-      throw new Error(`the node closed the connection: ${render(said.control.reason)}`);
-    }
-    if (said.control.kind !== "send") continue;
-    if (said.payload === null) throw new Error("a message for a process came with nothing after its control");
-    console.log(render(said.payload));
-    break;
-  }
+export { connect, open, type Connection, type ConnectionOptions } from "./connection.js";
 
-  await connection.messages.close("the answer is printed");
-}
+export { listen, type Listener, type ListenerHandlers, type ListenOptions } from "./listen.js";
 
-main(process.argv.slice(2)).catch((error: unknown) => {
-  console.error(`Error: ${error instanceof Error ? error.message : String(error)}`);
-  process.exit(1);
-});
+export {
+  clusterNamed,
+  DEFAULT_CLUSTER,
+  forgetCluster,
+  installCluster,
+  makeCluster,
+  nodeRef,
+  type Cluster,
+  type ClusterOptions,
+  type NodeRef,
+  type PidTerm,
+} from "./cluster.js";
+
+export { ErlangProxy, samePid, type EtfRaw, type ProxyArgs } from "./proxy.js";
+
+export { withTimeout } from "./timeout.js";

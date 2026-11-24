@@ -19,13 +19,12 @@
       "default": "./dist/index.js"
     }
   },
-  "bin": {
-    "posipaki-epmd": "./dist/index.js"
-  },
   "scripts": {
     "build": "bash ../../scripts/package-build.sh",
     "prepack": "bash ../../scripts/package-build.sh",
-    "start": "bun src/index.ts"
+    "client": "bun demo/client.ts",
+    "node": "bun demo/node.ts",
+    "mapper": "bun demo/mapper.ts"
   },
   "dependencies": {
     "posipaki": "^0.51.0"

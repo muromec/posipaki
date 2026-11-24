@@ -128,3 +128,18 @@ describe("withMeaning", () => {
     expect(await back).toEqual({ kind: "ack", digest: hex("00112233445566778899aabbccddeeff") });
   });
 });
+
+describe("a frame nobody can read", () => {
+  it("is complained about, and the connection carries on", async () => {
+    const ends = memoryChannelPair<Uint8Array>();
+    const bad: string[] = [];
+    const here = withMeaning(ends.near, "initiator", (error) => bad.push(error.message));
+    const said: WireMessage[] = [];
+    here.onFrame((message) => said.push(message));
+
+    await ends.far.send(hex("99")); // no message begins with this byte
+    await ends.far.send(hex("736f6b")); // "ok", which is a status
+    expect(said).toEqual([{ kind: "status", status: "ok" }]);
+    expect(bad).toEqual([expect.stringContaining("the first byte 153 names no message")]);
+  });
+});

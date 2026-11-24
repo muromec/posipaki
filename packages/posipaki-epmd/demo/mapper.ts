@@ -7,7 +7,7 @@
  * Nodes register here as they start (see `node.ts`), and a node on another machine asks here before it connects.
  */
 
-import { serveEpmd } from "./epmd.js";
+import { serveEpmd } from "../src/epmd.js";
 
 function flag(argv: string[], name: string, fallback: string): string {
   const at = argv.indexOf(`--${name}`);

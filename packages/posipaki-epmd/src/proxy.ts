@@ -4,9 +4,13 @@
 // DOP_REG_SEND whose payload is that term; what the node sends to this proxy's pid comes back out as ETF_RAW, with
 // the term the node wrote.
 //
+// Its argument is a *name* — a `NodeRef`, which is a cluster and a node in it — so the connection is looked up and
+// opened in `setup`, through the cluster that owns such things, and the actor itself knows nothing about hosts,
+// mappers or handshakes.
+//
 // The body is a term and not a run of octets: a caller composes it with the writers in `terms.ts`, and a term this
-// side can read but cannot write — a reference, a fun, a port — is refused where it is sent, by name, rather than
-// dropped on the floor.
+// side can read but cannot write — a reference, a fun, a port — is complained about where it is sent, loudly, and
+// dropped rather than taking the process down.
 //
 // Two facts the contract has no room for, and so they are here instead: a node can answer but never confirm, because
 // erts drops a send to a name nobody answers in silence; and one proxy is one pid, which is what makes a reply
@@ -15,17 +19,9 @@
 import { defineActor, defineMessages } from "posipaki";
 import type { Channel } from "posipaki/port";
 
+import { clusterNamed, type Cluster, type NodeRef, type PidTerm } from "./cluster.js";
 import type { WireMessage } from "./messages.js";
-import type { PidTerm } from "./network.js";
-import { write, type Term } from "./terms.js";
-
-/** A node this side can reach: what it is called, the channel messages go over, and a pid to answer at. */
-export interface NodeRef {
-  readonly name: string;
-  channel(): Promise<Channel<WireMessage>>;
-  /** A pid on this side for one proxy, distinct from every other proxy's on the same node. */
-  address(): PidTerm;
-}
+import { unwritable, type Term } from "./terms.js";
 
 /** The one message shape a proxy has: the BEAM term itself, in and out. */
 export interface EtfRaw {
@@ -34,6 +30,7 @@ export interface EtfRaw {
 }
 
 export interface ProxyArgs {
+  /** The node, by name: which cluster to look it up in, and what it is called there. */
   readonly node: NodeRef;
   /** The name registered on that node which this proxy stands for. */
   readonly processName: string;
@@ -42,6 +39,7 @@ export interface ProxyArgs {
 interface Private {
   readonly node: NodeRef;
   readonly processName: string;
+  readonly cluster: Cluster;
   readonly pid: PidTerm;
   readonly messages: Channel<WireMessage>;
   stopReading: () => void;
@@ -65,24 +63,27 @@ export const ErlangProxy = defineActor({
   outMessages: defineMessages<EtfRaw>(),
 
   async setup(args: ProxyArgs): Promise<{ public: null; private: Private }> {
-    const messages = await args.node.channel();
-    return {
-      public: null,
-      private: {
-        node: args.node,
-        processName: args.processName,
-        // One pid per proxy: a reply is addressed to it, and one connection carries every proxy of that node.
-        pid: args.node.address(),
-        messages,
-        stopReading: () => undefined,
-      },
+    const cluster = clusterNamed(args.node.cluster);
+    const messages = await cluster.channel(args.node);
+    const held: Private = {
+      node: args.node,
+      processName: args.processName,
+      cluster,
+      // One pid per proxy: a reply is addressed to it, and one connection carries every proxy of that node.
+      pid: cluster.address(args.node),
+      messages,
+      stopReading: () => undefined,
     };
-  },
 
-  afterStart() {
-    const held = this.state.private;
-    held.stopReading = held.messages.onFrame((said: WireMessage) => this.received(said));
-    held.messages.onClose((reason) => this.exit(`the connection to ${held.node.name} ended: ${reason}`));
+    // Subscribed before the actor is up, so a reply that follows the first send cannot arrive before a reader exists.
+    held.stopReading = messages.onFrame((said: WireMessage) => {
+      if (said.kind !== "message" || said.payload === null) return;
+      if (said.control.kind !== "send" || !samePid(said.control.to, held.pid)) return;
+      this.emit({ type: "ETF_RAW", body: said.payload });
+    });
+    messages.onClose((reason) => this.exit(`the connection to ${args.node.node} ended: ${reason}`));
+
+    return { public: null, private: held };
   },
 
   beforeEnd() {
@@ -103,7 +104,7 @@ export const ErlangProxy = defineActor({
       if (why !== null) {
         // Loud, and not fatal: the caller asked for a term this side cannot put on the wire, and the connection and
         // every other proxy on it have nothing to do with that.
-        console.error(`erlang-proxy: ${held.processName} on ${held.node.name}: ${why}`);
+        console.error(`erlang-proxy: ${held.processName} on ${held.node.node}: ${why}`);
         return;
       }
       await held.messages.send({
@@ -112,29 +113,5 @@ export const ErlangProxy = defineActor({
         payload: body,
       });
     },
-
-    /** One frame from the node: news if it is addressed to this proxy's pid, and nothing otherwise. */
-    received(said: WireMessage): void {
-      const held = this.state.private;
-      if (said.kind !== "message" || said.payload === null) return;
-      if (said.control.kind !== "send" || !samePid(said.control.to, held.pid)) return;
-      this.emit({ type: "ETF_RAW", body: said.payload });
-    },
   },
 });
-
-/**
- * Why a term cannot go on this wire, or null when it can.
- *
- * The writers in `terms.ts` refuse what they cannot compose — a reference, because an id it cannot mint would be a
- * lie about its node — and this asks them before anything is written, so the refusal is a complaint at the point of
- * the call rather than a throw out of the process's own loop.
- */
-export function unwritable(body: Term): string | null {
-  try {
-    write(body);
-    return null;
-  } catch (error) {
-    return error instanceof Error ? error.message : String(error);
-  }
-}

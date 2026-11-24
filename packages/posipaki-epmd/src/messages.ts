@@ -12,7 +12,7 @@
 // Each term on this wire carries its own version magic, which is why a distribution message is a pass-through
 // byte and a term, and why its payload is a second term with a magic of its own.
 
-import { mapChannel, type Channel } from "posipaki/port";
+import { mapChannel, SKIP, type Channel } from "posipaki/port";
 
 import { readControl, writeControl, type Control } from "./control.js";
 import { TermReader, write, type Term } from "./terms.js";
@@ -155,11 +155,34 @@ export function encode(message: WireMessage): Uint8Array {
   }
 }
 
-/** A channel of frames as a channel of messages: this side's reading, both ways. */
-export function withMeaning<C = string>(frames: Channel<Uint8Array, C>, side: Side = "initiator"): Channel<WireMessage, C> {
-  return mapChannel(frames, encode, (frame) => decode(frame, side));
+
+/**
+ * A channel of frames as a channel of messages: this side's reading, both ways.
+ *
+ * A frame this side cannot read is not the process's death: it is complained about, loudly, and the connection
+ * carries on. The alternative — throwing out of the frame callback — lands in the socket's own read loop, where an
+ * uncaught exception takes down a process that has nothing to do with the peer that sent it.
+ */
+export function withMeaning<C = string>(
+  frames: Channel<Uint8Array, C>,
+  side: Side = "initiator",
+  onBadFrame: (error: Error, frame: Uint8Array) => void = complainedAbout,
+): Channel<WireMessage, C> {
+  return mapChannel(frames, encode, (frame) => {
+    try {
+      return decode(frame, side);
+    } catch (error) {
+      onBadFrame(error instanceof Error ? error : new Error(String(error)), frame);
+      return SKIP;
+    }
+  });
 }
 
+/** What a frame nobody can read is told: the first octets it began with, and why. */
+function complainedAbout(error: Error, frame: Uint8Array): void {
+  const seen = [...frame.subarray(0, 8)].map((octet) => octet.toString(16).padStart(2, "0")).join(" ");
+  console.error(`epmd: a frame of ${frame.length} octets could not be read (${seen}): ${error.message}`);
+}
 /**
  * The messages as they arrive.
  *

@@ -286,3 +286,18 @@ export function write(term: Term): Buffer {
       throw new Error("a reference is read from a node, never written by this script");
   }
 }
+
+/**
+ * Why a term cannot go on this wire, or null when it can.
+ *
+ * `write` refuses what it cannot compose — a reference, because an id it cannot mint would be a lie about its node —
+ * and a caller that has to send a term it did not build wants to ask before anything is written.
+ */
+export function unwritable(term: Term): string | null {
+  try {
+    write(term);
+    return null;
+  } catch (error) {
+    return error instanceof Error ? error.message : String(error);
+  }
+}

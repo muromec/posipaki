@@ -3,22 +3,22 @@
  * One node of this host: it registers with the mapper, accepts connections, and can say something to a node that is
  * not us. Both roles of the protocol in one process, which is what an answer to somebody else's pid needs.
  *
- *   bun src/mapper.ts
- *   bun src/node.ts --name probe@192.168.88.27 --cookie pocookie --say robot@192.168.88.20 --to relay
+ *   bun demo/mapper.ts
+ *   bun demo/node.ts --name probe@192.168.88.27 --cookie pocookie --say robot@192.168.88.20 --to relay
  *
- * Every message that arrives is printed. A message carrying a pid in a two-tuple — `{Pid, Text}` — is answered to
- * that pid, which may be on a node this side has no connection to yet: reaching it is `network.send`'s business.
+ * Every message that arrives is printed. A message carrying a pid in a two-tuple — `{Pid, Text}` — is answered to that
+ * pid, which may be on a node this side has no connection to yet: reaching it is the cluster's business.
  */
 
 import { randomBytes } from "node:crypto";
 
 import type { Channel } from "posipaki/port";
 
-import { epmdRegister } from "./epmd.js";
-import { listen } from "./listen.js";
-import type { WireMessage } from "./messages.js";
-import { network, type PidTerm } from "./network.js";
-import { render, type Term } from "./terms.js";
+import { installCluster, makeCluster, nodeRef, type PidTerm } from "../src/cluster.js";
+import { epmdRegister } from "../src/epmd.js";
+import { listen } from "../src/listen.js";
+import type { WireMessage } from "../src/messages.js";
+import { render, type Term } from "../src/terms.js";
 
 function flag(argv: string[], name: string, fallback?: string): string {
   const at = argv.indexOf(`--${name}`);
@@ -62,7 +62,7 @@ async function main(): Promise<void> {
   const message = flag(argv, "message", "hi");
   const creation = randomBytes(4).readUInt32BE(0) || 1;
 
-  const reach = network({ self, cookie, creation });
+  const cluster = installCluster(makeCluster({ name: "demo", self, cookie, creation }));
   const ourselves: Term = { kind: "pid", node: self, id: 1, serial: 0, creation };
 
   /** Answer the pid this message carried, on whichever node it names. */
@@ -72,7 +72,7 @@ async function main(): Promise<void> {
     if (pid === null) return;
     console.log(`  answering ${pid.node} directly`);
     const words = `${self} heard ${textIn(said.payload)}`;
-    await reach.send(pid, { kind: "binary", bytes: Buffer.from(words, "utf8") });
+    await cluster.send(pid, { kind: "binary", bytes: Buffer.from(words, "utf8") });
   };
 
   /** Print what arrives on one connection, and answer a pid if the message carried one. */
@@ -93,7 +93,7 @@ async function main(): Promise<void> {
   const node = await listen({ self, cookie, creation, host, port }, {
     onConnection(peer, messages) {
       // A connection that arrived is the way to that node: a pid on it is answered over this, not over a new one.
-      reach.adopt(peer, messages);
+      cluster.adopt(peer, messages);
       console.log(`${peer.name} connected (incarnation ${peer.creation})`);
       report(peer.name, messages);
     },
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   console.log(`${self} listening on ${host}:${node.port}, registered with ${mapperAt}`);
 
   if (say !== null) {
-    const channel = await reach.channel(say);
+    const channel = await cluster.channel(nodeRef(say));
     // What comes back on this side's own connection is the same kind of news as what arrives on an accepted one.
     report(say, channel);
     console.log(`saying ${JSON.stringify(message)} to ${to} on ${say}`);
@@ -129,7 +129,7 @@ async function main(): Promise<void> {
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       void (async () => {
-        await reach.close();
+        await cluster.close();
         await node.close();
         await registration.close();
         process.exit(0);
