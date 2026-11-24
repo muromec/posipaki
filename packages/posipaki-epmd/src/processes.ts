@@ -26,7 +26,7 @@ export interface RemoteProcess {
   /** Its address there. */
   readonly pid: PidTerm;
   /** One term to it, over the connection its pid arrived on. */
-  send(body: Term): Promise<void>;
+  send(body: VisibleTerm): Promise<void>;
 }
 
 /** The leaf that stands for a process of the other node. */
