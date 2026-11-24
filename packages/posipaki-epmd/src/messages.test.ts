@@ -7,6 +7,7 @@ import { describe, expect, it } from "vitest";
 
 import { memoryChannelPair } from "posipaki/port";
 import { decode, encode, withMeaning, type WireMessage } from "./messages.js";
+import { binary, tuple } from "./terms.js";
 
 
 const hex = (value: string): Uint8Array => new Uint8Array(Buffer.from(value, "hex"));
@@ -71,7 +72,7 @@ describe("encode", () => {
       {
         kind: "message",
         control: { kind: "regSend", from: { kind: "int", value: 1 }, to: "robot" },
-        payload: { kind: "tuple", items: [{ kind: "binary", bytes: Buffer.from([1, 2]) }] },
+        payload: tuple(binary(Buffer.from([1, 2]))),
       },
     ];
     for (const message of messages) expect(decode(encode(message))).toEqual(message);

@@ -13,7 +13,10 @@ import {
   render,
   TermReader,
   tuple,
+  list,
+  map,
   type Term,
+  write,
 } from "./terms.js";
 
 const bytes = (...values: number[]): Uint8Array => new Uint8Array(values);
@@ -26,27 +29,27 @@ function read(encoded: Uint8Array): Term {
 
 describe("terms", () => {
   it("writes an atom in its short form, and a long one in its wide form", () => {
-    expect([...atom("hi")]).toEqual([119, 2, 0x68, 0x69]);
-    expect([...atom("x".repeat(300)).subarray(0, 3)]).toEqual([118, 1, 0x2c]);
+    expect([...write(atom("hi"))]).toEqual([119, 2, 0x68, 0x69]);
+    expect([...write(atom("x".repeat(300))).subarray(0, 3)]).toEqual([118, 1, 0x2c]);
   });
 
   it("writes a small integer in one byte and a big one in five", () => {
-    expect([...integer(6)]).toEqual([97, 6]);
-    expect([...integer(70_000)]).toEqual([98, 0, 1, 0x11, 0x70]);
+    expect([...write(integer(6))]).toEqual([97, 6]);
+    expect([...write(integer(70_000))]).toEqual([98, 0, 1, 0x11, 0x70]);
   });
 
   it("writes a binary with a four-byte length whatever its size", () => {
-    expect([...binary(text("hi"))]).toEqual([109, 0, 0, 0, 2, 0x68, 0x69]);
+    expect([...write(binary(text("hi")))]).toEqual([109, 0, 0, 0, 2, 0x68, 0x69]);
   });
 
   it("writes a pid as its node, then its id, serial and creation", () => {
-    const encoded = pid("n@h", 1, 0, 0x3039);
+    const encoded = write(pid("n@h", 1, 0, 0x3039));
     expect([...encoded.subarray(0, 9)]).toEqual([88, 119, 3, 0x6e, 0x40, 0x68, 0, 0, 0]);
     expect([...encoded.subarray(9)]).toEqual([1, 0, 0, 0, 0, 0, 0, 0x30, 0x39]);
   });
 
   it("reads back what it writes", () => {
-    const written = tuple([integer(6), pid("posipaki@tomato", 1, 0, 12_345), atom("robot")]);
+    const written = write(tuple(integer(6), pid("posipaki@tomato", 1, 0, 12_345), atom("robot")));
     expect(read(written)).toEqual({
       kind: "tuple",
       items: [

@@ -20,43 +20,44 @@ export type Term =
   | { kind: "pid"; node: string; id: number; serial: number; creation: number }
   | { kind: "ref"; node: string };
 
-export function atom(name: string): Buffer {
-  const bytes = Buffer.from(name, "utf8");
-  if (bytes.length < 256) return Buffer.concat([Buffer.from([119, bytes.length]), bytes]);
-  const head = Buffer.alloc(3);
-  head[0] = 118; // ATOM_UTF8_EXT
-  head.writeUInt16BE(bytes.length, 1);
-  return Buffer.concat([head, bytes]);
+// ── the terms this side composes ────────────────────────────────────────────
+//
+// A message is built the same way wherever it is built: `tuple([ourPid, binary(<<"hi">>)])`, and `write` is the only
+// thing that turns one into octets. Two ways to build — constructors and writers — was one way too many.
+
+/** An atom. */
+export function atom(name: string): Term {
+  return { kind: "atom", name };
 }
 
-export function integer(value: number): Buffer {
-  if (value >= 0 && value < 256) return Buffer.from([97, value]);
-  const out = Buffer.alloc(5);
-  out[0] = 98; // INTEGER_EXT
-  out.writeInt32BE(value, 1);
-  return out;
+/** An integer, whatever its size. */
+export function integer(value: number): Term {
+  return { kind: "int", value };
 }
 
-/** A process id on `node`, whose creation value is the one that node announced. */
-export function pid(node: string, id: number, serial: number, creation: number): Buffer {
-  const body = Buffer.alloc(12);
-  body.writeUInt32BE(id, 0);
-  body.writeUInt32BE(serial, 4);
-  body.writeUInt32BE(creation, 8);
-  return Buffer.concat([Buffer.from([88]), atom(node), body]); // NEW_PID_EXT: node first
+/** A binary: the octets, as they are. */
+export function binary(bytes: Uint8Array): Term {
+  return { kind: "binary", bytes: Buffer.from(bytes) };
 }
 
-export function binary(data: Uint8Array): Buffer {
-  // BINARY_EXT carries a 32-bit length whatever the size: there is no small form.
-  const head = Buffer.alloc(5);
-  head[0] = 109;
-  head.writeUInt32BE(data.length, 1);
-  return Buffer.concat([head, data]);
+/** A process id on `node`, minted by the incarnation `creation` names. */
+export function pid(node: string, id: number, serial: number, creation: number): Term {
+  return { kind: "pid", node, id, serial, creation };
+}
+/** A tuple, which is what a message with an address in it always is. */
+
+export function tuple(...items: Term[]): Term {
+  return { kind: "tuple", items };
 }
 
-export function tuple(items: Buffer[]): Buffer {
-  if (items.length > 255) throw new Error(`a tuple of ${items.length} items has no small-tuple tag`);
-  return Buffer.concat([Buffer.from([104, items.length]), ...items]);
+/** A list, in the order it will be read. */
+export function list(...items: Term[]): Term {
+  return { kind: "list", items };
+}
+
+/** A map, as its pairs. */
+export function map(...pairs: Array<[Term, Term]>): Term {
+  return { kind: "map", pairs };
 }
 
 /** Reads the terms of a packet, one after another, from the byte after its version magic. */
@@ -231,18 +232,18 @@ export function render(term: Term): string {
 }
 
 /**
- * The octets of a term that was built as a value.
+ * The octets of a term.
  *
- * The writers above are for the terms this script composes; this is for a term that came from elsewhere — read
- * from a node, or written by a test — and has to go back on the wire. A reference is read but never written
- * here: nothing this script says is identified by one, and an id it cannot mint would be a lie about its node.
+ * This is the only encoder: a message is built with the constructors above, and written here. A reference is read
+ * from a node but never written — nothing this side says is identified by one, and an id it cannot mint would be a
+ * lie about its node — so it is refused with that sentence.
  */
 export function write(term: Term): Buffer {
   switch (term.kind) {
     case "atom":
-      return atom(term.name);
+      return atomBytes(term.name);
     case "int":
-      return integer(term.value);
+      return integerBytes(term.value);
     case "float": {
       const out = Buffer.alloc(9);
       out[0] = 70; // NEW_FLOAT_EXT
@@ -250,10 +251,12 @@ export function write(term: Term): Buffer {
       return out;
     }
     case "binary":
-      return binary(term.bytes);
+      return binaryBytes(term.bytes);
     case "string": {
       const bytes = Buffer.from(term.value, "latin1");
-      if (bytes.length > 0xffff) return write({ kind: "list", items: [...bytes].map((code) => ({ kind: "int", value: code })) });
+      if (bytes.length > 0xffff) {
+        return write({ kind: "list", items: [...bytes].map((code) => ({ kind: "int", value: code })) });
+      }
       const head = Buffer.alloc(3);
       head[0] = 107; // STRING_EXT
       head.writeUInt16BE(bytes.length, 1);
@@ -261,7 +264,7 @@ export function write(term: Term): Buffer {
     }
     case "tuple": {
       const items = term.items.map(write);
-      if (items.length <= 255) return tuple(items);
+      if (items.length <= 255) return Buffer.concat([Buffer.from([104, items.length]), ...items]);
       const head = Buffer.alloc(5);
       head[0] = 105; // LARGE_TUPLE_EXT
       head.writeUInt32BE(items.length, 1);
@@ -281,12 +284,47 @@ export function write(term: Term): Buffer {
       return Buffer.concat([head, ...term.pairs.flatMap(([key, value]) => [write(key), write(value)])]);
     }
     case "pid":
-      return pid(term.node, term.id, term.serial, term.creation);
+      return pidBytes(term.node, term.id, term.serial, term.creation);
     case "ref":
       throw new Error("a reference is read from a node, never written by this script");
   }
 }
 
+/** An atom's octets: the short tag under 256 characters, the wide one past it. */
+function atomBytes(name: string): Buffer {
+  const bytes = Buffer.from(name, "utf8");
+  if (bytes.length < 256) return Buffer.concat([Buffer.from([119, bytes.length]), bytes]);
+  const head = Buffer.alloc(3);
+  head[0] = 118; // ATOM_UTF8_EXT
+  head.writeUInt16BE(bytes.length, 1);
+  return Buffer.concat([head, bytes]);
+}
+
+/** An integer's octets: one byte while it fits, four when it does not. */
+function integerBytes(value: number): Buffer {
+  if (value >= 0 && value < 256) return Buffer.from([97, value]);
+  const out = Buffer.alloc(5);
+  out[0] = 98; // INTEGER_EXT
+  out.writeInt32BE(value, 1);
+  return out;
+}
+
+/** A pid's octets: the node's atom, then the id, the serial and the creation. */
+function pidBytes(node: string, id: number, serial: number, creation: number): Buffer {
+  const body = Buffer.alloc(12);
+  body.writeUInt32BE(id, 0);
+  body.writeUInt32BE(serial, 4);
+  body.writeUInt32BE(creation, 8);
+  return Buffer.concat([Buffer.from([88]), atomBytes(node), body]); // NEW_PID_EXT: the node first
+}
+
+/** A binary's octets: a thirty-two bit length whatever the size, because there is no small form. */
+function binaryBytes(data: Uint8Array): Buffer {
+  const head = Buffer.alloc(5);
+  head[0] = 109; // BINARY_EXT
+  head.writeUInt32BE(data.length, 1);
+  return Buffer.concat([head, data]);
+}
 /**
  * Why a term cannot go on this wire, or null when it can.
  *

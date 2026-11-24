@@ -15,7 +15,7 @@ import { randomBytes } from "node:crypto";
 
 import { installCluster, makeCluster, nodeRef } from "../src/cluster.js";
 import { ErlangProxy, type EtfRaw } from "../src/proxy.js";
-import { render, type Term } from "../src/terms.js";
+import { binary, render, tuple, type Term } from "../src/terms.js";
 import { withTimeout } from "../src/timeout.js";
 import { parseArgs } from "./args.js";
 
@@ -39,10 +39,7 @@ async function main(argv: string[]): Promise<void> {
   // process on the node answers that pid, and only a message that carried it can be answered at all.
   const ref = nodeRef(options.node, options.host, cluster.name);
   const ourPid = cluster.address(ref);
-  const body: Term = {
-    kind: "tuple",
-    items: [ourPid, { kind: "binary", bytes: Buffer.from(options.message, "utf8") }],
-  };
+  const body: Term = tuple(ourPid, binary(Buffer.from(options.message, "utf8")));
 
   const said = new Promise<EtfRaw>((resolve) => {
     void ErlangProxy.spawn({ node: ref, processName: options.to }, { toParent: (message: EtfRaw) => resolve(message) })

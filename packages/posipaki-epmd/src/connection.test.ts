@@ -14,6 +14,7 @@ import { streamChannel } from "posipaki/port";
 import { open } from "./connection.js";
 import { wrapEpmdFrame } from "./frame.js";
 import { decode, encode } from "./messages.js";
+import { binary, tuple } from "./terms.js";
 import type { Term } from "./terms.js";
 import type { WireMessage } from "./messages.js";
 
@@ -104,7 +105,7 @@ function toName(name: string, text: string, creation: number): WireMessage {
   return {
     kind: "message",
     control: { kind: "regSend", from: ourPid, to: name },
-    payload: { kind: "tuple", items: [ourPid, { kind: "binary", bytes: Buffer.from(text, "utf8") }] },
+    payload: tuple(ourPid, binary(Buffer.from(text, "utf8"))),
   };
 }
 

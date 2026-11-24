@@ -8,7 +8,7 @@
 // the exit a node closes a connection with. Anything else is a signal for a node table this script does not keep,
 // and it is named as other rather than silently skipped.
 
-import { render, type Term } from "./terms.js";
+import { atom, integer, render, tuple, type Term } from "./terms.js";
 
 const DOP_SEND = 2;
 const DOP_EXIT = 3;
@@ -65,27 +65,12 @@ export function readControl(term: Term): Control {
 export function writeControl(control: Control): Term {
   switch (control.kind) {
     case "send":
-      return { kind: "tuple", items: [{ kind: "int", value: DOP_SEND }, { kind: "atom", name: "" }, control.to] };
+      return tuple(integer(DOP_SEND), atom(""), control.to);
     case "regSend":
-      return {
-        kind: "tuple",
-        items: [
-          { kind: "int", value: DOP_REG_SEND },
-          control.from,
-          { kind: "atom", name: "" },
-          { kind: "atom", name: control.to },
-        ],
-      };
+      // {DOP_REG_SEND, From, Cookie, ToName}: the cookie slot has been the empty atom since R9B and is not read.
+      return tuple(integer(DOP_REG_SEND), control.from, atom(""), atom(control.to));
     case "exit":
-      return {
-        kind: "tuple",
-        items: [
-          { kind: "int", value: DOP_EXIT },
-          control.from,
-          control.to,
-          control.reason,
-        ],
-      };
+      return tuple(integer(DOP_EXIT), control.from, control.to, control.reason);
     case "other":
       // A signal this client does not act on is not one it can write: its fields are the opcode's own.
       throw new Error(`a control message of opcode ${control.opcode} is not one this side writes`);

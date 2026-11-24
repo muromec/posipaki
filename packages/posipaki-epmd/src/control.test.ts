@@ -6,12 +6,10 @@
 import { describe, expect, it } from "vitest";
 
 import { readControl, writeControl, type Control } from "./control.js";
-import type { Term } from "./terms.js";
+import { atom, integer as int, pid as pidTerm, tuple, type Term } from "./terms.js";
 
-const pid = (node: string): Term => ({ kind: "pid", node, id: 1, serial: 0, creation: 7 });
-const tuple = (...items: Term[]): Term => ({ kind: "tuple", items });
-const int = (value: number): Term => ({ kind: "int", value });
-const atom = (name: string): Term => ({ kind: "atom", name });
+/** A pid on `node`, which is all these cases need to say about one. */
+const pid = (node: string): Term => pidTerm(node, 1, 0, 7);
 
 describe("readControl", () => {
   it("reads a message sent to a process", () => {
@@ -39,7 +37,7 @@ describe("readControl", () => {
   });
 
   it("names an opcode this client does not act on, with its number", () => {
-    const items = [int(1), pid("robot@tomato"), pid("posipaki@host")];
+    const items: Term[] = [int(1), pid("robot@tomato"), pid("posipaki@host")];
     expect(readControl(tuple(...items))).toEqual({ kind: "other", opcode: 1, items });
   });
 
