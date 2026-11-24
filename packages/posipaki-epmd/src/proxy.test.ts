@@ -26,7 +26,8 @@ function fakeCluster() {
   const cluster: Cluster = {
     name: CLUSTER,
     channel: async () => pair.near,
-    address: (): PidTerm => ({ ...PID, id: next++ }),
+    pidOf: (): PidTerm => ({ ...PID, id: next++ }),
+    processOf: () => null,
     send: async () => undefined,
     adopt: () => undefined,
     close: async () => undefined,
@@ -104,6 +105,12 @@ describe("ErlangProxy", () => {
     await far.close("the far end closed");
     await settle();
     expect(ended).toBe(true);
+  });
+
+  it("publishes the pid it answers at", async () => {
+    fakeCluster();
+    const { proxy } = await proxyOf();
+    expect(proxy.state?.erlangPid).toEqual(PID);
   });
 
   it("complains about a term it cannot write, and carries on", async () => {

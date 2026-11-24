@@ -31,7 +31,8 @@ function fakeCluster() {
   const cluster: Cluster = {
     name: CLUSTER,
     channel: async () => pair.near,
-    address: () => OUR_PID,
+    pidOf: () => OUR_PID,
+    processOf: () => null,
     send: async () => undefined,
     adopt: () => undefined,
     close: async () => undefined,

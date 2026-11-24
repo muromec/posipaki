@@ -33,21 +33,20 @@ another is given), `--self` (the node name this side claims, `posipaki@<host>`),
 
 ## A proxy actor
 
-`ErlangProxy` stands for a registered process on that node: `{node: NodeRef, processName}`, state `null`, `ETF_RAW` in
+`ErlangProxy` stands for a registered process on that node: `{node: NodeRef, processName}`, `ETF_RAW` in
 and out, the body being a BEAM term. What goes in becomes a `DOP_REG_SEND` to that name; what the node sends to the
 proxy's pid comes back out.
 
 ```
 const cluster = installCluster(makeCluster({ self: "probe@192.168.88.27", cookie, creation }));
-const ref = nodeRef("robot", "192.168.88.20", cluster.name);
-const proxy = await ErlangProxy.spawn({ node: ref, processName: "echo" });
-await proxy.send({ type: "ETF_RAW", body: { kind: "tuple", items: [cluster.address(ref), text] } });
+const proxy = await ErlangProxy.spawn({ node: nodeRef("robot", "192.168.88.20"), processName: "echo" });
+await proxy.send({ type: "ETF_RAW", body: tuple(proxy.state.erlangPid, binary(text)) });
 ```
 
-Two decisions worth knowing. A reference is a *name* — a cluster and a node in it — so the connection is looked up and
-opened in `setup`, not in the actor's arguments. And one reference is one pid: `cluster.address(ref)` answers the same
-pid every time, which is what lets a caller put "me" in a message a node will answer, while two references are two
-pids on one shared connection.
+The pid it answers at is published on the process: `state.erlangPid`. It is minted from the process's own identity,
+never reused, and `cluster.pidOf(process)` answers the same one however often it is asked; `cluster.processOf(pid)`
+names the process a pid belongs to, in the incarnation this runtime is running now — a pid from an earlier one names
+nobody.
 
 ## Both directions, and a round trip
 

@@ -4,7 +4,8 @@
 // announce, `terms` reads and writes BEAM terms, `control` names the control message a distribution message carries,
 // `messages` says what a frame is, `handshake` proves the cookie from either side, `epmd` is the port mapper at both
 // ends, `connection` and `listen` are the two roles of a connection, `cluster` is the table of the nodes this runtime
-// can reach, and `proxy` is an actor that stands for a process on one of them.
+// can reach — and of the pids its own processes answer at — and `proxy` is an actor that stands for a process on one
+// of them.
 //
 // The demos are in `demo/`: they are the only things here that decide anything about a command line.
 
@@ -14,6 +15,8 @@ export {
   atom,
   binary,
   integer,
+  list,
+  map,
   pid,
   render,
   TermReader,
@@ -50,11 +53,15 @@ export {
   forgetCluster,
   installCluster,
   makeCluster,
+  nodeName,
   nodeRef,
+  refFromName,
+  refOf,
   type Cluster,
   type ClusterOptions,
   type NodeRef,
   type PidTerm,
+  type ProcessHandle,
 } from "./cluster.js";
 
 export { ErlangProxy, samePid, type EtfRaw, type ProxyArgs } from "./proxy.js";

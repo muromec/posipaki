@@ -36,6 +36,11 @@ export interface ProxyArgs {
   readonly processName: string;
 }
 
+/** What a proxy publishes: the pid this side answers at on that node, which is what a peer addresses. */
+export interface EtfPublic {
+  readonly erlangPid: PidTerm;
+}
+
 interface Private {
   readonly node: NodeRef;
   readonly processName: string;
@@ -62,7 +67,7 @@ export const ErlangProxy = defineActor({
   inMessages: defineMessages<EtfRaw>(),
   outMessages: defineMessages<EtfRaw>(),
 
-  async setup(args: ProxyArgs): Promise<{ public: null; private: Private }> {
+  async setup(args: ProxyArgs): Promise<{ public: EtfPublic; private: Private }> {
     const cluster = clusterNamed(args.node.cluster);
     const messages = await cluster.channel(args.node);
     const held: Private = {
@@ -70,7 +75,8 @@ export const ErlangProxy = defineActor({
       processName: args.processName,
       cluster,
       // One pid per proxy: a reply is addressed to it, and one connection carries every proxy of that node.
-      pid: cluster.address(args.node),
+      // The pid belongs to this process: minted from its own identity, so whoever holds this actor can ask for it.
+      pid: cluster.pidOf(this.self),
       messages,
       stopReading: () => undefined,
     };
@@ -83,7 +89,7 @@ export const ErlangProxy = defineActor({
     });
     messages.onClose((reason) => this.exit(`the connection to ${args.node.node} ended: ${reason}`));
 
-    return { public: null, private: held };
+    return { public: { erlangPid: held.pid }, private: held };
   },
 
   beforeEnd() {

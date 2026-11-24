@@ -69,19 +69,33 @@ export interface ClusterOptions {
   readonly locate?: (ref: NodeRef) => Promise<number>;
 }
 
+/** What this runtime knows a process by: its name in the tree, and the symbol the framework gave it. */
+export interface ProcessHandle {
+  readonly pname: string;
+  readonly id: symbol;
+}
+
 /** The nodes one identity of this runtime can reach. */
 export interface Cluster {
   readonly name: string;
   /** The channel to one node, opened on first use and shared by everything that addresses it. */
   channel(ref: NodeRef): Promise<Channel<WireMessage>>;
-  /** A pid of this side for one proxy: a new id per call, so two proxies on a node are two addresses. */
-  address(ref: NodeRef): PidTerm;
+  /**
+   * The node-scoped pid of one process: minted once for its lifetime, from the process's own id, and never reused.
+   *
+   * This is what a peer addresses. A process asks for its pid when it wants to be reachable — the same value comes
+   * back however many times it is asked, and whoever holds the process's handle asks for the same one.
+   */
+  pidOf(process: ProcessHandle): PidTerm;
+  /** The process a pid names, or null: a pid this runtime minted, in the incarnation it is running now. */
+  processOf(pid: PidTerm): ProcessHandle | null;
   /** Sends `payload` to `pid`, connecting to its node if nothing has yet. */
   send(pid: PidTerm, payload: Term): Promise<void>;
   /** Says a connection this side did not open — one that arrived — so a pid on that node uses it. */
   adopt(peer: Peer, messages: Channel<WireMessage>): void;
   close(): Promise<void>;
 }
+
 
 /** A pid, as the wire writes it: a node, an id, a serial, and the incarnation of the node that minted it. */
 export type PidTerm = Extract<Term, { kind: "pid" }>;
@@ -96,7 +110,10 @@ export function makeCluster(options: ClusterOptions): Cluster {
   const name = options.name ?? DEFAULT_CLUSTER;
   const reached = new Map<string, Promise<Reached>>();
   let nextId = 1;
-  const addresses = new WeakMap<NodeRef, PidTerm>();
+
+  /** The pid each process answers at, by the symbol the framework gave it, and who each pid names. */
+  const pids = new Map<symbol, PidTerm>();
+  const owners = new Map<number, ProcessHandle>();
 
   const locate =
     options.locate ??
@@ -137,14 +154,18 @@ export function makeCluster(options: ClusterOptions): Cluster {
   return {
     name,
     channel: async (ref: NodeRef) => (await connection(ref)).messages,
-    address(ref: NodeRef): PidTerm {
-      // One reference is one proxy's identity, so it is minted once: a caller that puts its pid in a message and the
-      // actor that sends from it are then talking about the same address.
-      const known = addresses.get(ref);
+    pidOf(process: ProcessHandle): PidTerm {
+      const known = pids.get(process.id);
       if (known !== undefined) return known;
       const minted: PidTerm = { kind: "pid", node: options.self, id: nextId++, serial: 0, creation: options.creation };
-      addresses.set(ref, minted);
+      pids.set(process.id, minted);
+      owners.set(minted.id, process);
       return minted;
+    },
+    processOf(pid: PidTerm): ProcessHandle | null {
+      // A pid from another incarnation names nobody here: the id space starts again with the node.
+      if (pid.node !== options.self || pid.creation !== options.creation) return null;
+      return owners.get(pid.id) ?? null;
     },
     adopt(peer: Peer, messages: Channel<WireMessage>): void {
       const ref = refOf({ kind: "pid", node: peer.name, id: 0, serial: 0, creation: peer.creation }, name);

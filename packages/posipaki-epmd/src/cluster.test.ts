@@ -106,13 +106,26 @@ describe("cluster", () => {
     );
     expect(peer.said).toEqual([]);
   });
-  it("gives each reference its own pid, and the same one every time", async () => {
+  it("gives each process its own pid, once, and knows it again from that pid", async () => {
     const mine = clusterAt(1);
-    const one = nodeRef("peer", "127.0.0.1", "test");
-    const two = nodeRef("peer", "127.0.0.1", "test");
-    expect(mine.address(one)).toEqual({ kind: "pid", node: "me@127.0.0.1", id: 1, serial: 0, creation: 7 });
-    expect(mine.address(one)).toBe(mine.address(one));
-    expect(mine.address(two).id).toBe(2);
+    const first = { pname: "root:one", id: Symbol("one") };
+    const second = { pname: "root:two", id: Symbol("two") };
+
+    expect(mine.pidOf(first)).toEqual({ kind: "pid", node: "me@127.0.0.1", id: 1, serial: 0, creation: 7 });
+    expect(mine.pidOf(first)).toBe(mine.pidOf(first));
+    expect(mine.pidOf(second).id).toBe(2);
+
+    expect(mine.processOf(mine.pidOf(first))).toBe(first);
+    expect(mine.processOf(mine.pidOf(second))).toBe(second);
+  });
+
+  it("does not answer for a pid of another incarnation, or another node", () => {
+    const mine = clusterAt(1);
+    const one = { pname: "root:one", id: Symbol("one") };
+    const pid = mine.pidOf(one);
+    expect(mine.processOf({ ...pid, creation: 999 })).toBeNull();
+    expect(mine.processOf({ ...pid, node: "somebody@127.0.0.1" })).toBeNull();
+    expect(mine.processOf({ ...pid, id: 404 })).toBeNull();
   });
 });
 
