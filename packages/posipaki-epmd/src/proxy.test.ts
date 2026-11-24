@@ -13,7 +13,7 @@ import { ErlangProxy, type EtfRaw } from "./proxy.js";
 import type { Term } from "./terms.js";
 
 const CLUSTER = "test";
-const REF: NodeRef = nodeRef("robot@192.168.88.20", CLUSTER);
+const REF: NodeRef = nodeRef("robot", "192.168.88.20", CLUSTER);
 const PID: PidTerm = { kind: "pid", node: "probe@192.168.88.27", id: 1, serial: 0, creation: 7 };
 const OTHER: PidTerm = { ...PID, id: 2 };
 
@@ -122,7 +122,7 @@ describe("ErlangProxy", () => {
 
   it("says which clusters exist when the reference names one there is not", async () => {
     await expect(
-      ErlangProxy.spawn({ node: nodeRef("robot@192.168.88.20", "nowhere"), processName: "relay" }),
+      ErlangProxy.spawn({ node: nodeRef("robot", "192.168.88.20", "nowhere"), processName: "relay" }),
     ).rejects.toThrow(/there is no cluster called nowhere/);
   });
 });

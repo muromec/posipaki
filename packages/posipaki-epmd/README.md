@@ -39,7 +39,7 @@ proxy's pid comes back out.
 
 ```
 const cluster = installCluster(makeCluster({ self: "probe@192.168.88.27", cookie, creation }));
-const ref = nodeRef("robot@192.168.88.20", cluster.name);
+const ref = nodeRef("robot", "192.168.88.20", cluster.name);
 const proxy = await ErlangProxy.spawn({ node: ref, processName: "echo" });
 await proxy.send({ type: "ETF_RAW", body: { kind: "tuple", items: [cluster.address(ref), text] } });
 ```

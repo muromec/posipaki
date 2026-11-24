@@ -6,14 +6,14 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
-import { makeCluster, nodeRef, type Cluster } from "./cluster.js";
+import { makeCluster, nodeName, nodeRef, refFromName, refOf, type Cluster } from "./cluster.js";
 import type { Peer } from "./handshake.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
 
 const COOKIE = "pocookie";
 const PEER = "peer@127.0.0.1";
-const REF = nodeRef(PEER, "test");
+
 
 const listeners: Listener[] = [];
 const clusters: Cluster[] = [];
@@ -108,10 +108,23 @@ describe("cluster", () => {
   });
   it("gives each reference its own pid, and the same one every time", async () => {
     const mine = clusterAt(1);
-    const one = nodeRef(PEER, "test");
-    const two = nodeRef(PEER, "test");
+    const one = nodeRef("peer", "127.0.0.1", "test");
+    const two = nodeRef("peer", "127.0.0.1", "test");
     expect(mine.address(one)).toEqual({ kind: "pid", node: "me@127.0.0.1", id: 1, serial: 0, creation: 7 });
     expect(mine.address(one)).toBe(mine.address(one));
     expect(mine.address(two).id).toBe(2);
+  });
+});
+
+describe("a node's name", () => {
+  it("is one atom on the wire, and three fields in a reference", () => {
+    const ref = nodeRef("robot", "192.168.88.20", "test");
+    expect(nodeName(ref)).toBe("robot@192.168.88.20");
+    expect(refFromName("robot@192.168.88.20", "test")).toEqual(ref);
+    expect(refOf({ kind: "pid", node: "robot@192.168.88.20", id: 1, serial: 0, creation: 7 }, "test")).toEqual(ref);
+  });
+
+  it("is refused when it names no host", () => {
+    expect(() => refFromName("nobody", "test")).toThrow("nobody is not a node name: it has no host");
   });
 });

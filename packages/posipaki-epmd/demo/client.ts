@@ -37,7 +37,7 @@ async function main(argv: string[]): Promise<void> {
 
   // The reference is the proxy's identity, so the pid minted from it here is the one the actor will send from: a
   // process on the node answers that pid, and only a message that carried it can be answered at all.
-  const ref = nodeRef(`${options.node}@${options.host}`, cluster.name);
+  const ref = nodeRef(options.node, options.host, cluster.name);
   const ourselves = cluster.address(ref);
   const body: Term = {
     kind: "tuple",

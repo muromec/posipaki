@@ -14,7 +14,7 @@ import { randomBytes } from "node:crypto";
 
 import type { Channel } from "posipaki/port";
 
-import { installCluster, makeCluster, nodeRef, type PidTerm } from "../src/cluster.js";
+import { installCluster, makeCluster, refFromName, type PidTerm } from "../src/cluster.js";
 import { epmdRegister } from "../src/epmd.js";
 import { listen } from "../src/listen.js";
 import type { WireMessage } from "../src/messages.js";
@@ -112,7 +112,7 @@ async function main(): Promise<void> {
   console.log(`${self} listening on ${host}:${node.port}, registered with ${mapperAt}`);
 
   if (say !== null) {
-    const channel = await cluster.channel(nodeRef(say));
+    const channel = await cluster.channel(refFromName(say, cluster.name));
     // What comes back on this side's own connection is the same kind of news as what arrives on an accepted one.
     report(say, channel);
     console.log(`saying ${JSON.stringify(message)} to ${to} on ${say}`);
