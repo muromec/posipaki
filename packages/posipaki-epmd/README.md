@@ -1,7 +1,7 @@
 # posipaki-epmd
 
 Talk to an Erlang node over its own distribution protocol: ask epmd where a node listens, prove a cookie, and exchange
-BEAM terms with it — from an actor, or from a client that sends one message.
+BEAM terms with it — from an actor, from a client that sends one message, or as a node that answers.
 
 The medium is a posipaki port channel (`socketChannel` from `posipaki/port/node`). Everything the protocol needs above
 it is written here.
@@ -55,24 +55,34 @@ tomato answers node 1, then hands the *same* message to node 3; node 3 answers n
 connection node 3 opens, and a pid it has never seen the node of.
 
 ```
-# on this host
-bun demo/mapper.ts                                                 # answers "where does a node listen" at :4369
+# on this host, with demo/mapper.ts answering "where does a node listen" at :4369
 bun demo/node.ts --name posipaki@192.168.88.27 --port 46002        # node 3: answers, and accepts
 bun demo/node.ts --name probe@192.168.88.27 --port 46001 \
     --say robot@192.168.88.20 --to relay                           # node 1: says hi, and accepts
 ```
 
+The node is a handle, not a process: `cluster.node({port})` listens and registers with the mapper at the node's own host,
+and `node.serve(name, process)` gives it an ordinary actor to answer with.
+
+```
+const node = await cluster.node({ port: 46002 });
+node.serve("posipaki", answerer);
+```
+
 The two logs, in order:
 
 ```
-probe@…:   saying "hi" to relay on robot@192.168.88.20
-posipaki@…: robot@192.168.88.20 connected        # tomato found us through our mapper and opened this
-posipaki@…:   regSend: {#PID<probe@192.168.88.27.1.0>, hi}
-posipaki@…:   answering probe@192.168.88.27 directly
-probe@…:   robot@192.168.88.20 send: tomato: hi   # tomato's own answer, on the connection node 1 opened
-probe@…: posipaki@192.168.88.27 connected         # node 3 opening a connection of its own
-probe@…:   posipaki@192.168.88.27 send: posipaki@192.168.88.27 heard hi
+probe@…:      saying "hi" to relay on robot@192.168.88.20
+posipaki@…:   asked by #remote<robot@192.168.88.20.91>: {#remote<probe@192.168.88.27.1>, hi}
+probe@…:      asked by nobody the wire named: tomato: hi
+probe@…:      and nothing to answer: the term names no process
+probe@…:      asked by nobody the wire named: {#remote<posipaki@192.168.88.27.1>, answering, done}
+probe@…:      and nothing to answer: only a hi is answered
 ```
+
+Node 3 answered `{#remote<probe@…>, hi}` over a connection it opened itself. Node 1 heard that answer as a `DOP_SEND`,
+which carries no sender, so the term's own pid is the only way back — which is why the answerer reads the address out of
+the term rather than from a field.
 
 ## The layers
 
@@ -91,17 +101,19 @@ Bottom up, one file each, each with its own tests:
 - `cluster.ts` — the nodes one identity can reach: discovery, one connection per node, and the pids this side answers
   at. A `NodeRef` names a cluster and a node in it; nothing in it is a connection.
 - `proxy.ts` — a registered process on a node as an actor here.
+- `node.ts` — this side as a node: a listener, a registration, and the two tables that route what a peer sends. A served
+  process is an ordinary actor: `ETF_RAW {from?, body}` in, `{to, body}` out.
 - `index.ts` — the exports; nothing in it decides anything.
 - `demo/` — `client.ts`, `node.ts`, `mapper.ts`, and the command-line parser they share.
 
-`bun test` in this directory runs every layer's tests: memory channels for the framing and the meaning, real sockets
-for the connections, with only the node itself faked.
+`bun test` in this directory runs every layer's tests: memory channels for the framing and the meaning, real sockets for
+the connections, and a real node on a port of its own for what a node serves.
 
 ## What it does not do
 
 - No atom cache in the distribution header and no fragments, so every message is a pass-through byte and a plain term,
   the way `ei` sends them.
-- No monitors, no links, no `EXIT` back to a peer, and no process registry on this side: a name in a `DOP_REG_SEND` is
-  handed up as the name it carried, so what a name means is the caller's.
+- No monitors, no links, and no `EXIT` back to a peer. A name is only a name where this side serves one: `node.serve`
+  decides what it means, and a name nothing serves is complained about once and dropped, as erts drops one.
 - Ticks are answered but not started.
 - Distribution is not encrypted. The cookie authenticates; it does not protect the traffic.
