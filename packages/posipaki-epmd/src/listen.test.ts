@@ -80,7 +80,7 @@ describe("listen", () => {
         creation: 7,
         timeoutMs: 400,
       }),
-    ).rejects.toThrow(/the cookie is not the one it knows/);
+    ).rejects.toThrow(/does not know this cookie/);
     // The accepting side names the same fact from its end.
     await new Promise((resolve) => setTimeout(resolve, 200));
     expect(refused.join(" ")).toContain("does not know the cookie");

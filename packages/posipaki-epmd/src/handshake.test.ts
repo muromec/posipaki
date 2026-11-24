@@ -120,10 +120,10 @@ describe("handshake", () => {
     expect(frames.prefix).toBe(4);
   });
 
-  it("names a wrong cookie as the connection ending at the digest", async () => {
+  it("reads a connection that ends at the digest as either the cookie or the node going away", async () => {
     const { frames, messages } = connection({ hangUp: true });
     await expect(handshake({ frames, messages }, options({ timeoutMs: 200 }))).rejects.toThrow(
-      /the cookie is not the one it knows/,
+      /does not know this cookie, or went away before ours was read/,
     );
   });
 

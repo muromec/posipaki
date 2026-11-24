@@ -95,11 +95,12 @@ export async function initiate(ports: HandshakePorts, options: HandshakeOptions)
     });
     ack = await heard.next(options.timeoutMs, "no answer to our digest");
   } catch (error) {
-    // erts sends nothing when the digest is wrong: it drops the connection, and the send of our own may be the
-    // write that finds that out.
+    // erts sends nothing when the digest is wrong: it drops the connection, which is what a node that went away
+    // looks like from here, and a send of our own may be the write that finds either one out.
     const why = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `the node dropped the connection at the digest: the cookie is not the one it knows (${why})`,
+      `the connection ended at the digest: ${challenge.name} does not know this cookie, ` +
+        `or went away before ours was read (${why})`,
     );
   }
   if (ack.kind !== "ack") {

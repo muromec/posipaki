@@ -161,8 +161,19 @@ describe("open", () => {
         })();
       });
     });
-    await expect(
-      open(port, { host: "127.0.0.1", node: "robot", cookie: "another cookie", creation: 7, timeoutMs: 500 }),
-    ).rejects.toThrow(/the cookie is not the one it knows/);
+    const refused = await open(port, {
+      host: "127.0.0.1",
+      node: "robot",
+      cookie: "another cookie",
+      creation: 7,
+      timeoutMs: 500,
+    }).then(
+      () => "",
+      (error: unknown) => (error instanceof Error ? error.message : String(error)),
+    );
+    // A dropped connection and a wrong cookie read the same from here, so the sentence names both and what the wire
+    // said.
+    expect(refused).toContain("does not know this cookie");
+    expect(refused).toContain("went away before ours was read (the far end closed)");
   });
 });
