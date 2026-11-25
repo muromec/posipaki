@@ -6,8 +6,10 @@
 
 import { createServer, type Socket } from "node:net";
 
-import type { Channel } from "posipaki/port";
+import { streamChannel, type Channel } from "posipaki/port";
 import { socketChannel } from "posipaki/port/node";
+
+import { wrapEpmdFrame, type EpmdFrame } from "./frame.js";
 
 const PORT2_REQ = 122;
 const PORT2_RESP = 119;
@@ -106,34 +108,6 @@ export interface Mapper {
   close(): Promise<void>;
 }
 
-/** Reads a 2-byte-length request off a socket, once. */
-function request(socket: Socket): Promise<Buffer | null> {
-  const chunks: Buffer[] = [];
-  return new Promise<Buffer | null>((resolve) => {
-    const done = (): void => {
-      socket.off("data", onData);
-      socket.off("close", onClose);
-      socket.off("error", onClose);
-    };
-    const onData = (chunk: Buffer): void => {
-      chunks.push(chunk);
-      const all = Buffer.concat(chunks);
-      if (all.length < 2) return;
-      const length = all.readUInt16BE(0);
-      if (all.length < 2 + length) return;
-      done();
-      resolve(all.subarray(2, 2 + length));
-    };
-    const onClose = (): void => {
-      done();
-      resolve(null);
-    };
-    socket.on("data", onData);
-    socket.on("close", onClose);
-    socket.on("error", onClose);
-  });
-}
-
 /** The answer a port lookup gets: the tag, a result, the port, and what the node said about itself. */
 function portReply(port: number, name: string): Buffer {
   const named = Buffer.from(name, "utf8");
@@ -160,41 +134,49 @@ function portReply(port: number, name: string): Buffer {
 export async function serveEpmd(port = 4369): Promise<Mapper> {
   const names = new Map<string, number>();
   const sockets = new Set<Socket>();
+
+  /** One request, its answer, and the connection is over: the shape every request of this protocol has. */
+  const answer = (socket: Socket, frame: EpmdFrame): void => {
+    // The frame layer hands octets, and the fields of this protocol are read as a Buffer.
+    const asked = Buffer.from(frame.buffer, frame.byteOffset, frame.byteLength);
+    if (asked.length === 0) {
+      socket.destroy();
+      return;
+    }
+    if (asked[0] === PORT2_REQ) {
+      const name = asked.subarray(1).toString("utf8");
+      const found = names.get(name);
+      socket.write(found === undefined ? new Uint8Array([PORT2_RESP, 1]) : portReply(found, name));
+      socket.end();
+      return;
+    }
+    if (asked[0] === ALIVE2_REQ) {
+      // 120, PortNo:16, NodeType, Protocol, Highest:16, Lowest:16, Nlen:16, Name, Elen:16, Extra
+      const registered = asked.readUInt16BE(1);
+      const length = asked.readUInt16BE(9);
+      const name = asked.subarray(11, 11 + length).toString("utf8");
+      names.set(name, registered);
+      const reply = Buffer.alloc(6);
+      reply[0] = ALIVE2_X_RESP;
+      reply[1] = 0;
+      reply.writeUInt32BE(names.size, 2); // a creation value: a count tells incarnations apart, which is all this does
+      socket.write(reply);
+      socket.on("close", () => {
+        if (names.get(name) === registered) names.delete(name);
+      });
+      return;
+    }
+    socket.destroy();
+  };
+
   const server = createServer((socket) => {
     sockets.add(socket);
     socket.on("close", () => sockets.delete(socket));
-    void (async () => {
-      const asked = await request(socket);
-      if (asked === null || asked.length === 0) {
-        socket.destroy();
-        return;
-      }
-      if (asked[0] === PORT2_REQ) {
-        const name = asked.subarray(1).toString("utf8");
-        const found = names.get(name);
-        socket.write(found === undefined ? new Uint8Array([PORT2_RESP, 1]) : portReply(found, name));
-        socket.end();
-        return;
-      }
-      if (asked[0] === ALIVE2_REQ) {
-        // 120, PortNo:16, NodeType, Protocol, Highest:16, Lowest:16, Nlen:16, Name, Elen:16, Extra
-        const registered = asked.readUInt16BE(1);
-        const length = asked.readUInt16BE(9);
-        const name = asked.subarray(11, 11 + length).toString("utf8");
-        names.set(name, registered);
-        const answer = Buffer.alloc(6);
-        answer[0] = ALIVE2_X_RESP;
-        answer[1] = 0;
-        answer.writeUInt32BE(names.size, 2); // a creation value: a count is enough to tell incarnations apart here
-        socket.write(answer);
-        socket.on("close", () => {
-          if (names.get(name) === registered) names.delete(name);
-        });
-        return;
-      }
-      socket.destroy();
-    })();
+    // A request carries its length and an answer does not, so the reading is `frame.ts`'s and the writing is the
+    // socket's: that is the protocol, not two ways of doing one thing.
+    wrapEpmdFrame(streamChannel({ read: socket, write: socket })).onFrame((asked) => answer(socket, asked));
   });
+
   const bound = await new Promise<number>((resolve, reject) => {
     server.on("error", (error: NodeJS.ErrnoException) => {
       reject(error.code === "EADDRINUSE" ? new MapperPortTaken(port) : error);
