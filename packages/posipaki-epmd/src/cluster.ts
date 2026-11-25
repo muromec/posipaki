@@ -16,7 +16,15 @@ import type { Channel } from "posipaki/port";
 import { socketChannel } from "posipaki/port/node";
 
 import { open } from "./connection.js";
-import { epmdPort, epmdRegister, type Registration } from "./epmd.js";
+import {
+  epmdPort,
+  epmdRegister,
+  mapperAnswers,
+  MapperPortTaken,
+  serveEpmd,
+  type Mapper,
+  type Registration,
+} from "./epmd.js";
 import type { Peer } from "./handshake.js";
 import type { WireMessage } from "./messages.js";
 import { startNode, type Announce, type ErlangNode, type NodeOptions } from "./node.js";
@@ -77,6 +85,14 @@ export interface ClusterOptions {
    * `false` runs a node nobody can look up, for a caller that names the port itself.
    */
   readonly announce?: ((ref: NodeRef, port: number) => Promise<Registration>) | false;
+  /**
+   * What this runtime does about the mapper on its own host, when it was not given a way to announce itself.
+   *
+   * `start: "never"` (the default) requires a mapper that already answers, which is a host with a real epmd on it.
+   * `"auto"` serves one when none does, which is what a host running only this runtime needs. `port` is the mapper's,
+   * 4369 unless a caller names another.
+   */
+  readonly epmd?: { readonly port?: number; readonly start?: "auto" | "never" };
 }
 
 /** What this runtime knows a process by: its name in the tree, and the symbol the framework gave it. */
@@ -119,17 +135,15 @@ interface Reached {
 }
 
 /** How a cluster's node announces itself: the cluster's own way of telling, or the mapper at the node's host. */
-function announcing(name: string, options: ClusterOptions): Announce {
+function announcing(name: string, options: ClusterOptions, join: Tell): Announce {
   if (options.announce === false) return false;
   const ref = refFromName(options.self, name);
-  const tell = options.announce ?? mapperAt;
+  const tell = options.announce ?? join;
   return async (port: number) => tell(ref, port);
 }
 
-/** The mapper at a node's own host: the one `locate` asks when it looks a node up. */
-function mapperAt(ref: NodeRef, port: number): Promise<Registration> {
-  return epmdRegister({ host: ref.host, name: ref.node, port });
-}
+/** Where a node's registration goes: the mapper one asks, and the port this runtime listens on. */
+type Tell = (ref: NodeRef, port: number) => Promise<Registration>;
 
 export function makeCluster(options: ClusterOptions): Cluster {
   const name = options.name ?? DEFAULT_CLUSTER;
@@ -147,6 +161,29 @@ export function makeCluster(options: ClusterOptions): Cluster {
     (async (ref: NodeRef): Promise<number> => {
       return epmdPort(await socketChannel({ host: ref.host, port: EPMD_PORT }), { host: ref.host, name: ref.node });
     });
+
+  /** The mapper this runtime started for its own host, when the policy said to: it is this process's to close. */
+  let ownMapper: Mapper | null = null;
+
+  /**
+   * The registration that makes this node reachable: the mapper at its host, started here when the policy allows it.
+   *
+   * A port already taken is read as another mapper answering at it. The bind is a race, and on a host where several
+   * processes come and go, losing it is the normal case.
+   */
+  const joinMapper = async (ref: NodeRef, port: number): Promise<Registration> => {
+    const mapperPort = options.epmd?.port ?? EPMD_PORT;
+    if (options.epmd?.start === "auto" && !(await mapperAnswers(ref.host, mapperPort))) {
+      try {
+        ownMapper = await serveEpmd(mapperPort);
+      } catch (error) {
+        // Another process took the port between the probe and this bind: its mapper answers, so the registration
+        // goes there instead of this node failing to start.
+        if (!(error instanceof MapperPortTaken)) throw error;
+      }
+    }
+    return epmdRegister({ host: ref.host, name: ref.node, port, mapperPort });
+  };
 
   /** One connection per node, opened on first use: the table is keyed by the name the wire knows it by. */
   const connection = (ref: NodeRef): Promise<Reached> => {
@@ -220,7 +257,7 @@ export function makeCluster(options: ClusterOptions): Cluster {
       if (serving !== null) {
         throw new Error(`the cluster ${name} already runs a node`);
       }
-      const announce = announcing(name, options);
+      const announce = announcing(name, options, joinMapper);
       const started = await startNode(
         {
           cluster: made,
@@ -245,6 +282,9 @@ export function makeCluster(options: ClusterOptions): Cluster {
         const found = await pending.catch(() => null);
         await found?.messages.close("this side is done").catch(() => undefined);
       }
+      // A mapper this runtime started goes with it: the registrations were connections to it, and both end here.
+      await ownMapper?.close().catch(() => undefined);
+      ownMapper = null;
     },
   };
   return made;

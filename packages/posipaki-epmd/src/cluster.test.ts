@@ -6,7 +6,12 @@
 
 import { afterEach, describe, expect, it } from "vitest";
 
+import { createServer } from "node:net";
+
+import { socketChannel } from "posipaki/port/node";
+
 import { makeCluster, nodeName, nodeRef, refFromName, refOf, type Cluster } from "./cluster.js";
+import { epmdPort, mapperAnswers, serveEpmd } from "./epmd.js";
 import type { Peer } from "./handshake.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
@@ -139,5 +144,69 @@ describe("a node's name", () => {
 
   it("is refused when it names no host", () => {
     expect(() => refFromName("nobody", "test")).toThrow("nobody is not a node name: it has no host");
+  });
+});
+
+/** A port on this host that nothing holds: bound once to learn it, and let go. */
+async function freePort(): Promise<number> {
+  const server = createServer();
+  const port = await new Promise<number>((resolve) => {
+    server.listen(0, "0.0.0.0", () => {
+      const address = server.address();
+      resolve(address === null || typeof address === "string" ? 0 : address.port);
+    });
+  });
+  await new Promise<void>((resolve) => server.close(() => resolve()));
+  return port;
+}
+
+/** A cluster whose only way to announce itself is the policy: no `announce`, a mapper port the test names. */
+function clusterWith(epmd: { port: number; start?: "auto" | "never" }): Cluster {
+  const made = makeCluster({ name: "epmd", self: "me@127.0.0.1", cookie: COOKIE, creation: 7, epmd, timeoutMs: 2_000 });
+  clusters.push(made);
+  return made;
+}
+
+describe("the mapper a node joins", () => {
+  it("serves one when the policy says auto and none answers, and closes it with the runtime", async () => {
+    const mapperPort = await freePort();
+    const mine = clusterWith({ port: mapperPort, start: "auto" });
+    const node = await mine.node({ host: "127.0.0.1", port: 0 });
+
+    const asked = await epmdPort(await socketChannel({ host: "127.0.0.1", port: mapperPort }), {
+      host: "127.0.0.1",
+      name: "me",
+    });
+    expect(asked).toBe(node.port);
+
+    await node.close();
+    await mine.close();
+    // The mapper was this runtime's, and a registration is a connection to it: both end here.
+    expect(await mapperAnswers("127.0.0.1", mapperPort)).toBe(false);
+  });
+
+  it("fails a node's start when none answers and the policy does not start one", async () => {
+    const mapperPort = await freePort();
+    const mine = clusterWith({ port: mapperPort });
+    await expect(mine.node({ host: "127.0.0.1", port: 0 })).rejects.toThrow(
+      `no mapper answered at 127.0.0.1:${mapperPort}`,
+    );
+  });
+
+  it("joins a mapper that is already answering, and leaves it running", async () => {
+    const mapperPort = await freePort();
+    const mapper = await serveEpmd(mapperPort);
+    try {
+      const mine = clusterWith({ port: mapperPort, start: "auto" });
+      const node = await mine.node({ host: "127.0.0.1", port: 0 });
+      expect(mapper.find("me")).toBe(node.port);
+
+      await node.close();
+      await mine.close();
+      // Not this runtime's to close: another process may have started it, and the nodes of that host share it.
+      expect(await mapperAnswers("127.0.0.1", mapperPort)).toBe(true);
+    } finally {
+      await mapper.close();
+    }
   });
 });

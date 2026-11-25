@@ -84,19 +84,25 @@ tomato answers node 1, then hands the *same* message to node 3; node 3 answers n
 connection node 3 opens, and a pid it has never seen the node of.
 
 ```
-# on this host, with demo/mapper.ts answering "where does a node listen" at :4369
+# on this host, with `bun src/mapper-cli.ts` answering "where does a node listen" at :4369
 bun demo/node.ts --name posipaki@192.168.88.27 --port 46002        # node 3: answers, and accepts
 bun demo/node.ts --name probe@192.168.88.27 --port 46001 \
     --say robot@192.168.88.20 --to relay                           # node 1: says hi, and accepts
 ```
 
-The node is a handle, not a process: `cluster.node({port})` listens and registers with the mapper at the node's own host,
-and `node.serve(name, process)` gives it an ordinary actor to answer with.
+The node is a handle, not a process: `cluster.node()` listens and registers with the mapper at the node's own host, and
+`node.serve(name, process)` gives it an ordinary actor to answer with. Its port is the OS's to pick: a mapper is what
+makes a node findable, and a node whose port must be known is one nobody can look up.
 
 ```
-const node = await cluster.node({ port: 46002 });
+const node = await cluster.node({ port: 46002 });   // a fixed port, for a host with no mapper at all
 node.serve("posipaki", answerer);
 ```
+
+A host that already runs a mapper — a real epmd, or `posipaki-epmd-mapper` — is the default: a node registers with it and
+fails its start when none answers. `epmd: { start: "auto" }` on the cluster runs one inside the node instead, for a host
+with nothing else on it. Only one mapper can hold a port, so a second one loses the bind and reads that as the first
+one answering.
 
 The two logs, in order:
 
@@ -135,7 +141,9 @@ Bottom up, one file each, each with its own tests:
 - `node.ts` — this side as a node: a listener, a registration, and the two tables that route what a peer sends. A served
   process is an ordinary actor: `ETF_RAW {from?, body}` in, `{to, body}` out.
 - `index.ts` — the exports; nothing in it decides anything.
-- `demo/` — `client.ts`, `node.ts`, `monitored.ts`, `mapper.ts`, and the argument parsing they share.
+- `demo/` — `client.ts`, `node.ts`, `monitored.ts`, and the argument parsing `client.ts` uses.
+- `src/mapper-cli.ts` — the mapper as a program (`posipaki-epmd-mapper`, or `bun src/mapper-cli.ts`). A node with
+  `epmd: { start: "auto" }` runs the same `serveEpmd` inside itself; this is the copy that outlives it.
 
 `bun test` in this directory runs every layer's tests: memory channels for the framing and the meaning, real sockets for
 the connections, and a real node on a port of its own for what a node serves.

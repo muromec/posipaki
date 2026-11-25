@@ -66,6 +66,31 @@ const ALIVE2_X_RESP = 118;
 
 /** The port a mapper listens on, on any host this protocol talks to. */
 const EPMD_PORT = 4369;
+
+/**
+ * A mapper's port that a process already holds.
+ *
+ * A node's policy decides what that means: `start: "never"` reports it, `"auto"` reads it as another mapper answering
+ * at that port and registers there.
+ */
+export class MapperPortTaken extends Error {
+  constructor(port: number) {
+    super(`a mapper cannot bind ${port}: the port is in use, which is what another mapper on this host looks like`);
+    this.name = "MapperPortTaken";
+  }
+}
+
+/** Whether a mapper answers at `host:port`: a connection opened and let go without asking it anything. */
+export async function mapperAnswers(host: string, port: number = EPMD_PORT): Promise<boolean> {
+  try {
+    const channel = await socketChannel({ host, port });
+    await channel.close("a probe").catch(() => undefined);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 /** The node type a hidden node registers with: it is in the mesh, not in the global namespace. */
 const NODE_TYPE_HIDDEN = 72;
 const PROTOCOL_TCP_IPV4 = 0;
@@ -171,7 +196,9 @@ export async function serveEpmd(port = 4369): Promise<Mapper> {
     })();
   });
   const bound = await new Promise<number>((resolve, reject) => {
-    server.on("error", reject);
+    server.on("error", (error: NodeJS.ErrnoException) => {
+      reject(error.code === "EADDRINUSE" ? new MapperPortTaken(port) : error);
+    });
     server.listen(port, "0.0.0.0", () => {
       const address = server.address();
       resolve(address === null || typeof address === "string" ? port : address.port);
@@ -217,7 +244,15 @@ export async function epmdRegister(options: {
   readonly port: number;
   readonly mapperPort?: number;
 }): Promise<Registration> {
-  const channel = await socketChannel({ host: options.host, port: options.mapperPort ?? EPMD_PORT });
+  const mapperPort = options.mapperPort ?? EPMD_PORT;
+  // Nothing listening is this node's start failing, so it is said as what was missing rather than as a socket error.
+  const channel = await socketChannel({ host: options.host, port: mapperPort }).catch((error: unknown) => {
+    throw new Error(
+      `no mapper answered at ${options.host}:${mapperPort}, which ${options.name} needs to be found: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  });
   const named = Buffer.from(options.name, "utf8");
   const asked = Buffer.alloc(11 + named.length + 2);
   asked[0] = ALIVE2_REQ;

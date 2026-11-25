@@ -11,6 +11,7 @@
     "dist"
   ],
   "type": "module",
+  "bin": { "posipaki-epmd-mapper": "./dist/mapper-cli.js" },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -24,7 +25,7 @@
     "prepack": "bash ../../scripts/package-build.sh",
     "client": "bun demo/client.ts",
     "node": "bun demo/node.ts",
-    "mapper": "bun demo/mapper.ts"
+    "mapper": "bun src/mapper-cli.ts"
   },
   "dependencies": {
     "posipaki": "^0.51.0"

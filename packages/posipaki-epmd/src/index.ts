@@ -43,7 +43,16 @@ export {
   type Peer,
 } from "./handshake.js";
 
-export { epmdPort, epmdRegister, serveEpmd, type Lookup, type Mapper, type Registration } from "./epmd.js";
+export {
+  epmdPort,
+  epmdRegister,
+  mapperAnswers,
+  MapperPortTaken,
+  serveEpmd,
+  type Lookup,
+  type Mapper,
+  type Registration,
+} from "./epmd.js";
 
 export { connect, open, type Connection, type ConnectionOptions } from "./connection.js";
 
