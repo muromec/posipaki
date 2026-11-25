@@ -48,6 +48,18 @@ const Answerer = defineActor({
   },
 });
 
+/** Throws on every term it is given: what a peer sees when a served process dies of an error. */
+const Crasher = defineActor({
+  name: "crasher",
+  inMessages: defineMessages<EtfAsked>(),
+  outMessages: defineMessages<never>(),
+  handlers: {
+    ETF_RAW() {
+      throw new Error("the handler gave up");
+    },
+  },
+});
+
 /** A node listening on a port nobody knows, and a peer connected to it. */
 interface Serving {
   readonly cluster: Cluster;
@@ -316,5 +328,29 @@ describe("a node", () => {
     await answerer.stop();
     await node.close();
     expect(frames).toHaveLength(2);
+  });
+
+  it("answers a watch with the failure a process died of, not with normal", async () => {
+    const { cluster, node, peer, frames } = await serving();
+    const crasher = await Crasher.spawn(undefined);
+    node.serve("crash", crasher);
+    running.push(async () => crasher.stop());
+    const address = cluster.pidOf({ pname: crasher.pname, id: crasher.id });
+    const ref = reference(PEER, 14);
+    await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
+    await beat(peer);
+    await until(() => frames.length === 1, "the watch to be read");
+
+    // A send carries no sender, and that is all this needs: the term is what makes the handler throw.
+    await peer.send({ kind: "message", control: { kind: "send", to: address }, payload: atom("boom") });
+    await until(() => frames.length === 2, "the ending to be reported");
+
+    expect(frames[1]?.kind === "message" && frames[1].control).toEqual({
+      kind: "monitorExit",
+      from: address,
+      to: PEER_PID,
+      ref,
+      reason: tuple(atom("error"), binary(Buffer.from("the handler gave up", "utf8"))),
+    });
   });
 });

@@ -19,7 +19,7 @@ import type { Registration } from "./epmd.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
 import { forHere, forWire, type RemoteProcess, type VisibleTerm } from "./processes.js";
-import { atom, render, type Term } from "./terms.js";
+import { atom, binary, render, tuple, type Term } from "./terms.js";
 
 /** A term from a node, and who asked. `from` is absent when the wire did not say: a send addressed to us carries none. */
 export interface EtfAsked {
@@ -46,6 +46,13 @@ export interface ServedProcess {
   readonly id: symbol;
   send(message: Message): unknown;
   subscribe(channel: "message", cb: (message: Message, from: SenderInfo) => void): () => void;
+  /**
+   * Settles when the process is over, and rejects with the error when it died of one.
+   *
+   * The EXIT on the message channel says a process ended and not why: a reason is only what one asked for, and a
+   * crash is a rejection here. A watch has to answer with the failure, so the node reads both.
+   */
+  wait(): Promise<unknown>;
 }
 
 /** A watch a peer set on a process of this node, until the process ends or the peer cancels it. */
@@ -166,20 +173,14 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     if (ref.kind === "ref") watches.delete(ref.bytes.toString("hex"));
   };
 
-  /**
-   * Tells every peer watching `process` that it ended.
-   *
-   * What goes on the wire is `normal`: a reason this side was given is prose for its own log, and a crash arrives on the
-   * process's error path rather than on its out-messages, so a crash is not told apart here yet.
-   */
-  const answerEnded = (process: ServedProcess): void => {
+  /** Tells every peer watching `process`, in the words the wire uses for it, that the process is over. */
+  const answerEnded = (process: ServedProcess, reason: Term): void => {
     for (const [key, watch] of watches) {
       if (watch.process !== process) continue;
       watches.delete(key);
-      answerWatch(watch.messages, watch.asked, watch.watcher, watch.ref, atom("normal"));
+      answerWatch(watch.messages, watch.asked, watch.watcher, watch.ref, reason);
     }
   };
-
   /** What a peer says, read on the connection it said it on: a message goes to the process it names, a watch is kept. */
   const deliveredOn = (messages: Channel<WireMessage>) => (said: WireMessage): void => {
     if (said.kind !== "message") return;
@@ -249,14 +250,19 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
       process.id,
       process.subscribe("message", (message) => {
         if (message.type === "EXIT") {
-          // The watchers hear it before the process is forgotten: the name it was watched by is what they are told.
-          answerEnded(process);
           forget(process);
           return;
         }
         if (!isAnswer(message)) return;
         void message.to.send(message.body);
       }),
+    );
+    // A process ends twice: the EXIT lets go of its name, and the promise says why. A crash leaves its error on that
+    // promise and nowhere else, so the watch is answered from there — after the name is gone, which the answer does not
+    // need: it carries the address the peer asked with.
+    void process.wait().then(
+      () => answerEnded(process, atom("normal")),
+      (failure: unknown) => answerEnded(process, failureTerm(failure)),
     );
   };
 
@@ -324,4 +330,14 @@ function described(control: Control): string {
   if (control.kind === "regSend") return `the name ${control.to}`;
   if (control.kind !== "send" || control.to.kind !== "pid") return "an address this side does not read";
   return `the pid ${control.to.node}.${control.to.id}`;
+}
+
+/**
+ * The failure a process died of, as a peer reads it: `{error, Message}`.
+ *
+ * A term of its own, so a peer can match it. The stack is not carried: what a peer acts on is that this was a failure,
+ * and a sentence is what this side has.
+ */
+function failureTerm(failure: unknown): Term {
+  return tuple(atom("error"), binary(Buffer.from(failure instanceof Error ? failure.message : String(failure), "utf8")));
 }

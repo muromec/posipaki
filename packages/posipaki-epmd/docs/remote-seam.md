@@ -34,7 +34,7 @@ value of the node that minted it. A name is an atom registered on that node.
 | `$init {name, args}` | nothing | a node is not a session. A root has to become a *registered name that answers* — a registry actor |
 | `$msg {fromName, body}` | `DOP_SEND`/`DOP_REG_SEND` and a term | the body must be a term, and the sender is the control's `From` pid — `fromName` disappears |
 | `$state` | nothing | a call: `inspect.getState` over reflection, or a message shaped like one |
-| `$exit {code, state}` | a monitor's `DOWN` | the reason is a term; what goes there today is `normal`, and the state has nowhere to ride |
+| `$exit {code, state}` | a monitor's `DOWN` | the reason is `normal`, or `{error, Message}` for a failure; the state has nowhere to ride |
 | `$stop`, `$pause`, `$resume`, `$release`, `$tune` | nothing | mailbox control is not an Erlang feature. `stop` is an exit signal; the rest are either dropped or emulated by the process itself |
 | `$r.call.<name> {seq, args}` | nothing | a call convention with a correlation id and a deadline. Erlang's own call is a convention too (`gen_server`), so ours has to be written down and lived with |
 | `$proto` | the handshake, and the flags | the *frame vocabulary's* version has no slot in the handshake, so it needs a first message |
