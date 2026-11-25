@@ -21,7 +21,7 @@ import type { Channel } from "posipaki/port";
 
 import { clusterNamed, type Cluster, type NodeRef, type PidTerm } from "./cluster.js";
 import type { WireMessage } from "./messages.js";
-import { forHere, forWire, type RemoteProcess, type VisibleTerm } from "./processes.js";
+import { forHere, forWire, remoteProcess, type VisibleTerm } from "./processes.js";
 import type { Term } from "./terms.js";
 
 /** The one message shape a proxy has: the BEAM term itself, in and out. */
@@ -101,7 +101,7 @@ export const ErlangProxy = defineActor({
         type: "ETF_RAW",
         body: forHere(said.payload, {
           here: (pid) => held.cluster.processOf(pid),
-          there: (pid) => remoteTo(pid, held.messages, held.cluster),
+          there: (pid) => remoteProcess(pid, held.cluster),
         }),
       });
     });
@@ -151,23 +151,3 @@ function named(to: Term, held: Private): boolean {
   return samePid(to, held.pid) || (held.caller !== null && samePid(to, held.caller));
 }
 
-/** A process of the other node, as it is handed to a caller: the pid it arrived with, and the way back to it. */
-function remoteTo(pid: PidTerm, messages: Channel<WireMessage>, cluster: Cluster): RemoteProcess {
-  return {
-    wait: async () => {
-      const watch = await cluster.watch(pid);
-      return forHere(await watch.ended, {
-        here: (found) => cluster.processOf(found),
-        there: (found) => remoteTo(found, messages, cluster),
-      });
-    },
-    pid,
-    send: async (body: Term): Promise<void> => {
-      await messages.send({
-        kind: "message",
-        control: { kind: "send", to: pid },
-        payload: forWire(body, (handle) => cluster.pidOf(handle)),
-      });
-    },
-  };
-}

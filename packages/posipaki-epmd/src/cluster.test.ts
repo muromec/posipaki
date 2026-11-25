@@ -9,6 +9,7 @@ import { defineActor, defineMessages } from "posipaki";
 
 import { createServer } from "node:net";
 
+import type { Channel } from "posipaki/port";
 import { socketChannel } from "posipaki/port/node";
 
 import { makeCluster, nodeName, nodeRef, refFromName, refOf, type Cluster } from "./cluster.js";
@@ -17,7 +18,7 @@ import type { Peer } from "./handshake.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
 import type { EtfAsked } from "./node.js";
-import { atom } from "./terms.js";
+import { atom, integer, list, pid as pidTerm, tuple, type Term } from "./terms.js";
 
 const COOKIE = "pocookie";
 const PEER = "peer@127.0.0.1";
@@ -283,5 +284,58 @@ describe("a watch this side sets", () => {
     await new Promise((resolve) => setTimeout(resolve, 50));
 
     expect(settled).toBe(false);
+  });
+});
+
+describe("a start this side asks for", () => {
+  /** A node that answers a start with the pid of a process it pretends to have made. */
+  async function starter(answer: Term): Promise<{ port: number; call: Term[]; args: Term[] }> {
+    const call: Term[] = [];
+    const args: Term[] = [];
+    const listener = await listen(
+      { self: PEER, cookie: COOKIE, creation: 99, timeoutMs: 2_000 },
+      {
+        onConnection(_peer: Peer, messages: Channel<WireMessage>) {
+          messages.onFrame((said: WireMessage) => {
+            if (said.kind !== "message" || said.control.kind !== "spawn") return;
+            call.push(said.control.call);
+            args.push(said.payload ?? atom("nothing"));
+            void messages.send({
+              kind: "message",
+              control: { kind: "spawnReply", ref: said.control.ref, to: said.control.from, flags: integer(0), answer },
+              payload: null,
+            });
+          });
+        },
+      },
+    );
+    listeners.push(listener);
+    return { port: listener.port, call, args };
+  }
+
+  it("answers a handle to the process the node started", async () => {
+    const started = pidTerm(PEER, 77, 0, 99);
+    const { port, call, args } = await starter(started);
+    const mine = clusterAt(port);
+
+    const process = await mine.spawn(nodeRef("robot", "127.0.0.1", "test"), {
+      module: "timer",
+      function: "sleep",
+      args: [integer(200)],
+    });
+
+    expect(process.pid).toEqual(started);
+    // The control names the function and its arity; the arguments ride the message after it.
+    expect(call).toEqual([tuple(atom("timer"), atom("sleep"), integer(1))]);
+    expect(args).toEqual([list(integer(200))]);
+  });
+
+  it("refuses in a sentence when the node says no", async () => {
+    const { port } = await starter(atom("noproc"));
+    const mine = clusterAt(port);
+
+    await expect(
+      mine.spawn(nodeRef("robot", "127.0.0.1", "test"), { module: "timer", function: "sleep", args: [] }),
+    ).rejects.toThrow("refused to start a process: noproc");
   });
 });

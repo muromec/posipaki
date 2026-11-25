@@ -18,7 +18,7 @@ import type { Control } from "./control.js";
 import type { Registration } from "./epmd.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
-import { forHere, forWire, type RemoteProcess, type VisibleTerm } from "./processes.js";
+import { forHere, remoteProcess, type RemoteProcess, type VisibleTerm } from "./processes.js";
 import { atom, binary, render, tuple, type Term } from "./terms.js";
 
 /** A term from a node, and who asked. `from` is absent when the wire did not say: a send addressed to us carries none. */
@@ -149,19 +149,6 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
   /** The answers on their way out: `close` lets them finish before the connections they go over are let go. */
   const sending = new Set<Promise<void>>();
 
-  /** One pid of another node, and the way back to it: whatever connection reaches that node carries the answer. */
-  const remote = (pid: PidTerm): RemoteProcess => ({
-    pid,
-    send: (body) => cluster.send(pid, forWire(body, (handle) => cluster.pidOf(handle))),
-    wait: async () => {
-      const watch = await cluster.watch(pid);
-      return forHere(await watch.ended, {
-        here: (found) => cluster.processOf(found),
-        there: (found) => remote(found),
-      });
-    },
-  });
-
   /** The process a pid names, when this node serves it. A pid of a process it does not serve names nobody here. */
   const byPid = (address: Term): ServedProcess | null => {
     if (address.kind !== "pid") return null;
@@ -271,10 +258,10 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
 
     const asked: EtfAsked = {
       type: "ETF_RAW",
-      ...(control.kind === "regSend" && control.from.kind === "pid" ? { from: remote(control.from) } : {}),
+      ...(control.kind === "regSend" && control.from.kind === "pid" ? { from: remoteProcess(control.from, cluster) } : {}),
       body: forHere(said.payload ?? atom(""), {
         here: (pid) => cluster.processOf(pid),
-        there: (pid) => remote(pid),
+        there: (pid) => remoteProcess(pid, cluster),
       }),
     };
     void process.send(asked);

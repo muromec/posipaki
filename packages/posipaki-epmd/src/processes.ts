@@ -9,7 +9,7 @@
 // everywhere a term goes. `write` refuses both kinds, so a term that has not been through here cannot be put on the
 // wire by accident.
 
-import type { ProcessHandle } from "./cluster.js";
+import type { Cluster, ProcessHandle } from "./cluster.js";
 import { render, type Term } from "./terms.js";
 
 /** A pid, as the wire writes it. */
@@ -131,4 +131,22 @@ export function show(term: VisibleTerm): string {
     default:
       return render(term);
   }
+}
+
+/**
+ * A process on another node, as this side hands one out: one you asked for by pid, or one a node started for you.
+ *
+ * Sending goes through the cluster, which keeps one connection per node; waiting is a watch on its address, so it
+ * settles with the reason and never rejects.
+ */
+export function remoteProcess(pid: PidTerm, cluster: Cluster): RemoteProcess {
+  return {
+    pid,
+    send: (body) => cluster.send(pid, forWire(body, (handle) => cluster.pidOf(handle))),
+    wait: async () =>
+      forHere(await (await cluster.watch(pid)).ended, {
+        here: (found) => cluster.processOf(found),
+        there: (found) => remoteProcess(found, cluster),
+      }),
+  };
 }

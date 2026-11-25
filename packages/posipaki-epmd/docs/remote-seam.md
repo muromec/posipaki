@@ -48,9 +48,10 @@ value of the node that minted it. A name is an atom registered on that node.
    cross — a function, a promise, a class instance — must be refused with a sentence rather than flattened.
 2. **A root.** `$init` says which definition a connection serves, and spawns it with the arguments it carries. A node has
    no such thing. `node.serve(name, process)` is half of it: a name answers for a process this side runs. The other half
-   is a name that answers "spawn this definition with these arguments" and hands back a pid — which is what makes
-   `fork`-over-the-wire real, and it is the piece `DOP_SPAWN_REQUEST` cannot give: that opcode names a module and a
-   function, which is Erlang's vocabulary, not a TypeScript definition's.
+   is a name that answers "spawn this definition with these arguments" and hands back a pid. `cluster.spawn` is the
+   Erlang half of that: `{29, Ref, From, GroupLeader, {Module, Function, Arity}, Options}` with the arguments as the
+   message after it, answered by `{31, Ref, To, Flags, Result}`. It starts a BEAM function, not a TypeScript
+   definition: a node of this side does not answer a spawn request at all.
 3. **A call.** Reflection crosses as `$r.call.<name> {seq, args}` and is answered by seq. On this wire a call is a
    message to a pid carrying a correlation id, and the answer is a message back — with a deadline, because a dead peer
    otherwise waits forever. `waitResponse` is the same idea on this side, so the convention should be its shape.

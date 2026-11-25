@@ -54,6 +54,9 @@ function fakeCluster() {
     // The double answers no watches: a promise that never settles is a peer that never ends anything.
     watch: () => new Promise<Watch>(() => undefined),
     watchName: () => new Promise<Watch>(() => undefined),
+    spawn: async () => {
+      throw new Error("a double starts no process");
+    },
     // This double is a cluster a test addresses, not one that serves: nothing asks it for a node.
     node: async () => {
       throw new Error("a double starts no node");

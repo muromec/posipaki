@@ -6,7 +6,7 @@
 import { describe, expect, it } from "vitest";
 
 import { readControl, writeControl, type Control } from "./control.js";
-import { atom, integer as int, pid as pidTerm, reference, TermReader, tuple, type Term, write } from "./terms.js";
+import { atom, integer as int, list, pid as pidTerm, reference, TermReader, tuple, type Term, write } from "./terms.js";
 
 /** A pid on `node`, which is all these cases need to say about one. */
 const pid = (node: string): Term => pidTerm(node, 1, 0, 7);
@@ -54,6 +54,29 @@ describe("readControl", () => {
   });
 
 
+
+  it("reads a start asked for, and the answer that came back", () => {
+    const ref = reference("posipaki@host", 7);
+    // The arguments ride the message, so the control names the function and its arity.
+    const call = tuple(atom("timer"), atom("sleep"), int(1));
+    expect(readControl(tuple(int(29), ref, pid("posipaki@host"), pid("posipaki@host"), call, list()))).toEqual({
+      kind: "spawn",
+      ref,
+      from: pid("posipaki@host"),
+      groupLeader: pid("posipaki@host"),
+      call,
+      options: list(),
+    });
+    expect(
+      readControl(tuple(int(31), ref, pid("posipaki@host"), int(0), pid("robot@tomato"))),
+    ).toEqual({
+      kind: "spawnReply",
+      ref,
+      to: pid("posipaki@host"),
+      flags: int(0),
+      answer: pid("robot@tomato"),
+    });
+  });
   it("reads a monitor a node wrote, and writes the same octets back", () => {
     // `term_to_binary({19, self(), self(), make_ref()})`, from a node: a real pid, a real reference and its three
     // words — a shape this side has to hand back byte for byte, since the id in it is the watcher's own.

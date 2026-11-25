@@ -18,6 +18,8 @@ const DOP_UNLINK = 4;
 const DOP_MONITOR_P = 19;
 const DOP_DEMONITOR_P = 20;
 const DOP_MONITOR_P_EXIT = 21;
+const DOP_SPAWN_REQUEST = 29;
+const DOP_SPAWN_REPLY = 31;
 
 /** One control message, in the vocabulary of the opcode it carries. */
 export type Control =
@@ -37,6 +39,27 @@ export type Control =
   | { readonly kind: "demonitor"; readonly from: Term; readonly to: Term; readonly ref: Term }
   /** `{DOP_MONITOR_P_EXIT, FromProc, ToPid, Ref, Reason}`: the watched thing ended, and this is why. */
   | { readonly kind: "monitorExit"; readonly from: Term; readonly to: Term; readonly ref: Term; readonly reason: Term }
+  /**
+   * `{DOP_SPAWN_REQUEST, Ref, From, GroupLeader, {Module, Function, Arity}, Options}`: start a process on that node.
+   *
+   * The arguments ride the message after the control tuple, and the arity is what the node is told about them.
+   */
+  | {
+      readonly kind: "spawn";
+      readonly ref: Term;
+      readonly from: Term;
+      readonly groupLeader: Term;
+      readonly call: Term;
+      readonly options: Term;
+    }
+  /** `{DOP_SPAWN_REPLY, Ref, To, Flags, Answer}`: the ref it was asked with, and `{ok, Pid}` or `{error, Reason}`. */
+  | {
+      readonly kind: "spawnReply";
+      readonly ref: Term;
+      readonly to: Term;
+      readonly flags: Term;
+      readonly answer: Term;
+    }
   /** A signal this client does not act on, with the opcode it carried. */
   | { readonly kind: "other"; readonly opcode: number; readonly items: readonly Term[] };
 
@@ -88,6 +111,23 @@ export function readControl(term: Term): Control {
         ref: field(term, 3),
         reason: field(term, 4),
       };
+    case DOP_SPAWN_REQUEST:
+      return {
+        kind: "spawn",
+        ref: field(term, 1),
+        from: field(term, 2),
+        groupLeader: field(term, 3),
+        call: field(term, 4),
+        options: field(term, 5),
+      };
+    case DOP_SPAWN_REPLY:
+      return {
+        kind: "spawnReply",
+        ref: field(term, 1),
+        to: field(term, 2),
+        flags: field(term, 3),
+        answer: field(term, 4),
+      };
     default:
       return { kind: "other", opcode: head.value, items: term.items };
   }
@@ -114,6 +154,17 @@ export function writeControl(control: Control): Term {
     case "monitorExit":
       // {DOP_MONITOR_P_EXIT, FromProc, ToPid, Ref, Reason}: what was watched, as it was asked for, and why it ended.
       return tuple(integer(DOP_MONITOR_P_EXIT), control.from, control.to, control.ref, control.reason);
+    case "spawn":
+      return tuple(
+        integer(DOP_SPAWN_REQUEST),
+        control.ref,
+        control.from,
+        control.groupLeader,
+        control.call,
+        control.options,
+      );
+    case "spawnReply":
+      return tuple(integer(DOP_SPAWN_REPLY), control.ref, control.to, control.flags, control.answer);
     case "other":
       // A signal this client does not act on is not one it can write: its fields are the opcode's own.
       throw new Error(`a control message of opcode ${control.opcode} is not one this side writes`);

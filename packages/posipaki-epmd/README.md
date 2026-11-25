@@ -83,6 +83,25 @@ The same wire the other way: `cluster.watch(pid)` and `cluster.watchName(ref, na
 
 Measured against tomato: a watch on a name nobody serves answers `noproc` at once, and a watch on a live one stays open.
 
+## Starting a process over there
+
+`cluster.spawn(ref, {module, function, args})` asks a node to run `module:function(args)` and answers a
+`RemoteProcess` for the process it started — the same handle a pid in a term gives, so `send` and `wait` work on it at
+once.
+
+```
+const started = await cluster.spawn(nodeRef("robot", "192.168.88.20"), {
+  module: "timer",
+  function: "sleep",
+  args: [integer(200)],
+});
+console.log(show(started.pid));            // #PID<robot@192.168.88.20.95.0>
+console.log(show(await started.wait()));   // normal
+```
+
+Erlang's vocabulary, not this side's: a module and a function name what runs. A module that is not there is not
+refused — the process starts and dies with `undef`, and a watch set after that answers `noproc`.
+
 ## Both directions, and a round trip
 
 Two nodes of this host, a mapper of their own, and the Erlang node in the middle. Node 1 says hi to tomato's `relay`;
@@ -165,5 +184,9 @@ the connections, and a real node on a port of its own for what a node serves.
   The stack is not carried.
 - A name is only a name where this side serves one: `node.serve` decides what it means, and a name nothing serves is
   complained about once and dropped, as erts drops one.
+- A spawn request is answered by a node that runs BEAM code, and a node of this side does not answer one: `cluster.spawn`
+  starts an Erlang function, and starting a definition of this side at a peer waits on a registry. A peer that reports an
+  error to the group leader of a process started here sends a term this side may not read — a bignum, so far — and that
+  frame is complained about and dropped while the connection carries on.
 - Ticks are answered but not started.
 - Distribution is not encrypted. The cookie authenticates; it does not protect the traffic.

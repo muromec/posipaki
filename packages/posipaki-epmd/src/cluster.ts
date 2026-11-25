@@ -28,7 +28,8 @@ import {
 import type { Peer } from "./handshake.js";
 import type { WireMessage } from "./messages.js";
 import { startNode, type Announce, type ErlangNode, type NodeOptions } from "./node.js";
-import { atom, reference, type Term } from "./terms.js";
+import { remoteProcess, type RemoteProcess } from "./processes.js";
+import { atom, integer, list, reference, render, tuple, type Term } from "./terms.js";
 
 /** The cluster a node is looked up in when a reference names none. */
 export const DEFAULT_CLUSTER = "default";
@@ -109,6 +110,14 @@ export interface Watch {
   cancel(): void;
 }
 
+
+/** What a node is asked to start: one module and function, and the arguments it is called with. */
+export interface Start {
+  readonly module: string;
+  readonly function: string;
+  readonly args: readonly Term[];
+}
+
 /** The nodes one identity of this runtime can reach. */
 export interface Cluster {
   readonly name: string;
@@ -134,6 +143,12 @@ export interface Cluster {
   watch(pid: PidTerm): Promise<Watch>;
   /** The same watch where the peer knows the process by a registered name rather than by a pid. */
   watchName(ref: NodeRef, name: string): Promise<Watch>;
+  /**
+   * Asks a node to start `module:function(args)` — Erlang's own vocabulary — and answers a handle to the process.
+   *
+   * A node that does not offer `DFLAG_SPAWN`, or a BEAM node whose function raises, refuses in a sentence.
+   */
+  spawn(ref: NodeRef, call: Start): Promise<RemoteProcess>;
   /** Says a connection this side did not open — one that arrived — so a pid on that node uses it. */
   adopt(peer: Peer, messages: Channel<WireMessage>): void;
   /** Starts a node under this runtime's name: it listens, registers with the mapper, and serves what is given to it. */
@@ -221,10 +236,11 @@ export function makeCluster(options: ClusterOptions): Cluster {
         ...(options.flags === undefined ? {} : { flags: options.flags }),
         ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       });
-      opened.messages.onFrame(answersWatches);
+      opened.messages.onFrame(readsAnswers);
       opened.messages.onClose(() => {
         reached.delete(key);
         settleOver(opened.messages, atom("noconnection"));
+        startFailed(opened.messages, new Error("the connection went before the node answered"));
       });
       // A connection this side opened is read as well: a node answers on it, not on a second one.
       serving?.(opened.messages);
@@ -301,11 +317,73 @@ export function makeCluster(options: ClusterOptions): Cluster {
     watching.delete(key);
     held.resolve(reason);
   };
+  /** The starts this side asked for, by the octets of the ref it minted: the answer carries that ref back. */
+  const starting = new Map<
+    string,
+    { resolve: (pid: PidTerm) => void; reject: (why: Error) => void; messages: Channel<WireMessage> }
+  >();
 
-  /** The reader a connection of this side needs: a watch is answered on the wire it was asked over. */
-  const answersWatches = (said: WireMessage): void => {
-    if (said.kind !== "message" || said.control.kind !== "monitorExit") return;
-    answered(said.control.ref, said.control.reason);
+  /** The answer to a start: a pid for the process, or the word the node refused it with. */
+  const answeredStart = (ref: Term, answer: Term): void => {
+    if (ref.kind !== "ref") return;
+    const key = ref.bytes.toString("hex");
+    const held = starting.get(key);
+    if (held === undefined) return;
+    starting.delete(key);
+    if (answer.kind === "pid") {
+      held.resolve(answer);
+      return;
+    }
+    held.reject(new Error(`the node refused to start a process: ${render(answer)}`));
+  };
+
+  /**
+   * Asks a node to start `module:function(args)` and answers a handle to the process it started.
+   *
+   * Erlang's own vocabulary: a module, a function and its arity in the control tuple, the arguments in the message after
+   * it. What comes back names the ref this side minted, and carries the pid or the reason it was refused.
+   */
+  const startOn = async (ref: NodeRef, call: Start): Promise<RemoteProcess> => {
+    const where = await connection(ref);
+    const from = pidOf({ pname: `spawn:${nextRef}`, id: Symbol("spawn") });
+    const minted = reference(options.self, options.creation, [nextRef, 0, 0, 0]);
+    nextRef += 1;
+    const started = new Promise<PidTerm>((resolve, reject) => {
+      starting.set(minted.bytes.toString("hex"), { resolve, reject, messages: where.messages });
+    });
+    await where.messages.send({
+      kind: "message",
+      control: {
+        kind: "spawn",
+        ref: minted,
+        from,
+        groupLeader: from,
+        call: tuple(atom(call.module), atom(call.function), integer(call.args.length)),
+        options: list(),
+      },
+      payload: list(...call.args),
+    });
+    return remoteProcess(await started, made);
+  };
+
+  /** A connection that went cannot answer: every start it carried is refused rather than left waiting. */
+  const startFailed = (messages: Channel<WireMessage>, why: Error): void => {
+    for (const [key, held] of starting) {
+      if (held.messages !== messages) continue;
+      starting.delete(key);
+      held.reject(why);
+    }
+  };
+
+  /** The reader a connection of this side needs: an answer is read on the wire the question went out over. */
+  const readsAnswers = (said: WireMessage): void => {
+    if (said.kind !== "message") return;
+    const control = said.control;
+    if (control.kind === "monitorExit") {
+      answered(control.ref, control.reason);
+      return;
+    }
+    if (control.kind === "spawnReply") answeredStart(control.ref, control.answer);
   };
 
   const made: Cluster = {
@@ -315,16 +393,19 @@ export function makeCluster(options: ClusterOptions): Cluster {
     processOf,
     watch: (pid: PidTerm) => watchOver(pid, refOf(pid, name)),
     watchName: (ref: NodeRef, registered: string) => watchOver(atom(registered), ref),
+    spawn: (ref: NodeRef, call: Start) => startOn(ref, call),
     adopt(peer: Peer, messages: Channel<WireMessage>): void {
       const ref = refOf({ kind: "pid", node: peer.name, id: 0, serial: 0, creation: peer.creation }, name);
       reached.set(nodeName(ref), Promise.resolve({ messages, peer }));
       reached.set(peer.name, Promise.resolve({ messages, peer }));
       // A watch this side sets is answered on whichever wire it went over, an arrived connection included.
-      messages.onFrame(answersWatches);
+      messages.onFrame(readsAnswers);
       // A connection a peer opened is the way to it until it ends: after that a pid on that node opens a new one.
       messages.onClose(() => {
         reached.delete(nodeName(ref));
         reached.delete(peer.name);
+        settleOver(messages, atom("noconnection"));
+        startFailed(messages, new Error("the connection went before the node answered"));
       });
     },
     async send(pid: PidTerm, payload: Term): Promise<void> {
