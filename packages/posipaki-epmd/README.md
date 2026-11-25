@@ -158,9 +158,11 @@ the connections, and a real node on a port of its own for what a node serves.
 
 - No atom cache in the distribution header and no fragments, so every message is a pass-through byte and a plain term,
   the way `ei` sends them.
-- No links, and no `EXIT` back to a peer: one side can watch the other, and neither can be killed by it. The reason a
-  watch answers is `normal` for an end the process was asked for, and `{error, Message}` for one it died of. The stack is
-  not carried.
+- Links exist between a peer and the processes this node serves, and nowhere else: `node.link(process, pid)` joins one,
+  an incoming exit ends the served process unless the reason is `normal`, and an end here is sent to every link. Two
+  actors of this side cannot link to each other — the runtime has parent and child, not peers.
+- The reason a watch answers is `normal` for an end the process was asked for, and `{error, Message}` for one it died of.
+  The stack is not carried.
 - A name is only a name where this side serves one: `node.serve` decides what it means, and a name nothing serves is
   complained about once and dropped, as erts drops one.
 - Ticks are answered but not started.

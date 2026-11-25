@@ -353,4 +353,54 @@ describe("a node", () => {
       reason: tuple(atom("error"), binary(Buffer.from("the handler gave up", "utf8"))),
     });
   });
+
+  it("ends a process here when the other end of a link says it ended", async () => {
+    const { cluster, answerer, peer } = await serving();
+    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    await peer.send({ kind: "message", control: { kind: "link", from: PEER_PID, to: address }, payload: null });
+    await peer.send({
+      kind: "message",
+      control: { kind: "exit", from: PEER_PID, to: address, reason: atom("kill") },
+      payload: null,
+    });
+
+    // A link takes both ends: the process is over, and this would time out if it were not.
+    await answerer.wait();
+  });
+
+  it("leaves a process alone when the other end of a link ended normally", async () => {
+    const { cluster, answerer, peer, frames } = await serving();
+    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    await peer.send({ kind: "message", control: { kind: "link", from: PEER_PID, to: address }, payload: null });
+    await peer.send({
+      kind: "message",
+      control: { kind: "exit", from: PEER_PID, to: address, reason: atom("normal") },
+      payload: null,
+    });
+
+    // The process still answers, which is what a normal end at the other end of a link owes: nothing.
+    await beat(peer);
+    await until(() => frames.length === 1, "the answer that proves the process is up");
+  });
+
+  it("tells the other end of a link when a process here ends", async () => {
+    const { cluster, node, answerer, frames } = await serving();
+    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    await node.link(answerer, PEER_PID);
+
+    await answerer.stop();
+    // The peer hears the link was made, and then that this end is over: a link ends both.
+    await until(
+      () => frames.some((said) => said.kind === "message" && said.control.kind === "exit"),
+      "the exit to reach the peer",
+    );
+
+    const ended = frames.find((said) => said.kind === "message" && said.control.kind === "exit");
+    expect(ended?.kind === "message" && ended.control).toEqual({
+      kind: "exit",
+      from: address,
+      to: PEER_PID,
+      reason: atom("normal"),
+    });
+  });
 });

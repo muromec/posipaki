@@ -13,7 +13,7 @@
 import type { Message, SenderInfo } from "posipaki";
 import type { Channel } from "posipaki/port";
 
-import type { Cluster, PidTerm } from "./cluster.js";
+import { refOf, type Cluster, type PidTerm } from "./cluster.js";
 import type { Control } from "./control.js";
 import type { Registration } from "./epmd.js";
 import { listen, type Listener } from "./listen.js";
@@ -53,6 +53,8 @@ export interface ServedProcess {
    * crash is a rejection here. A watch has to answer with the failure, so the node reads both.
    */
   wait(): Promise<unknown>;
+  /** Ends it, the way a link ends the process at its other end. */
+  stop(): Promise<unknown>;
 }
 
 /** A watch a peer set on a process of this node, until the process ends or the peer cancels it. */
@@ -97,6 +99,10 @@ export interface NodeOptions {
 export interface ErlangNode {
   /** The name it answers to on the wire, `name@host`. */
   readonly name: string;
+  /** Links a process this node serves to one on another node: whichever ends first takes the other with it. */
+  link(process: ServedProcess, pid: PidTerm): Promise<void>;
+  /** Ends a link this side set. The peer is told, and neither end is owed anything after it. */
+  unlink(process: ServedProcess, pid: PidTerm): Promise<void>;
   readonly port: number;
   /** Serves a process under a name: what another node addresses it by. A name already served is refused. */
   serve(name: string, process: ServedProcess): void;
@@ -114,6 +120,29 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
   const leaving = new Map<symbol, () => void>();
   /** How to stop reading each connection's frames. */
   const reading = new Map<Channel<WireMessage>, () => void>();
+
+  /** The peers each of this node's processes is linked to, by the process's own id. */
+  const linked = new Map<symbol, Set<PidTerm>>();
+  /** Records a link a peer made to a process here, or one this side made to a peer.'s. */
+  const linkTo = (process: ServedProcess, peer: PidTerm): void => {
+    const known = linked.get(process.id) ?? new Set<PidTerm>();
+    known.add(peer);
+    linked.set(process.id, known);
+  };
+
+  /** Forgets one link. Both ends are told when one of them ends, so a link ends once. */
+  const unlinkFrom = (process: ServedProcess, peer: PidTerm): void => {
+    linked.get(process.id)?.delete(peer);
+  };
+
+  /** Sends a control message about a process of this node over the wire that reaches a peer.'s pid. */
+  const controlTo = async (pid: PidTerm, said: Control): Promise<void> => {
+    const messages = await facts.cluster.channel(refOf(pid, facts.cluster.name));
+    await messages.send({ kind: "message", control: said, payload: null });
+  };
+
+  /** The pid this node answers at for a process it serves. */
+  const pidFor = (process: ServedProcess): PidTerm => facts.cluster.pidOf({ pname: process.pname, id: process.id });
 
   /** Watches a peer set, by the octets of the ref it minted: one table, walked when a process ends. */
   const watches = new Map<string, Watch>();
@@ -188,6 +217,15 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
       answerWatch(watch.messages, watch.asked, watch.watcher, watch.ref, reason);
     }
   };
+  /** Says why a process of this node is over: to every watch it had, and down every link it was part of. */
+  const ended = (process: ServedProcess, reason: Term): void => {
+    answerEnded(process, reason);
+    for (const peer of linked.get(process.id) ?? []) {
+      void controlTo(peer, { kind: "exit", from: pidFor(process), to: peer, reason }).catch(() => undefined);
+    }
+    linked.delete(process.id);
+  };
+
   /** What a peer says, read on the connection it said it on: a message goes to the process it names, a watch is kept. */
   const deliveredOn = (messages: Channel<WireMessage>) => (said: WireMessage): void => {
     if (said.kind !== "message") return;
@@ -198,6 +236,27 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     }
     if (control.kind === "demonitor") {
       stopWatch(control.ref);
+      return;
+    }
+    if (control.kind === "link") {
+      const process = byPid(control.to);
+      if (process !== null && control.from.kind === "pid") linkTo(process, control.from);
+      return;
+    }
+    if (control.kind === "unlink") {
+      const process = byPid(control.to);
+      if (process !== null && control.from.kind === "pid") unlinkFrom(process, control.from);
+      return;
+    }
+    if (control.kind === "exit") {
+      // A link ends both ends. A normal exit ends nothing, which is what makes a link survivable.
+      if (control.reason.kind === "atom" && control.reason.name === "normal") return;
+      const process = byPid(control.to);
+      if (process === null) {
+        console.error(`erlang-node: ${facts.self} was told a linked process ended, and serves no ${render(control.to)}`);
+        return;
+      }
+      void process.stop();
       return;
     }
     if (control.kind !== "send" && control.kind !== "regSend") return;
@@ -268,8 +327,8 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     // promise and nowhere else, so the watch is answered from there — after the name is gone, which the answer does not
     // need: it carries the address the peer asked with.
     void process.wait().then(
-      () => answerEnded(process, atom("normal")),
-      (failure: unknown) => answerEnded(process, failureTerm(failure)),
+      () => ended(process, atom("normal")),
+      (failure: unknown) => ended(process, failureTerm(failure)),
     );
   };
 
@@ -309,6 +368,14 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     port: listener.port,
     serve,
     attach,
+    async link(process: ServedProcess, pid: PidTerm): Promise<void> {
+      linkTo(process, pid);
+      await controlTo(pid, { kind: "link", from: pidFor(process), to: pid });
+    },
+    async unlink(process: ServedProcess, pid: PidTerm): Promise<void> {
+      unlinkFrom(process, pid);
+      await controlTo(pid, { kind: "unlink", from: pidFor(process), to: pid });
+    },
     async close(): Promise<void> {
       await registration?.close();
       // Unregistered first, so nothing new arrives while the connections are let go.

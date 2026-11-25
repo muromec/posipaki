@@ -86,8 +86,9 @@ describe("readControl", () => {
     });
   });
   it("names an opcode this client does not act on, with its number", () => {
-    const items: Term[] = [int(1), pid("robot@tomato"), pid("posipaki@host")];
-    expect(readControl(tuple(...items))).toEqual({ kind: "other", opcode: 1, items });
+    // Group leader is a signal erts still speaks and this side does not act on.
+    const items: Term[] = [int(7), pid("robot@tomato"), pid("posipaki@host")];
+    expect(readControl(tuple(...items))).toEqual({ kind: "other", opcode: 7, items });
   });
 
   it("refuses a control message without an opcode", () => {

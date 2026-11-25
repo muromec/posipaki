@@ -10,9 +10,11 @@
 
 import { atom, integer, render, tuple, type Term } from "./terms.js";
 
+const DOP_LINK = 1;
 const DOP_SEND = 2;
 const DOP_EXIT = 3;
 const DOP_REG_SEND = 6;
+const DOP_UNLINK = 4;
 const DOP_MONITOR_P = 19;
 const DOP_DEMONITOR_P = 20;
 const DOP_MONITOR_P_EXIT = 21;
@@ -23,7 +25,11 @@ export type Control =
   | { readonly kind: "send"; readonly to: Term }
   /** `{DOP_REG_SEND, From, '', ToName}`: a message for whatever is registered under a name. */
   | { readonly kind: "regSend"; readonly from: Term; readonly to: string }
-  /** `{DOP_EXIT, From, To, Reason}`: the node is closing the connection. */
+  /** `{DOP_LINK, FromPid, ToPid}`: a peer linked itself to one of this node's processes. */
+  | { readonly kind: "link"; readonly from: Term; readonly to: Term }
+  /** `{DOP_UNLINK, FromPid, ToPid}`: the same two fields, and the link is over. */
+  | { readonly kind: "unlink"; readonly from: Term; readonly to: Term }
+  /** `{DOP_EXIT, From, To, Reason}`: a linked process ended, or `exit/2` was called on this one. */
   | { readonly kind: "exit"; readonly from: Term; readonly to: Term; readonly reason: Term }
   /** `{DOP_MONITOR_P, FromPid, ToProc, Ref}`: a peer watching one of this node's processes. `to` is a pid or a name. */
   | { readonly kind: "monitor"; readonly from: Term; readonly to: Term; readonly ref: Term }
@@ -59,8 +65,12 @@ export function readControl(term: Term): Control {
   }
   switch (head.value) {
     case DOP_SEND:
-      // {DOP_SEND, '', To}: the second field is the cookie slot, which erts has not read since R9B.
+      // {DOP_SEND, the empty atom, To}: the second field is the cookie slot, unread since R9B.
       return { kind: "send", to: field(term, 2) };
+    case DOP_LINK:
+      return { kind: "link", from: field(term, 1), to: field(term, 2) };
+    case DOP_UNLINK:
+      return { kind: "unlink", from: field(term, 1), to: field(term, 2) };
     case DOP_REG_SEND:
       return { kind: "regSend", from: field(term, 1), to: nameOf(term.items[3], "the name to send to") };
     case DOP_EXIT:
@@ -91,6 +101,10 @@ export function writeControl(control: Control): Term {
     case "regSend":
       // {DOP_REG_SEND, From, Cookie, ToName}: the cookie slot has been the empty atom since R9B and is not read.
       return tuple(integer(DOP_REG_SEND), control.from, atom(""), atom(control.to));
+    case "link":
+      return tuple(integer(DOP_LINK), control.from, control.to);
+    case "unlink":
+      return tuple(integer(DOP_UNLINK), control.from, control.to);
     case "exit":
       return tuple(integer(DOP_EXIT), control.from, control.to, control.reason);
     case "monitor":
