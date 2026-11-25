@@ -135,7 +135,7 @@ export class AsyncProcess<
    *  generator is still suspended at the initial yield, which belongs to
    *  `start()` and would swallow a message handed to it (see `start()`). */
   private pvtDispatchLive: boolean = false;
-  private pvtExitReject: ((e: unknown) => void) | null = null;
+  private pvtWaiters: number = 0;
   private pvtReady!: Waiter;
   private pvtResolveReady!: () => void;
 
@@ -259,9 +259,7 @@ export class AsyncProcess<
     this.pvtUnsubscribeAll();
 
     this.pvtReady.reject(e);
-    this.pvtExitReject?.(e);
-    this.pvtExitReject = null;
-    this.exitWaiter.resolve();
+    this.pvtFailed(e);
   }
 
   /** Wrap the user's generator so EXIT/STOP logic fires on completion. */
@@ -363,8 +361,7 @@ export class AsyncProcess<
       this.notify();
       this.pvtEatResult(ret);
     } catch (e) {
-      this.pvtExitReject?.(e);
-      this.pvtExitReject = null;
+      this.pvtFailed(e);
     } finally {
       this.pvtTickInProgress = false;
     }
@@ -377,8 +374,7 @@ export class AsyncProcess<
     try {
       return await this.current!.next(msgAndSender);
     } catch (e) {
-      this.pvtExitReject?.(e);
-      this.pvtExitReject = null;
+      this.pvtFailed(e);
       return { done: true, value: undefined };
     }
   }
@@ -528,7 +524,6 @@ export class AsyncProcess<
     // Settle waiters.
     this.pvtResolveReady();
     this.exitWaiter.resolve();
-    this.pvtExitReject = null;
 
     if (opts?.cascade) {
       // Stop the children too, starting with the nice stop (fire-and-forget:
@@ -584,24 +579,27 @@ export class AsyncProcess<
   // ---- waiting --------------------------------------------------------------
 
   /**
-   * Returns a promise that resolves when the generator completes, or
-   * rejects if an unhandled error occurs during message processing.
+   * A promise that resolves when the generator completes, and rejects if an unhandled error occurs during message
+   * processing.
+   *
+   * One promise for the process, not one per caller: a failure belongs to the process, and a second watcher must not
+   * take it from the first.
    */
   wait(): Promise<void> {
-    return new Promise<void>((resolve, reject) => {
-      this.pvtExitReject = reject;
+    this.pvtWaiters += 1;
+    return this.exitWaiter.promise;
+  }
 
-      this.exitWaiter.promise.then(
-        () => {
-          this.pvtExitReject = null;
-          resolve();
-        },
-        (e) => {
-          this.pvtExitReject = null;
-          reject(e);
-        },
-      );
-    });
+  /**
+   * The end this process did not survive. Every watcher hears it; a process nobody waits on does not reject into the
+   * void, which is why the count is kept.
+   */
+  private pvtFailed(e: unknown): void {
+    if (this.pvtWaiters === 0) {
+      this.exitWaiter.resolve();
+      return;
+    }
+    this.exitWaiter.reject(e);
   }
 
   // ---- child messages -------------------------------------------------------
