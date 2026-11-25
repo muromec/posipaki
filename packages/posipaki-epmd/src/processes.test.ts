@@ -17,7 +17,12 @@ const PEER_PID: PidTerm = pid("robot@192.168.88.20", 91, 0, 5);
 const pidOf = (handle: ProcessHandle): PidTerm => ({ ...OURS_PID, id: handle.id === CLI.id ? 1 : 2 });
 
 /** A process on the node, as a caller would be handed one. */
-const peer = (address: PidTerm): RemoteProcess => ({ pid: address, send: async () => undefined });
+const peer = (address: PidTerm): RemoteProcess => ({
+  pid: address,
+  send: async () => undefined,
+  // A walk never asks a process to wait; the double only has to exist.
+  wait: () => new Promise(() => undefined),
+});
 
 describe("forWire", () => {
   it("replaces a process with the address it was given, at any depth", () => {

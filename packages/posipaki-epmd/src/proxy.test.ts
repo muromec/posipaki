@@ -29,6 +29,9 @@ function fakeCluster() {
     pidOf: (): PidTerm => ({ ...PID, id: next++ }),
     processOf: () => null,
     send: async () => undefined,
+    // The double answers no watches: a promise that never settles is a peer that never ends anything.
+    watch: () => new Promise<Term>(() => undefined),
+    watchName: () => new Promise<Term>(() => undefined),
     adopt: () => undefined,
     // This double is a cluster a test addresses, not one that serves: nothing asks it for a node.
     node: async () => {

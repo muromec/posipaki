@@ -54,11 +54,10 @@ value of the node that minted it. A name is an atom registered on that node.
 3. **A call.** Reflection crosses as `$r.call.<name> {seq, args}` and is answered by seq. On this wire a call is a
    message to a pid carrying a correlation id, and the answer is a message back — with a deadline, because a dead peer
    otherwise waits forever. `waitResponse` is the same idea on this side, so the convention should be its shape.
-4. **A watch this side sets.** Built for the direction where a peer asks: `node.ts` answers `{19, FromPid, ToProc, Ref}`
-   with `{21, FromProc, ToPid, Ref, Reason}` — at once with `noproc` when the address serves nobody, and with `normal`
-   when the process ends. Not built for the direction this side asks: `$exit {code, state}` and `await proc.wait()` need
-   a watch on a peer's process, and `cluster` has a verb for sending to a pid and none for watching one. Supervision
-   needs links as well (`DOP_LINK`/`DOP_EXIT`), and a rule for who restarts what.
+4. **Links, and cancelling a watch.** Watches work both ways: `node.ts` answers a peer's with `normal`, `{error, Message}`
+   or `noproc`, and `cluster.watch(pid)` / `watchName(ref, name)` settle on that same reason, or on `noconnection` when
+   the wire goes. Missing: `DOP_LINK`/`DOP_UNLINK`/`DOP_EXIT` (a link is symmetric and terminating, a concept the
+   runtime does not have), a `demonitor` verb on this side, and a rule for who restarts what.
 5. **The control frames.** Decide per frame: `stop` becomes an exit signal; `pause`/`resume` have no mailbox to act on;
    `tune` has no equivalent (the seam can ask for less *about* a process, the distribution wire always says everything
    or nothing). Dropping them is a semantic loss and has to be stated, not hidden.

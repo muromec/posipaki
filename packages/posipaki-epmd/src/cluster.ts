@@ -28,7 +28,7 @@ import {
 import type { Peer } from "./handshake.js";
 import type { WireMessage } from "./messages.js";
 import { startNode, type Announce, type ErlangNode, type NodeOptions } from "./node.js";
-import type { Term } from "./terms.js";
+import { atom, reference, type Term } from "./terms.js";
 
 /** The cluster a node is looked up in when a reference names none. */
 export const DEFAULT_CLUSTER = "default";
@@ -117,6 +117,15 @@ export interface Cluster {
   processOf(pid: PidTerm): ProcessHandle | null;
   /** Sends `payload` to `pid`, connecting to its node if nothing has yet. */
   send(pid: PidTerm, payload: Term): Promise<void>;
+  /**
+   * Watches a process on another node: settles with the reason it ended, and never rejects.
+   *
+   * A monitor, not a link: nothing is owed the other way and this side is not ended by it. A watch whose connection
+   * goes settles as `noconnection`, which is what a node says for the same fact.
+   */
+  watch(pid: PidTerm): Promise<Term>;
+  /** The same watch where the peer knows the process by a registered name rather than by a pid. */
+  watchName(ref: NodeRef, name: string): Promise<Term>;
   /** Says a connection this side did not open — one that arrived — so a pid on that node uses it. */
   adopt(peer: Peer, messages: Channel<WireMessage>): void;
   /** Starts a node under this runtime's name: it listens, registers with the mapper, and serves what is given to it. */
@@ -204,7 +213,11 @@ export function makeCluster(options: ClusterOptions): Cluster {
         ...(options.flags === undefined ? {} : { flags: options.flags }),
         ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       });
-      opened.messages.onClose(() => reached.delete(key));
+      opened.messages.onFrame(answersWatches);
+      opened.messages.onClose(() => {
+        reached.delete(key);
+        settleOver(opened.messages, atom("noconnection"));
+      });
       // A connection this side opened is read as well: a node answers on it, not on a second one.
       serving?.(opened.messages);
       return { messages: opened.messages, peer: opened.peer };
@@ -216,27 +229,84 @@ export function makeCluster(options: ClusterOptions): Cluster {
     reached.set(key, guarded);
     return guarded;
   };
+  /** The pid this side answers at for a process, minted once for its lifetime. */
+  const pidOf = (process: ProcessHandle): PidTerm => {
+    const known = pids.get(process.id);
+    if (known !== undefined) return known;
+    const minted: PidTerm = { kind: "pid", node: options.self, id: nextId++, serial: 0, creation: options.creation };
+    pids.set(process.id, minted);
+    owners.set(minted.id, process);
+    return minted;
+  };
+
+  /** The process a pid names here, or null for a pid of another node or another incarnation. */
+  const processOf = (pid: PidTerm): ProcessHandle | null => {
+    if (pid.node !== options.self || pid.creation !== options.creation) return null;
+    return owners.get(pid.id) ?? null;
+  };
+
+  /** The watches this side set, by the octets of the ref it minted, with the connection each went over. */
+  const watching = new Map<string, { resolve: (reason: Term) => void; messages: Channel<WireMessage> }>();
+  let nextRef = 1;
+
+  /** Settles every watch that went over a connection: a peer that is gone answers nothing. */
+  const settleOver = (messages: Channel<WireMessage>, reason: Term): void => {
+    for (const [key, held] of watching) {
+      if (held.messages !== messages) continue;
+      watching.delete(key);
+      held.resolve(reason);
+    }
+  };
+
+  /**
+   * Watches a process on another node: settles with the reason it ended, where a monitor answers and nothing else.
+   *
+   * The watcher is a pid of this side minted for the occasion — an answer is addressed to one, and this side is the only
+   * reader of those addresses.
+   */
+  const watchOver = async (to: Term, ref: NodeRef): Promise<Term> => {
+    const where = await connection(ref);
+    const watcher = pidOf({ pname: `watch:${nextRef}`, id: Symbol("watch") });
+    const minted = reference(options.self, options.creation, [nextRef, 0, 0, 0]);
+    nextRef += 1;
+    const ended = new Promise<Term>((resolve) => watching.set(minted.bytes.toString("hex"), { resolve, messages: where.messages }));
+    await where.messages.send({
+      kind: "message",
+      control: { kind: "monitor", from: watcher, to, ref: minted },
+      payload: null,
+    });
+    return ended;
+  };
+
+  /** Settles the watch a ref names: what a peer answered on the connection the watch went over. */
+  const answered = (ref: Term, reason: Term): void => {
+    if (ref.kind !== "ref") return;
+    const key = ref.bytes.toString("hex");
+    const held = watching.get(key);
+    if (held === undefined) return;
+    watching.delete(key);
+    held.resolve(reason);
+  };
+
+  /** The reader a connection of this side needs: a watch is answered on the wire it was asked over. */
+  const answersWatches = (said: WireMessage): void => {
+    if (said.kind !== "message" || said.control.kind !== "monitorExit") return;
+    answered(said.control.ref, said.control.reason);
+  };
 
   const made: Cluster = {
     name,
     channel: async (ref: NodeRef) => (await connection(ref)).messages,
-    pidOf(process: ProcessHandle): PidTerm {
-      const known = pids.get(process.id);
-      if (known !== undefined) return known;
-      const minted: PidTerm = { kind: "pid", node: options.self, id: nextId++, serial: 0, creation: options.creation };
-      pids.set(process.id, minted);
-      owners.set(minted.id, process);
-      return minted;
-    },
-    processOf(pid: PidTerm): ProcessHandle | null {
-      // A pid from another incarnation names nobody here: the id space starts again with the node.
-      if (pid.node !== options.self || pid.creation !== options.creation) return null;
-      return owners.get(pid.id) ?? null;
-    },
+    pidOf,
+    processOf,
+    watch: (pid: PidTerm) => watchOver(pid, refOf(pid, name)),
+    watchName: (ref: NodeRef, registered: string) => watchOver(atom(registered), ref),
     adopt(peer: Peer, messages: Channel<WireMessage>): void {
       const ref = refOf({ kind: "pid", node: peer.name, id: 0, serial: 0, creation: peer.creation }, name);
       reached.set(nodeName(ref), Promise.resolve({ messages, peer }));
       reached.set(peer.name, Promise.resolve({ messages, peer }));
+      // A watch this side sets is answered on whichever wire it went over, an arrived connection included.
+      messages.onFrame(answersWatches);
       // A connection a peer opened is the way to it until it ends: after that a pid on that node opens a new one.
       messages.onClose(() => {
         reached.delete(nodeName(ref));

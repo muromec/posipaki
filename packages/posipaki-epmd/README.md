@@ -77,6 +77,12 @@ goes back over the connection the watch came in on.
 `node.close()` lets those answers go before the connection closes. A peer watching a process is owed the reason it
 ended, and `noconnection` is a different fact.
 
+The same wire the other way: `cluster.watch(pid)` and `cluster.watchName(ref, name)` settle with the reason — `normal`,
+`{error, Message}`, or `noproc` for an address that serves nobody, and `noconnection` when the peer goes. A
+`RemoteProcess` in a term has `wait()`, and an `ErlangProxy` ends when the name it stands for does.
+
+Measured against tomato: a watch on a name nobody serves answers `noproc` at once, and a watch on a live one stays open.
+
 ## Both directions, and a round trip
 
 Two nodes of this host, a mapper of their own, and the Erlang node in the middle. Node 1 says hi to tomato's `relay`;

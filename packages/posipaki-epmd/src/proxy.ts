@@ -107,6 +107,9 @@ export const ErlangProxy = defineActor({
     });
     messages.onClose((reason) => this.exit(`the connection to ${args.node.node} ended: ${reason}`));
 
+    // A proxy stands for a registered process: when that process ends, so does this one, with the same reason.
+    void cluster.watchName(args.node, args.processName).then((reason) => this.exit(reason));
+
     return { public: { erlangPid: held.pid }, private: held };
   },
 
@@ -148,6 +151,11 @@ function named(to: Term, held: Private): boolean {
 /** A process of the other node, as it is handed to a caller: the pid it arrived with, and the way back to it. */
 function remoteTo(pid: PidTerm, messages: Channel<WireMessage>, cluster: Cluster): RemoteProcess {
   return {
+    wait: async () =>
+      forHere(await cluster.watch(pid), {
+        here: (found) => cluster.processOf(found),
+        there: (found) => remoteTo(found, messages, cluster),
+      }),
     pid,
     send: async (body: Term): Promise<void> => {
       await messages.send({

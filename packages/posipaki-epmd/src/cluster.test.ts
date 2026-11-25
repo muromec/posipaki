@@ -5,6 +5,7 @@
 // reached, once, and only if its incarnation agrees.
 
 import { afterEach, describe, expect, it } from "vitest";
+import { defineActor, defineMessages } from "posipaki";
 
 import { createServer } from "node:net";
 
@@ -15,6 +16,8 @@ import { epmdPort, mapperAnswers, serveEpmd } from "./epmd.js";
 import type { Peer } from "./handshake.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
+import type { EtfAsked } from "./node.js";
+import { atom } from "./terms.js";
 
 const COOKIE = "pocookie";
 const PEER = "peer@127.0.0.1";
@@ -72,6 +75,18 @@ function clusterAt(port: number): Cluster {
 }
 
 const pidOf = (node: string, creation: number) => ({ kind: "pid" as const, node, id: 1, serial: 0, creation });
+
+/** Ends when it is told to, so a watch has an end to be answered for and other terms prove the order. */
+const Stand = defineActor({
+  name: "stand",
+  inMessages: defineMessages<EtfAsked>(),
+  outMessages: defineMessages<never>(),
+  handlers: {
+    ETF_RAW(asked: EtfAsked) {
+      if (asked.body.kind === "atom" && asked.body.name === "end") this.exit("done");
+    },
+  },
+});
 
 describe("cluster", () => {
   it("reaches the node a pid names, and sends to it", async () => {
@@ -208,5 +223,49 @@ describe("the mapper a node joins", () => {
     } finally {
       await mapper.close();
     }
+  });
+});
+
+describe("a watch this side sets", () => {
+  /** A cluster with a node on a loopback port, serving one process under a name. */
+  async function served(name: string) {
+    const cluster = makeCluster({
+      name: "serve",
+      self: "probe@127.0.0.1",
+      cookie: COOKIE,
+      creation: 7,
+      announce: false,
+      timeoutMs: 2_000,
+    });
+    clusters.push(cluster);
+    const node = await cluster.node({ host: "127.0.0.1", port: 0 });
+    const proc = await Stand.spawn(undefined);
+    node.serve(name, proc);
+    return { node, proc, pid: cluster.pidOf({ pname: proc.pname, id: proc.id }) };
+  }
+
+  it("settles with normal when the process ends, watched by pid and by name", async () => {
+    const { node, pid } = await served("answer");
+    const mine = clusterAt(node.port);
+    const byPid = mine.watch(pid);
+    const byName = mine.watchName(nodeRef("answer", "127.0.0.1", "test"), "answer");
+
+    // The watch and this send go over one connection, in that order: the node has read the monitors by the time the
+    // process ends, so neither answer is a noproc.
+    await mine.send(pid, atom("end"));
+
+    expect(await byPid).toEqual(atom("normal"));
+    expect(await byName).toEqual(atom("normal"));
+  });
+
+  it("settles as noconnection when the node it watched on goes", async () => {
+    const { node, pid } = await served("answer");
+    const mine = clusterAt(node.port);
+    const ended = mine.watch(pid);
+    await mine.send(pid, atom("still here"));
+
+    await node.close();
+
+    expect(await ended).toEqual(atom("noconnection"));
   });
 });

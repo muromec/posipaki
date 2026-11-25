@@ -27,8 +27,13 @@ export interface RemoteProcess {
   readonly pid: PidTerm;
   /** One term to it, over the connection its pid arrived on. */
   send(body: VisibleTerm): Promise<void>;
+  /**
+   * Settles when that process is over, with the reason: a monitor this side sets on its address.
+   *
+   * It never rejects. A peer that went answers "noconnection", which is a reason like any other.
+   */
+  wait(): Promise<VisibleTerm>;
 }
-
 /** The leaf that stands for a process of the other node. */
 export interface RemoteInTerm {
   readonly kind: "remote";
