@@ -5,7 +5,7 @@
 
 import { defineActor, defineMessages } from "posipaki";
 
-import { clusterNamed, type NodeRef } from "../src/cluster.js";
+import type { NodeRef } from "../src/cluster.js";
 import { ErlangProxy, type EtfRaw } from "../src/proxy.js";
 import { processTerm, show } from "../src/processes.js";
 import { binary, tuple } from "../src/terms.js";
@@ -31,7 +31,6 @@ export const Cli = defineActor({
   outMessages: defineMessages<never>(),
 
   async setup(args: CliArgs): Promise<{ public: null; private: Private }> {
-    const cluster = clusterNamed(args.node.cluster);
     const proxy = await this.fork(ErlangProxy, { node: args.node, processName: args.processName }, {
       name: args.processName,
     });

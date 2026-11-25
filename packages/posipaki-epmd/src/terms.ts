@@ -198,9 +198,9 @@ export class TermReader {
   }
 
   private atomName(): string {
-    const atom = this.term();
-    if (atom.kind !== "atom") throw new Error(`a node name was a ${atom.kind}, not an atom`);
-    return atom.name;
+    const named = this.term();
+    if (named.kind !== "atom") throw new Error(`a node name was a ${named.kind}, not an atom`);
+    return named.name;
   }
 
   private u8(): number {

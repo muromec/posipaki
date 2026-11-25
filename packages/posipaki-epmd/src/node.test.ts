@@ -62,7 +62,9 @@ const running: Array<() => Promise<unknown>> = [];
 afterEach(async () => {
   vi.restoreAllMocks();
   heard.length = 0;
-  for (const stop of running.splice(0).reverse()) await stop().catch(() => undefined);
+  // Last started, first stopped: the reverse of the order the case started them in.
+  const stops = running.splice(0);
+  for (let index = stops.length - 1; index >= 0; index -= 1) await stops[index]?.().catch(() => undefined);
   forgetCluster(CLUSTER);
 });
 

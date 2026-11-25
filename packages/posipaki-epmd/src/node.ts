@@ -308,7 +308,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
       watches.clear();
       // The answers already queued go out before the wire they go over: a peer that watched a process reads why it
       // ended, and `noconnection` is a different fact.
-      await Promise.allSettled([...sending]);
+      await Promise.allSettled(sending);
       await listener.close();
     },
   };
@@ -324,10 +324,4 @@ function described(control: Control): string {
   if (control.kind === "regSend") return `the name ${control.to}`;
   if (control.kind !== "send" || control.to.kind !== "pid") return "an address this side does not read";
   return `the pid ${control.to.node}.${control.to.id}`;
-}
-
-/** The part of a node name the mapper knows: `probe` for `probe@192.168.88.27`. */
-function localPart(self: string): string {
-  const at = self.indexOf("@");
-  return at <= 0 ? self : self.slice(0, at);
 }

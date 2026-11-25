@@ -67,7 +67,9 @@ export function wrapEpmdFrame<C = string>(inner: Channel<Uint8Array, C>): Framed
   let ended = false;
 
   const deliver = (frame: EpmdFrame): void => {
-    for (const reader of [...readers]) reader(frame);
+    // The readers that were there when the frame arrived: one may subscribe, or unsubscribe, while it is delivered,
+    // and a frame belongs to the readers that existed when it came.
+    for (const reader of Array.from(readers)) reader(frame);
   };
 
   /**
@@ -81,7 +83,9 @@ export function wrapEpmdFrame<C = string>(inner: Channel<Uint8Array, C>): Framed
   };
 
   const drain = (): void => {
-    while (!ended) {
+    for (;;) {
+      // A reader may close the channel while a frame is being delivered, and then the rest of the buffer is not read.
+      if (ended) return;
       const next = cut(buffered, width);
       if (next === null) return;
       buffered = next.rest;

@@ -20,10 +20,13 @@ afterEach(async () => {
   for (const listener of listeners.splice(0)) await listener.close();
 });
 
+/** The default for a callback nobody has given yet: a test's promise, and a run that never answers it. */
+const nothing = (): void => undefined;
+
 async function node(): Promise<{ listener: Listener; peers: Peer[]; refused: string[]; said: Promise<string> }> {
   const peers: Peer[] = [];
   const refused: string[] = [];
-  let heard: (text: string) => void = () => undefined;
+  let heard: (text: string) => void = nothing;
   const said = new Promise<string>((resolve) => {
     heard = resolve;
   });
