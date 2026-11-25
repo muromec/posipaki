@@ -101,6 +101,14 @@ export interface ProcessHandle {
   readonly id: symbol;
 }
 
+/** A watch this side set: what settles with the reason, and how to stop waiting for it. */
+export interface Watch {
+  /** Settles with the reason the process ended. It never rejects: a peer that goes answers `noconnection`. */
+  readonly ended: Promise<Term>;
+  /** Stops waiting. The peer is told, and `ended` stays pending. */
+  cancel(): void;
+}
+
 /** The nodes one identity of this runtime can reach. */
 export interface Cluster {
   readonly name: string;
@@ -123,9 +131,9 @@ export interface Cluster {
    * A monitor, not a link: nothing is owed the other way and this side is not ended by it. A watch whose connection
    * goes settles as `noconnection`, which is what a node says for the same fact.
    */
-  watch(pid: PidTerm): Promise<Term>;
+  watch(pid: PidTerm): Promise<Watch>;
   /** The same watch where the peer knows the process by a registered name rather than by a pid. */
-  watchName(ref: NodeRef, name: string): Promise<Term>;
+  watchName(ref: NodeRef, name: string): Promise<Watch>;
   /** Says a connection this side did not open — one that arrived — so a pid on that node uses it. */
   adopt(peer: Peer, messages: Channel<WireMessage>): void;
   /** Starts a node under this runtime's name: it listens, registers with the mapper, and serves what is given to it. */
@@ -259,23 +267,29 @@ export function makeCluster(options: ClusterOptions): Cluster {
   };
 
   /**
-   * Watches a process on another node: settles with the reason it ended, where a monitor answers and nothing else.
+   * Watches a process on another node: `ended` settles with the reason it ended, and never rejects.
    *
    * The watcher is a pid of this side minted for the occasion — an answer is addressed to one, and this side is the only
    * reader of those addresses.
    */
-  const watchOver = async (to: Term, ref: NodeRef): Promise<Term> => {
+  const watchOver = async (to: Term, ref: NodeRef): Promise<Watch> => {
     const where = await connection(ref);
     const watcher = pidOf({ pname: `watch:${nextRef}`, id: Symbol("watch") });
     const minted = reference(options.self, options.creation, [nextRef, 0, 0, 0]);
     nextRef += 1;
-    const ended = new Promise<Term>((resolve) => watching.set(minted.bytes.toString("hex"), { resolve, messages: where.messages }));
-    await where.messages.send({
-      kind: "message",
-      control: { kind: "monitor", from: watcher, to, ref: minted },
-      payload: null,
-    });
-    return ended;
+    const key = minted.bytes.toString("hex");
+    const ended = new Promise<Term>((resolve) => watching.set(key, { resolve, messages: where.messages }));
+    await where.messages.send({ kind: "message", control: { kind: "monitor", from: watcher, to, ref: minted }, payload: null });
+    return {
+      ended,
+      cancel: () => {
+        // A watch already answered is gone from the table, and the peer is not owed a second word about it.
+        if (!watching.delete(key)) return;
+        void where.messages
+          .send({ kind: "message", control: { kind: "demonitor", from: watcher, to, ref: minted }, payload: null })
+          .catch(() => undefined);
+      },
+    };
   };
 
   /** Settles the watch a ref names: what a peer answered on the connection the watch went over. */

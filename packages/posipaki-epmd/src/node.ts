@@ -124,11 +124,13 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
   const remote = (pid: PidTerm): RemoteProcess => ({
     pid,
     send: (body) => cluster.send(pid, forWire(body, (handle) => cluster.pidOf(handle))),
-    wait: async () =>
-      forHere(await cluster.watch(pid), {
+    wait: async () => {
+      const watch = await cluster.watch(pid);
+      return forHere(await watch.ended, {
         here: (found) => cluster.processOf(found),
         there: (found) => remote(found),
-      }),
+      });
+    },
   });
 
   /** The process a pid names, when this node serves it. A pid of a process it does not serve names nobody here. */

@@ -7,7 +7,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { memoryChannelPair } from "posipaki/port";
 
-import { forgetCluster, installCluster, nodeRef, type Cluster, type NodeRef, type PidTerm } from "./cluster.js";
+import { forgetCluster, installCluster, nodeRef, type Cluster, type NodeRef, type PidTerm, type Watch } from "./cluster.js";
 import type { WireMessage } from "./messages.js";
 import { ErlangProxy, type EtfRaw } from "./proxy.js";
 import { reference, type Term } from "./terms.js";
@@ -30,8 +30,8 @@ function fakeCluster() {
     processOf: () => null,
     send: async () => undefined,
     // The double answers no watches: a promise that never settles is a peer that never ends anything.
-    watch: () => new Promise<Term>(() => undefined),
-    watchName: () => new Promise<Term>(() => undefined),
+    watch: () => new Promise<Watch>(() => undefined),
+    watchName: () => new Promise<Watch>(() => undefined),
     adopt: () => undefined,
     // This double is a cluster a test addresses, not one that serves: nothing asks it for a node.
     node: async () => {

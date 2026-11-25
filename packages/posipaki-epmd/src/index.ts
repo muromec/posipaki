@@ -73,6 +73,7 @@ export {
   type NodeRef,
   type PidTerm,
   type ProcessHandle,
+  type Watch,
 } from "./cluster.js";
 
 export {

@@ -247,8 +247,8 @@ describe("a watch this side sets", () => {
   it("settles with normal when the process ends, watched by pid and by name", async () => {
     const { node, pid } = await served("answer");
     const mine = clusterAt(node.port);
-    const byPid = mine.watch(pid);
-    const byName = mine.watchName(nodeRef("answer", "127.0.0.1", "test"), "answer");
+    const byPid = (await mine.watch(pid)).ended;
+    const byName = (await mine.watchName(nodeRef("answer", "127.0.0.1", "test"), "answer")).ended;
 
     // The watch and this send go over one connection, in that order: the node has read the monitors by the time the
     // process ends, so neither answer is a noproc.
@@ -261,11 +261,27 @@ describe("a watch this side sets", () => {
   it("settles as noconnection when the node it watched on goes", async () => {
     const { node, pid } = await served("answer");
     const mine = clusterAt(node.port);
-    const ended = mine.watch(pid);
+    const ended = (await mine.watch(pid)).ended;
     await mine.send(pid, atom("still here"));
 
     await node.close();
 
     expect(await ended).toEqual(atom("noconnection"));
+  });
+
+  it("stops waiting when the watch is cancelled, and the process may end after that", async () => {
+    const { node, pid } = await served("answer");
+    const mine = clusterAt(node.port);
+    const watch = await mine.watch(pid);
+    let settled = false;
+    void watch.ended.then(() => {
+      settled = true;
+    });
+
+    watch.cancel();
+    await mine.send(pid, atom("end"));
+    await new Promise((resolve) => setTimeout(resolve, 50));
+
+    expect(settled).toBe(false);
   });
 });
