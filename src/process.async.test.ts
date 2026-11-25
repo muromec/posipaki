@@ -257,6 +257,22 @@ describe("AsyncProcess", () => {
     await expect(proc.wait()).rejects.toThrow("boom");
   });
 
+  it("should reject every wait(), not only the last one", async () => {
+    const fn = async function* ({ pname }: ProcessCtx<null, null, PokeM, Message>) {
+      yield null;
+      yield* runDispatchAsync<WithSender<Message>>(pname, async () => {
+        throw new Error("boom");
+      });
+    };
+
+    const proc = spawnAsync(fn, "exploder")(null);
+    // Two watchers, which is what a served actor always has: whoever spawned it waits, and so does what serves it.
+    const both = Promise.allSettled([proc.wait(), proc.wait()]);
+    proc.send({ type: "POKE" });
+
+    expect((await both).map((settled) => settled.status)).toEqual(["rejected", "rejected"]);
+  });
+
   // ---- message ordering with mixed delays ----------------------------------
 
   it("should process messages in order even when some have delays", async () => {
