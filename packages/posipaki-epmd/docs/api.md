@@ -28,8 +28,7 @@ The node speaks the wire's words — pids, names, terms. The application speaks 
 | `watch(pid)`, `watchName(ref, name)` | `{19, From, ToProc, Ref}`, answered by `{21, FromProc, ToPid, Ref, Reason}` |
 | `link(from: PidTerm, to: PidTerm)`, `unlink(from, to)` | `{1, From, To}`, `{4, From, To}` |
 | `spawn(ref, {module, function, args})` | `{29, Ref, From, GL, {M, F, Arity}, []}` and the arguments after it |
-| `serve(name, process: AnyProcess)` | the table a `{6}` resolves against |
-| `hold(process: AnyProcess)` | the table a `{2}` resolves against: an address, and no name |
+| `serve(name \| null, process: AnyProcess)` | the table a `{6}` resolves against, and the one a `{2}` resolves against: `null` is the address alone |
 
 `ErlangProcess` is the application's handle on a process over there: an address, `send`, `monitor`, `kill`, and
 `link(process)`. `wait()` is `monitor().ended`.
@@ -50,9 +49,9 @@ So a shallow ref carries **no** local process. `send`, `monitor` and `kill` need
 itself; `link` takes the process as an argument, because the same ref may be held by two actors and each would want its
 own end joined.
 
-`proxyOf(node, ref)` answers an `ActorDefinition`, and the node does the routing: the actor is held (`node.hold`), so what
-the other side sends to its pid arrives as `{from?, body}` and is emitted up; a `SEND` in is forwarded with `ref.send`.
-It ends when `ref.monitor()` says so.
+`proxyOf(node, ref)` answers an `ActorDefinition`, and the node does the routing: the actor serves itself at its pid
+(`node.serve(null, this.self)`), so what the other side addresses to it arrives as `{from?, body}` and is emitted up; a
+`SEND` in is forwarded with `ref.send`. It ends when `ref.monitor()` says so.
 
 `ErlangProcess` is the one shallow ref: an address — a pid, or a name its node registered — and `send`, `monitor`, `kill`
 and `link(process)`. `wait()` is `monitor().ended`. A name carries no sender, so `send` takes the process sending, and a

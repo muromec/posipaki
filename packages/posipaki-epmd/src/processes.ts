@@ -134,8 +134,8 @@ export interface Reach {
   watchName(ref: NodeRef, name: string): Promise<Watch>;
   kill(pid: PidTerm): Promise<void>;
   link(from: PidTerm, to: PidTerm): Promise<void>;
-  /** Makes a process of this side reachable by its pid: what an actor a peer addresses needs, with no name. */
-  hold(process: AnyProcess): void;
+  /** Serves a process of this side: at its pid, and under a name when one is given. */
+  serve(name: string | null, process: AnyProcess): void;
 }
 
 /**

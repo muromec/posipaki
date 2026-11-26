@@ -45,10 +45,10 @@ const proxy = await proxyOf(node, ref).spawn(undefined);
 await proxy.send({ type: "SEND", body: tuple(node.pidOf(aProcessOfOurs), binary(text)) });
 ```
 
-A process of this side that a peer answers by pid is held by the node (`node.hold(process)`), which is what gives it an
-address and routes what arrives to it; `node.pidOf(process)` answers the same address however often it is asked, and
-`node.processOf(pid)` names the process a pid belongs to in the incarnation this node is running now. A `proxyOf` ends
-when the process it stands for does.
+A process of this side that a peer answers by pid is served at its address alone (`node.serve(null, process)`), which is
+what gives it a pid and routes what arrives to it; `node.pidOf(process)` answers the same address however often it is
+asked, and `node.processOf(pid)` names the process a pid belongs to in the incarnation this node is running now. A
+`proxyOf` ends when the process it stands for does.
 
 ## Being watched
 

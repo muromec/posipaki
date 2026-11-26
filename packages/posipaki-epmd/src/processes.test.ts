@@ -107,7 +107,7 @@ describe("a process of another node", () => {
       link: async () => {
         called.push("link");
       },
-      hold: () => undefined,
+      serve: () => undefined,
     };
     return { reach, called };
   }

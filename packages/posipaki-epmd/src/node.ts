@@ -106,10 +106,13 @@ export interface ErlangNode {
   /** Ends a link this side set. The peer is told, and neither end is owed anything after it. */
   unlink(from: PidTerm, to: PidTerm): Promise<void>;
   readonly port: number;
-  /** Serves a process under a name: what another node addresses it by. A name already served is refused. */
-  serve(name: string, process: AnyProcess): void;
-  /** Makes a process reachable by its pid alone: what an actor a peer addresses by address needs, with no name. */
-  hold(process: AnyProcess): void;
+  /**
+   * Serves a process: at its pid always, and under a name when one is given.
+   *
+   * The pid is what a term carries and what a peer that was handed an address sends to; a name is what a `{6}` resolves
+   * against. `null` serves the address alone. A name already served by another process is refused.
+   */
+  serve(name: string | null, process: AnyProcess): void;
   /** Serves the processes on a connection whose frames nobody else reads — one this side opened. */
   attach(messages: Channel<WireMessage>): void;
   /** The channel to one node, opened on first use and shared by everything that addresses it. */
@@ -313,12 +316,21 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   };
 
   /**
-   * Makes a process reachable by its pid: what a peer that was handed the address sends to.
+   * Serves a process: at its pid always, and under a name when one is given.
    *
-   * A name is separate, and `serve` adds one: an actor a peer reaches by pid alone has no name on the wire.
+   * The pid is what a term carries and what a peer that was handed an address sends to; a name is what a `{6}` resolves
+   * against. An actor a peer reaches by pid alone is served with `null` and has no name on the wire.
    */
-  const hold = (process: AnyProcess): void => {
+  const serve = (name: string | null, process: AnyProcess): void => {
+    if (name !== null) {
+      const known = byName.get(name);
+      if (known !== undefined && known.id !== process.id) {
+        throw new Error(`${cluster.self} already serves ${name} with ${known.pname}`);
+      }
+      byName.set(name, process);
+    }
     if (byId.has(process.id)) return;
+
     byId.set(process.id, process);
     // The address a node will write for this process, minted now: a peer addresses it, and this node looks it up.
     pidOf({ pname: process.pname, id: process.id });
@@ -340,15 +352,6 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       () => ended(process, atom("normal")),
       (failure: unknown) => ended(process, failureTerm(failure)),
     );
-  };
-
-  const serve = (name: string, process: AnyProcess): void => {
-    const known = byName.get(name);
-    if (known !== undefined && known.id !== process.id) {
-      throw new Error(`${cluster.self} already serves ${name} with ${known.pname}`);
-    }
-    byName.set(name, process);
-    hold(process);
   };
 
   // ── reaching another node ────────────────────────────────────────────────
@@ -634,7 +637,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     watchName: (ref: NodeRef, name: string) => watchOver(atom(name), ref),
     kill: killOn,
     link: linkFrom,
-    hold,
+    serve,
   };
 
   /** Says a connection a peer opened is how a pid on that node is answered, so this side sends over it, not a second. */
@@ -698,7 +701,6 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     name: cluster.self,
     port: listener.port,
     serve,
-    hold,
     attach,
     channel,
     send: sendTo,

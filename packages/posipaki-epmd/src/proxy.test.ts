@@ -17,7 +17,7 @@ import { atom, binary, type Term } from "./terms.js";
 const PEER_PID: PidTerm = { kind: "pid", node: "robot@192.168.88.20", id: 91, serial: 0, creation: 5 };
 const REF: NodeRef = nodeRef("robot", "192.168.88.20");
 
-/** A node that records what was sent to a name, and the process it was told to hold. */
+/** A node that records what was sent to a name, and the process it was told to serve. */
 function fakeNode() {
   const sent: Array<{ name: string; body: Term }> = [];
   const held: AnyProcess[] = [];
@@ -32,7 +32,7 @@ function fakeNode() {
     watchName: () => new Promise(() => undefined),
     kill: async () => undefined,
     link: async () => undefined,
-    hold: (process: AnyProcess) => {
+    serve: (_name: string | null, process: AnyProcess) => {
       held.push(process);
     },
   };

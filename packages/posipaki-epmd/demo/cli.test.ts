@@ -24,7 +24,7 @@ afterEach(async () => {
   forgetNode(CLUSTER);
 });
 
-/** A node that mints one pid per process, records what was sent to a name, and remembers what it holds. */
+/** A node that mints one pid per process, records what was sent to a name, and remembers what it serves. */
 function fakeNode() {
   const pids = new Map<symbol, PidTerm>();
   const sent: Array<{ name: string; body: Term }> = [];
@@ -47,7 +47,7 @@ function fakeNode() {
     watchName: () => new Promise(() => undefined),
     kill: async () => undefined,
     link: async () => undefined,
-    hold: (process: AnyProcess) => {
+    serve: (_name: string | null, process: AnyProcess) => {
       held.push(process);
     },
   };
@@ -77,7 +77,7 @@ describe("Cli", () => {
     if (term?.kind !== "tuple") return;
     expect(term.items[0]).toEqual(pids.get(cli.id));
 
-    // The CLI is the process the node holds for that address, so a term the node delivers is its in-message.
+    // The CLI is the process the node serves at that address, so a term the node delivers is its in-message.
     const mine = held.find((process) => process.id === cli.id);
     expect(mine).toBeDefined();
     const answered: EtfAsked = { type: "ETF_RAW", body: binary(Buffer.from("echo: hi", "utf8")) };

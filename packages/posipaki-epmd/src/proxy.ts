@@ -15,15 +15,11 @@
 
 import { defineActor, defineMessages } from "posipaki";
 
-import type { AnyProcess } from "posipaki";
-
 import type { EtfAsked } from "./node.js";
-import type { ErlangProcess, VisibleTerm } from "./processes.js";
+import type { ErlangProcess, Reach, VisibleTerm } from "./processes.js";
 
-/** What a proxy needs of the node it lives on: the way to be given an address, since the node routes what arrives. */
-export interface ProxyNode {
-  hold(process: AnyProcess): void;
-}
+/** A proxy is given the node it lives on by the caller: the one verb it needs is the one that gives it an address. */
+export type ProxyNode = Pick<Reach, "serve">;
 
 /** A caller's word to a proxy: one term to the process it stands for. The other in-message is what a node delivers. */
 export interface EtfSend {
@@ -40,7 +36,7 @@ export function proxyOf(node: ProxyNode, ref: ErlangProcess) {
 
     setup() {
       // An address of this side, minted by the node: what the far side answers to, and what routes the answer here.
-      node.hold(this.self);
+      node.serve(null, this.self);
       // A proxy stands for a process: when that process ends, so does this one, with the same reason.
       void ref.wait().then((reason) => this.exit(reason));
       return undefined;
