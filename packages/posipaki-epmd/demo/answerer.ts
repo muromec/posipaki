@@ -1,6 +1,5 @@
 // ── the process a node is served by ─────────────────────────────────────────
-//
-// What a served process looks like from inside: it is handed a term and who asked, it prints them, and it answers the
+// What a served process looks like from inside: it is handed a term, it prints what it carries, and it answers the
 // process the term itself names — not the one that asked — which is what makes an answer from one node reach a second
 // one. It never sees an address.
 //
@@ -10,7 +9,7 @@
 import { defineActor, defineMessages } from "posipaki";
 
 import type { EtfAnswered, EtfAsked } from "../src/node.js";
-import { processTerm, remoteTerm, show, type ErlangProcess, type VisibleTerm } from "../src/processes.js";
+import { processTerm, show, type ErlangProcess, type VisibleTerm } from "../src/processes.js";
 import { atom, binary, tuple } from "../src/terms.js";
 
 /** The word the term carries, when it carries one: `{Pid, Text}` is how a peer asks. */
@@ -34,8 +33,7 @@ export const Answerer = defineActor({
   outMessages: defineMessages<EtfAnswered>(),
   handlers: {
     ETF_RAW(asked: EtfAsked) {
-      const askedBy = asked.from === undefined ? "nobody the wire named" : show(remoteTerm(asked.from));
-      console.log(`  asked by ${askedBy}: ${show(asked.body)}`);
+      console.log(`  asked: ${show(asked.body)}`);
       const to = namedIn(asked.body);
       if (to === null) {
         console.log("  and nothing to answer: the term names no process");

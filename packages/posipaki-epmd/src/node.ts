@@ -51,10 +51,9 @@ import {
 } from "./processes.js";
 import { atom, binary, integer, list, reference, render, tuple, type Term } from "./terms.js";
 
-/** A term from a node, and who asked. `from` is absent when the wire did not say: a send addressed to us carries none. */
+/** A term from another node. What a term says about where its answer goes is in the term. */
 export interface EtfAsked {
   type: "ETF_RAW";
-  from?: ErlangProcess;
   body: VisibleTerm;
 }
 
@@ -285,7 +284,6 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
 
     const asked: EtfAsked = {
       type: "ETF_RAW",
-      ...(control.kind === "regSend" && control.from.kind === "pid" ? { from: processAt(control.from, reach) } : {}),
       body: forHere(said.payload ?? atom(""), {
         here: (pid) => reach.processOf(pid),
         there: (pid) => processAt(pid, reach),

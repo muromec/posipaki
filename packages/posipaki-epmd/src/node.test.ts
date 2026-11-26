@@ -32,7 +32,7 @@ function namedIn(body: VisibleTerm): ErlangProcess | undefined {
   return first?.kind === "remote" ? first.process : undefined;
 }
 
-/** Answers whoever the term names, or the asker when the term names nobody. */
+/** The process the term names, if it names one: the first item of `{Pid, …}`. */
 const Answerer = defineActor({
   name: "answerer",
   inMessages: defineMessages<EtfAsked>(),
@@ -40,7 +40,7 @@ const Answerer = defineActor({
   handlers: {
     ETF_RAW(asked: EtfAsked) {
       heard.push(asked);
-      const to = namedIn(asked.body) ?? asked.from;
+      const to = namedIn(asked.body);
       if (to === undefined) return;
       const words = process.env.POSIPAKI_WORDS ?? "done";
       this.emit({ type: "ETF_RAW", to, body: tuple(processTerm(this.self), binary(Buffer.from(words, "utf8"))) });
@@ -116,7 +116,6 @@ describe("a node", () => {
 
     const asked = heard[0];
     expect(asked?.type).toBe("ETF_RAW");
-    expect(asked?.from?.address).toEqual({ kind: "pid", pid: PEER_PID });
     // And the pid the term carried is a reference, not an address the process has to spell out.
     expect(namedIn(asked?.body ?? atom(""))?.address).toEqual({ kind: "pid", pid: PEER_PID });
   });
@@ -150,7 +149,6 @@ describe("a node", () => {
     await until(() => frames.length === 1, "the answer to come back");
 
     // A send control has no sender field: the term is the only way back, and the process is told none was given.
-    expect(heard[0]?.from).toBeUndefined();
     expect(heard[0]?.body.kind).toBe("tuple");
   });
 
@@ -244,7 +242,7 @@ describe("a node", () => {
     peer.send({
       kind: "message",
       control: { kind: "regSend", from: PEER_PID, to: "answer" },
-      payload: atom("still here"),
+      payload: tuple(PEER_PID, atom("still here")),
     });
 
   it("reports a watched process's end to the pid that asked, with the ref it minted", async () => {
