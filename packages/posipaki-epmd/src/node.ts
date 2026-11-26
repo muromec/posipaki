@@ -10,15 +10,15 @@
 // The two tables are the whole of the routing: a name a node sends to, and a pid the cluster minted for a process this
 // node serves. A pid for a process it does not serve names nobody here, however well the cluster knows it.
 
-import type { AnyProcess, Message, SenderInfo } from "posipaki";
+import type { AnyProcess, Message } from "posipaki";
 import type { Channel } from "posipaki/port";
 
-import { refOf, type Cluster, type PidTerm } from "./cluster.js";
+import { refOf, type Cluster, type NodeRef, type PidTerm, type Start, type Watch } from "./cluster.js";
 import type { Control } from "./control.js";
 import type { Registration } from "./epmd.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
-import { forHere, remoteProcess, type RemoteProcess, type VisibleTerm } from "./processes.js";
+import { forHere, forWire, remoteProcess, type RemoteProcess, type VisibleTerm } from "./processes.js";
 import { atom, binary, render, tuple, type Term } from "./terms.js";
 
 /** A term from a node, and who asked. `from` is absent when the wire did not say: a send addressed to us carries none. */
@@ -36,7 +36,7 @@ export interface EtfAnswered {
 }
 
 /** A watch a peer set on a process of this node, until the process ends or the peer cancels it. */
-interface Watch {
+interface PeerWatch {
   /** The address the peer used: a pid, or a name. The answer carries this, not the pid it resolved to. */
   readonly asked: Term;
   /** The pid that asked, which is where the answer goes. */
@@ -86,6 +86,22 @@ export interface ErlangNode {
   serve(name: string, process: AnyProcess): void;
   /** Serves the processes on a connection whose frames nobody else reads — one this side opened. */
   attach(messages: Channel<WireMessage>): void;
+  /** The channel to one node, opened on first use and shared by everything that addresses it. */
+  channel(ref: NodeRef): Promise<Channel<WireMessage>>;
+  /** One term to a process of another node. `{2, '', To}` carries no sender. */
+  send(pid: PidTerm, body: Term): Promise<void>;
+  /** One term to a registered name. `{6, From, '', Name}` carries the sender, so one is needed. */
+  sendReg(name: string, ref: NodeRef, body: Term, from: AnyProcess): Promise<void>;
+  /** Watches a process of another node: what settles with the reason it ended. */
+  watch(pid: PidTerm): Promise<Watch>;
+  /** The same watch, where the other node knows the process by a registered name. */
+  watchName(ref: NodeRef, name: string): Promise<Watch>;
+  /** Asks a node to start `module:function(args)` and answers a handle to the process. */
+  spawn(ref: NodeRef, call: Start): Promise<RemoteProcess>;
+  /** The pid this node answers at for a process it serves, minted once for its lifetime. */
+  pidOf(process: AnyProcess): PidTerm;
+  /** The process a pid names here, or null for a pid this node does not serve. */
+  processOf(pid: PidTerm): AnyProcess | null;
   close(): Promise<void>;
 }
 
@@ -123,7 +139,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
   const pidFor = (process: AnyProcess): PidTerm => facts.cluster.pidOf({ pname: process.pname, id: process.id });
 
   /** Watches a peer set, by the octets of the ref it minted: one table, walked when a process ends. */
-  const watches = new Map<string, Watch>();
+  const watches = new Map<string, PeerWatch>();
   /** The answers on their way out: `close` lets them finish before the connections they go over are let go. */
   const sending = new Set<Promise<void>>();
 
@@ -333,6 +349,25 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     port: listener.port,
     serve,
     attach,
+    channel: (ref: NodeRef) => facts.cluster.channel(ref),
+    send: (pid: PidTerm, body: Term) => facts.cluster.send(pid, body),
+    sendReg: async (name: string, ref: NodeRef, body: Term, from: AnyProcess) => {
+      // `{6, From, '', Name}` carries a sender; a process of this side, named by its pid, is what goes there.
+      const messages = await facts.cluster.channel(ref);
+      await messages.send({
+        kind: "message",
+        control: { kind: "regSend", from: facts.cluster.pidOf({ pname: from.pname, id: from.id }), to: name },
+        payload: forWire(body, (handle) => facts.cluster.pidOf(handle)),
+      });
+    },
+    watch: (pid: PidTerm) => facts.cluster.watch(pid),
+    watchName: (ref: NodeRef, name: string) => facts.cluster.watchName(ref, name),
+    spawn: (ref: NodeRef, call: Start) => facts.cluster.spawn(ref, call),
+    pidOf: (process: AnyProcess) => facts.cluster.pidOf({ pname: process.pname, id: process.id }),
+    processOf: (pid: PidTerm) => {
+      const known = facts.cluster.processOf(pid);
+      return known === null ? null : (byId.get(known.id) ?? null);
+    },
     async link(from: PidTerm, to: PidTerm): Promise<void> {
       const process = byPid(from);
       if (process === null) throw new Error(`${facts.self} serves no ${render(from)}, so nothing here can be linked`);

@@ -8,7 +8,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { defineActor, defineMessages } from "posipaki";
 import type { Channel } from "posipaki/port";
 
-import { forgetCluster, installCluster, makeCluster, type Cluster } from "./cluster.js";
+import { forgetCluster, installCluster, makeCluster, nodeRef, type Cluster } from "./cluster.js";
 import { open } from "./connection.js";
 import { listen } from "./listen.js";
 import type { WireMessage } from "./messages.js";
@@ -402,5 +402,21 @@ describe("a node", () => {
       to: PEER_PID,
       reason: atom("normal"),
     });
+  });
+
+  it("sends a term to a pid, and to a name with the sender the wire wants for that shape", async () => {
+    const { node, answerer, frames } = await serving();
+    const address = pid(PEER, 77, 0, 9);
+    await node.send(address, atom("one"));
+    await node.sendReg("answer", nodeRef("robot", "127.0.0.1", CLUSTER), atom("two"), answerer);
+
+    await until(() => frames.length === 2, "both terms to reach the node");
+    expect(frames[0]?.kind === "message" && frames[0].control).toEqual({ kind: "send", to: address });
+    const toName = frames[1];
+    expect(toName?.kind === "message" && toName.control.kind === "regSend" && toName.control.to).toBe("answer");
+    // The sender the wire carries is the process that asked, by its pid on this node.
+    expect(toName?.kind === "message" && toName.control.kind === "regSend" && toName.control.from).toEqual(
+      node.pidOf(answerer),
+    );
   });
 });
