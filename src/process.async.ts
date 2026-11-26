@@ -90,7 +90,11 @@ export class AsyncProcess<
    *  methods, each wrapped so calling one answers with a promise whatever the
    *  method was written as. */
   $reflection: ReflectionMethods = {} as ReflectionMethods;
-  pgenerator: AsyncProcessFn<Args, State, InMessage, OutMessage>;
+  /** The generator this process runs, with its arguments open.
+   *
+   *  A process is given its args once, at `start`, and never again, so they are not part of what a handle promises:
+   *  the field names none, which is also what lets every process fit `AnyProcess`. */
+  pgenerator: AsyncProcessFn<unknown, State, InMessage, OutMessage>;
   pname: string;
   /**
    * The connection this process holds, or null.  Its own fact, like `pname`: read through
@@ -146,7 +150,11 @@ export class AsyncProcess<
     pname: string,
     toParent?: MessageCallback<OutMessage>,
   ) {
-    this.pgenerator = fn;
+    // The one cast in this file. `fn` is this process's own generator, whose args are `Args`; the field says a handle
+    // knows no args, because a running process is never given any. Nothing crosses the assertion: the only caller is
+    // `pvtWatchExit` below, and it hands over the very `ctx` and `arg0` this constructor was given. `any` on the field
+    // would say the same thing and keep the reason out of sight.
+    this.pgenerator = fn as unknown as AsyncProcessFn<unknown, State, InMessage, OutMessage>;
     this.pname = pname;
     if (toParent) this.messageSubscribers.push(toParent);
     this.id = Symbol(pname);
