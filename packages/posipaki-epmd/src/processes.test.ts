@@ -13,6 +13,7 @@ import {
   processAt,
   processNamed,
   processTerm,
+  senderPidOf,
   remoteTerm,
   show,
   type ErlangProcess,
@@ -149,5 +150,16 @@ describe("a process of another node", () => {
     const { reach } = recording();
     const named = processNamed(nodeRef("robot", "192.168.88.20"), "relay", reach);
     expect(() => forWire(tuple(remoteTerm(named)), pidOf)).toThrow("a term carries addresses");
+  });
+
+  it("writes a sender as a pid: one over there as it stands, a name refused, a process of this side minted", async () => {
+    const { reach } = recording();
+    expect(senderPidOf(processAt(PEER_PID, reach), pidOf)).toEqual(PEER_PID);
+
+    const sender = await Sender.spawn(undefined);
+    expect(senderPidOf(sender, pidOf)).toEqual({ ...OURS_PID, id: 2 });
+
+    const named = processNamed(nodeRef("robot", "192.168.88.20"), "relay", reach);
+    expect(() => senderPidOf(named, pidOf)).toThrow("a sender is a pid");
   });
 });

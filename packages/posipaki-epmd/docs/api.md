@@ -25,7 +25,7 @@ The node speaks the wire's words — pids, names, terms. The application speaks 
 | the node | what it writes |
 | --- | --- |
 | `send(pid, body)` | `{2, '', To}`, which carries no sender |
-| `sendReg(name, ref, body, from: AnyProcess)` | `{6, pidOf(from), '', name}` |
+| `sendReg(name, ref, body, from: TermSender)` | `{6, senderPidOf(from), '', name}`: a process of this side is minted, a pid is relayed as it stands |
 | `watch(pid)`, `watchName(ref, name)` | `{19, From, ToProc, Ref}`, answered by `{21, FromProc, ToPid, Ref, Reason}` |
 | `link(from: PidTerm, to: PidTerm)`, `unlink(from, to)` | `{1, From, To}`, `{4, From, To}` |
 | `spawn(ref, {module, function, args})` | `{29, Ref, From, GL, {M, F, Arity}, []}` and the arguments after it |

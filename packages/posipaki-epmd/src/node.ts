@@ -44,9 +44,11 @@ import {
   forHere,
   forWire,
   processAt,
+  senderPidOf,
   type ErlangProcess,
   type Reach,
   type Start,
+  type TermSender,
   type VisibleTerm,
 } from "./processes.js";
 import { atom, binary, integer, list, reference, render, tuple, type Term } from "./terms.js";
@@ -607,11 +609,11 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   };
 
   /** One term to a name a node registered. `{6, From, '', Name}` carries a sender, so one is given. */
-  const sendReg = async (name: string, ref: NodeRef, body: Term, from: AnyProcess): Promise<void> => {
+  const sendReg = async (name: string, ref: NodeRef, body: Term, from: TermSender): Promise<void> => {
     const messages = await channel(ref);
     await messages.send({
       kind: "message",
-      control: { kind: "regSend", from: pidOf(from), to: name },
+      control: { kind: "regSend", from: senderPidOf(from, pidOf), to: name },
       payload: forWire(body, pidOf),
     });
   };

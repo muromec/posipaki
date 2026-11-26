@@ -138,7 +138,13 @@ export interface Reach {
   pidOf(process: AnyProcess): PidTerm;
   processOf(pid: PidTerm): AnyProcess | null;
   send(pid: PidTerm, body: Term): Promise<void>;
-  sendReg(name: string, ref: NodeRef, body: Term, from: AnyProcess): Promise<void>;
+  /**
+   * One term to a registered name, with the sender the `{6}` control carries.
+   *
+   * The sender is a process of this side, which is minted and served, or a pid this side relays for — a node answering on
+   * another node's behalf. An address with no pid has nothing to write there.
+   */
+  sendReg(name: string, ref: NodeRef, body: Term, from: TermSender): Promise<void>;
   watch(pid: PidTerm): Promise<Watch>;
   watchName(ref: NodeRef, name: string): Promise<Watch>;
   kill(pid: PidTerm): Promise<void>;
@@ -155,7 +161,12 @@ export interface Reach {
  */
 export interface ErlangProcess {
   readonly address: Address;
-  send(body: VisibleTerm, from?: AnyProcess): Promise<void>;
+  /**
+   * Who a term says sent it: a process of this side, or one over there whose pid this side writes as the sender.
+   *
+   * A name is not a sender — the `{6}` control carries a pid — so an address without one is refused where it is written.
+   */
+  send(body: VisibleTerm, from?: TermSender): Promise<void>;
   /** A watch on it: settles with the reason it ended and never rejects. Nothing is owed the other way. */
   monitor(): Promise<Watch>;
   /** Ends it with `kill`. The wire wants a sender, and this side mints one. */
@@ -171,9 +182,24 @@ export type Address =
   | { readonly kind: "pid"; readonly pid: PidTerm }
   | { readonly kind: "name"; readonly ref: NodeRef; readonly name: string };
 
+/** A sender a term may name: a process of this side, or one over there. */
+export type TermSender = AnyProcess | ErlangProcess;
+
 /** The pid an address names, or null for a name: only a pid fits in a term, and only a pid is exited or linked. */
 function pidOfAddress(address: Address): PidTerm | null {
   return address.kind === "pid" ? address.pid : null;
+}
+
+/**
+ * The pid a `{6}` writes as its sender.
+ *
+ * An address over there supplies its own pid, which is how a node relays a term on another node's behalf. A name has no
+ * pid to write, and a process of this side is minted and served by `pidOf`.
+ */
+export function senderPidOf(from: TermSender, pidOf: (process: AnyProcess) => PidTerm): PidTerm {
+  if (!("address" in from)) return pidOf(from);
+  if (from.address.kind === "pid") return from.address.pid;
+  throw new Error(`${from.address.name} is a registered name, and a sender is a pid: \`{6, From, '', Name}\` carries one`);
 }
 
 /** The pid a walk writes, or a refusal: a name has no place in a term. */
