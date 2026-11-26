@@ -10,7 +10,7 @@
 import { defineActor, defineMessages } from "posipaki";
 
 import type { EtfAnswered, EtfAsked } from "../src/node.js";
-import { processTerm, remoteTerm, show, type RemoteProcess, type VisibleTerm } from "../src/processes.js";
+import { processTerm, remoteTerm, show, type ErlangProcess, type VisibleTerm } from "../src/processes.js";
 import { atom, binary, tuple } from "../src/terms.js";
 
 /** The word the term carries, when it carries one: `{Pid, Text}` is how a peer asks. */
@@ -21,7 +21,7 @@ function wordIn(body: VisibleTerm): string | null {
 }
 
 /** The process a term names, when it names one: the first item of `{Pid, …}`. */
-function namedIn(body: VisibleTerm): RemoteProcess | null {
+function namedIn(body: VisibleTerm): ErlangProcess | null {
   if (body.kind !== "tuple") return null;
   const first = body.items[0];
   return first?.kind === "remote" ? first.process : null;

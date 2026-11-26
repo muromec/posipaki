@@ -13,9 +13,9 @@
 import { randomBytes } from "node:crypto";
 
 import { makeCluster, refFromName } from "../src/cluster.js";
-import { startNode } from "../src/node.js";
-import { ErlangProxy, type EtfRaw } from "../src/proxy.js";
-import { show } from "../src/processes.js";
+import { startNode, type EtfAsked } from "../src/node.js";
+import { proxyOf } from "../src/proxy.js";
+import { processNamed, show } from "../src/processes.js";
 import { binary, tuple } from "../src/terms.js";
 import { Answerer } from "./answerer.js";
 
@@ -57,14 +57,12 @@ async function main(): Promise<void> {
   if (say !== null) {
     const where = refFromName(say, cluster.name);
     // The asking side: a proxy speaks for one name on that node, and what comes back is its out-message.
-    const proxy = await ErlangProxy.spawn(
-      { node: where, processName: to },
-      { toParent: (heard: EtfRaw) => console.log(`  ${to} answered: ${show(heard.body)}`) },
-    );
+    const proxy = await proxyOf(node, processNamed(where, to, node)).spawn(undefined, {
+      toParent: (heard: EtfAsked) => console.log(`  ${to} answered: ${show(heard.body)}`),
+    });
     console.log(`saying ${JSON.stringify(message)} to ${to} on ${say}`);
-    // The term carries this process's own pid, so whoever it reaches has somewhere to answer.
-    // The term carries this process's own pid, so whoever it reaches has somewhere to answer.
-    proxy.send({ type: "ETF_RAW", body: tuple(node.pidOf(answerer), binary(Buffer.from(message, "utf8"))) });
+    // The term carries a pid of this node, so whoever it reaches has somewhere to answer — and this node routes it back.
+    proxy.send({ type: "SEND", body: tuple(node.pidOf(answerer), binary(Buffer.from(message, "utf8"))) });
   }
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {

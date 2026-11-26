@@ -2,12 +2,16 @@
 //
 // It forks the proxy for the name it was given, sends it one term, prints what comes back and exits. Nothing here
 // waits on a wire: the child's answer is this actor's own in-message, which is what an actor is for.
+//
+// The node is asked for by the cluster name the reference carries, and this actor is held by it: the term carries this
+// process's own address, so the answer is routed back here.
 
 import { defineActor, defineMessages } from "posipaki";
 
 import type { NodeRef } from "../src/cluster.js";
-import { ErlangProxy, type EtfRaw } from "../src/proxy.js";
-import { processTerm, show } from "../src/processes.js";
+import { nodeNamed, type EtfAsked } from "../src/node.js";
+import { processNamed, processTerm, show } from "../src/processes.js";
+import { proxyOf } from "../src/proxy.js";
 import { binary, tuple } from "../src/terms.js";
 
 export interface CliArgs {
@@ -19,30 +23,28 @@ export interface CliArgs {
   readonly message: string;
 }
 
-interface Private {
-  readonly args: CliArgs;
-
-}
-
 /** Asks one name on one node, and ends with the answer printed. */
 export const Cli = defineActor({
   name: "cli",
-  inMessages: defineMessages<EtfRaw>(),
+  inMessages: defineMessages<EtfAsked>(),
   outMessages: defineMessages<never>(),
 
-  async setup(args: CliArgs): Promise<{ public: null; private: Private }> {
-    const proxy = await this.fork(ErlangProxy, { node: args.node, processName: args.processName }, {
+  async setup(args: CliArgs) {
+    const node = nodeNamed(args.node.cluster);
+    // An address for this actor: the answer is addressed to the pid the term carries, and the node routes it here.
+    node.hold(this.self);
+    const proxy = await this.fork(proxyOf(node, processNamed(args.node, args.processName, node)), undefined, {
       name: args.processName,
     });
-    // The actor names a process and nothing else: the term carries `this.self`, and the proxy's layers turn it into an
-    // address on the way out and back into a handle on the way in.
-    await proxy.send({ type: "ETF_RAW", body: tuple(processTerm(this.self), binary(Buffer.from(args.message, "utf8"))) });
-    // Nothing else needs the handle: a child lives and ends with this actor.
+    // The actor names a process and nothing else: the term carries `this.self`, and the layers turn it into an address
+    // on the way out and back into a handle on the way in.
+    await proxy.send({ type: "SEND", body: tuple(processTerm(this.self), binary(Buffer.from(args.message, "utf8"))) });
     return { public: null, private: { args } };
   },
+
   handlers: {
-    ETF_RAW(message: EtfRaw) {
-      console.log(show(message.body));
+    ETF_RAW(asked: EtfAsked) {
+      console.log(show(asked.body));
       this.exit("the answer is printed");
     },
   },

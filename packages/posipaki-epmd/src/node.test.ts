@@ -13,7 +13,7 @@ import { open } from "./connection.js";
 import { listen } from "./listen.js";
 import type { WireMessage } from "./messages.js";
 import { forgetNode, startNode, type ErlangNode, type EtfAnswered, type EtfAsked } from "./node.js";
-import { processTerm, show, type RemoteProcess, type VisibleTerm } from "./processes.js";
+import { processTerm, show, type ErlangProcess, type VisibleTerm } from "./processes.js";
 import { atom, binary, pid, reference, tuple } from "./terms.js";
 
 const CLUSTER = "node-test";
@@ -26,7 +26,7 @@ const PEER_PID = pid(PEER, 42, 0, 9);
 const heard: EtfAsked[] = [];
 
 /** The process a term names, if it names one: `{Pid, …}` is how a peer says who to answer. */
-function namedIn(body: VisibleTerm): RemoteProcess | undefined {
+function namedIn(body: VisibleTerm): ErlangProcess | undefined {
   if (body.kind !== "tuple") return undefined;
   const first = body.items[0];
   return first?.kind === "remote" ? first.process : undefined;
@@ -116,9 +116,9 @@ describe("a node", () => {
 
     const asked = heard[0];
     expect(asked?.type).toBe("ETF_RAW");
-    expect(asked?.from?.pid).toEqual(PEER_PID);
+    expect(asked?.from?.address).toEqual({ kind: "pid", pid: PEER_PID });
     // And the pid the term carried is a reference, not an address the process has to spell out.
-    expect(namedIn(asked?.body ?? atom(""))?.pid).toEqual(PEER_PID);
+    expect(namedIn(asked?.body ?? atom(""))?.address).toEqual({ kind: "pid", pid: PEER_PID });
   });
 
   it("sends an answer back over the connection it arrived on, to the pid the term named", async () => {

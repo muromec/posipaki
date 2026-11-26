@@ -1,15 +1,16 @@
 // ── processes in a term ─────────────────────────────────────────────────────
 //
 // An actor says *which process*; the layers say *which address*. A term on its way out may carry a process of this
-// side — `{kind: "process", handle}` — and the walk replaces it with the pid the cluster minted for it. A term on its
-// way in carries pids, and the walk replaces each with the process it names: one of ours becomes the same kind of
-// handle, one of the node's becomes a remote process, which knows how to send back through the proxy it arrived on.
-//
+// side — `{kind: "process", handle}` — and the walk replaces it with the pid this node minted for it. A term on its way
+// in carries pids, and the walk replaces each with the process it names: one of ours becomes a local handle, one of the
+// node's becomes an `ErlangProcess`, which sends and watches through the node the term arrived on.
 // Both replacements are structural: a process can sit at any depth of a tuple, a list or a map, and the walk goes
 // everywhere a term goes. `write` refuses both kinds, so a term that has not been through here cannot be put on the
 // wire by accident.
 
-import type { ProcessHandle, Watch } from "./cluster.js";
+import type { AnyProcess } from "posipaki";
+
+import type { NodeRef, ProcessHandle, Watch } from "./cluster.js";
 import { render, type Term } from "./terms.js";
 
 /** A pid, as the wire writes it. */
@@ -21,23 +22,10 @@ export interface LocalProcess {
   readonly handle: ProcessHandle;
 }
 
-/** A process of the node this side is talking to, as something that can be sent to. */
-export interface RemoteProcess {
-  /** Its address there. */
-  readonly pid: PidTerm;
-  /** One term to it, over the connection its pid arrived on. */
-  send(body: VisibleTerm): Promise<void>;
-  /**
-   * Settles when that process is over, with the reason: a monitor this side sets on its address.
-   *
-   * It never rejects. A peer that went answers "noconnection", which is a reason like any other.
-   */
-  wait(): Promise<VisibleTerm>;
-}
 /** The leaf that stands for a process of the other node. */
 export interface RemoteInTerm {
   readonly kind: "remote";
-  readonly process: RemoteProcess;
+  readonly process: ErlangProcess;
 }
 
 /** A term a caller may build: the wire's own leaves, and a process of either side. */
@@ -49,7 +37,7 @@ export function processTerm(handle: ProcessHandle): Term<LocalProcess> {
 }
 
 /** The value a process on the other node is read as. */
-export function remoteTerm(process: RemoteProcess): Term<RemoteInTerm> {
+export function remoteTerm(process: ErlangProcess): Term<RemoteInTerm> {
   return { kind: "remote", process };
 }
 
@@ -64,7 +52,7 @@ function isRemote(term: VisibleTerm): term is RemoteInTerm {
 /** The same term with every process replaced by the address `pidOf` gives it. */
 export function forWire(term: VisibleTerm, pidOf: (handle: ProcessHandle) => PidTerm): Term {
   if (isProcess(term)) return pidOf(term.handle);
-  if (isRemote(term)) return term.process.pid;
+  if (isRemote(term)) return wirePidOf(term.process.address);
   switch (term.kind) {
     case "tuple":
       return { kind: "tuple", items: term.items.map((item) => forWire(item, pidOf)) };
@@ -88,7 +76,7 @@ export interface Readers {
   /** A pid of this runtime's own node: the process it names, or null when nobody holds that id. */
   here(pid: PidTerm): ProcessHandle | null;
   /** A pid of the node the term came from: how to send back to it. */
-  there(pid: PidTerm): RemoteProcess;
+  there(pid: PidTerm): ErlangProcess;
 }
 
 /** The same term with every pid replaced by the process it names, whichever side of the wire that is. */
@@ -120,7 +108,7 @@ export function forHere(term: Term, readers: Readers): VisibleTerm {
 /** A term as one line, with a process named as what it is rather than as an address. */
 export function show(term: VisibleTerm): string {
   if (term.kind === "process") return `#process<${term.handle.pname}>`;
-  if (term.kind === "remote") return `#remote<${term.process.pid.node}.${term.process.pid.id}>`;
+  if (term.kind === "remote") return `#remote<${describe(term.process.address)}>`;
   switch (term.kind) {
     case "tuple":
       return `{${term.items.map(show).join(", ")}}`;
@@ -134,32 +122,105 @@ export function show(term: VisibleTerm): string {
 }
 
 /**
- * A process on another node, as this side hands one out: one you asked for by pid, or one a node started for you.
- *
- * Sending goes through the cluster, which keeps one connection per node; waiting is a watch on its address, so it
- * settles with the reason and never rejects.
+ * What an actor beside a node uses of it: the verbs for a process over there, and the one for itself. Written out
+ * rather than as the node's type, so a handle carries no process and a double answers nine methods.
  */
-
-/**
- * What a process of another node needs of this side: the verbs a cluster and a node both answer.
- *
- * Written as the four methods rather than as either type, so a process handed out by the cluster and one handed out by
- * the node are the same kind of handle.
- */
-export interface Reacher {
+export interface Reach {
   pidOf(handle: ProcessHandle): PidTerm;
   processOf(pid: PidTerm): ProcessHandle | null;
   send(pid: PidTerm, body: Term): Promise<void>;
+  sendReg(name: string, ref: NodeRef, body: Term, from: AnyProcess): Promise<void>;
   watch(pid: PidTerm): Promise<Watch>;
+  watchName(ref: NodeRef, name: string): Promise<Watch>;
+  kill(pid: PidTerm): Promise<void>;
+  link(from: PidTerm, to: PidTerm): Promise<void>;
+  /** Makes a process of this side reachable by its pid: what an actor a peer addresses needs, with no name. */
+  hold(process: AnyProcess): void;
 }
-export function remoteProcess(pid: PidTerm, reach: Reacher): RemoteProcess {
+
+/**
+ * A process on another node: an address and the verbs the wire has for it.
+ *
+ * A pid is what a term carries and what an exit names. A registered name is how a node is asked for a process nobody
+ * handed out an address for, and it carries no sender — a message to one says who sent it, so `send` takes the process.
+ */
+export interface ErlangProcess {
+  readonly address: Address;
+  send(body: VisibleTerm, from?: AnyProcess): Promise<void>;
+  /** A watch on it: settles with the reason it ended and never rejects. Nothing is owed the other way. */
+  monitor(): Promise<Watch>;
+  /** Ends it with `kill`. The wire wants a sender, and this side mints one. */
+  kill(): Promise<void>;
+  /** Links a process of this side to this one: whichever ends first takes the other with it. */
+  link(process: AnyProcess): Promise<void>;
+  /** The reason it ended: `monitor().ended`. */
+  wait(): Promise<VisibleTerm>;
+}
+
+/** Where a process over there is: the pid a term carries, or the name a node registered it under. */
+export type Address =
+  | { readonly kind: "pid"; readonly pid: PidTerm }
+  | { readonly kind: "name"; readonly ref: NodeRef; readonly name: string };
+
+/** The pid an address names, or null for a name: only a pid fits in a term, and only a pid is exited or linked. */
+function pidOfAddress(address: Address): PidTerm | null {
+  return address.kind === "pid" ? address.pid : null;
+}
+
+/** The pid a walk writes, or a refusal: a name has no place in a term. */
+function wirePidOf(address: Address): PidTerm {
+  if (address.kind === "pid") return address.pid;
+  throw new Error(`${address.name} is a registered name, and a term carries addresses: a pid has one`);
+}
+
+/** A process on another node, by the address it was found at. */
+export function erlangProcess(address: Address, reach: Reach): ErlangProcess {
+  const watch = (): Promise<Watch> =>
+    address.kind === "pid" ? reach.watch(address.pid) : reach.watchName(address.ref, address.name);
   return {
-    pid,
-    send: (body) => reach.send(pid, forWire(body, (handle) => reach.pidOf(handle))),
-    wait: async () =>
-      forHere(await (await reach.watch(pid)).ended, {
+    address,
+    async send(body, from) {
+      if (address.kind === "pid") {
+        await reach.send(address.pid, forWire(body, (handle) => reach.pidOf(handle)));
+        return;
+      }
+      // `{6, From, '', Name}` names its sender, unlike `{2, '', To}`: a name-addressed send is one a process makes.
+      if (from === undefined) {
+        throw new Error(`a message to ${address.name} must say who sent it: \`{6, From, '', Name}\` carries a sender`);
+      }
+      await reach.sendReg(address.name, address.ref, forWire(body, (handle) => reach.pidOf(handle)), from);
+    },
+    monitor: watch,
+    async kill() {
+      const pid = pidOfAddress(address);
+      if (pid === null) throw new Error(`a name cannot be exited: \`{3, From, To, Reason}\` carries a pid`);
+      await reach.kill(pid);
+    },
+    async link(process) {
+      const pid = pidOfAddress(address);
+      if (pid === null) throw new Error(`a name cannot be linked: \`{1, From, To}\` carries a pid`);
+      await reach.link(reach.pidOf({ pname: process.pname, id: process.id }), pid);
+    },
+    async wait() {
+      return forHere(await (await watch()).ended, {
         here: (found) => reach.processOf(found),
-        there: (found) => remoteProcess(found, reach),
-      }),
+        there: (found) => erlangProcess({ kind: "pid", pid: found }, reach),
+      });
+    },
   };
+}
+
+/** A process of another node named by its pid. */
+export function processAt(pid: PidTerm, reach: Reach): ErlangProcess {
+  return erlangProcess({ kind: "pid", pid }, reach);
+}
+
+/** A process of another node named by the name its node registered. */
+export function processNamed(ref: NodeRef, name: string, reach: Reach): ErlangProcess {
+  return erlangProcess({ kind: "name", ref, name }, reach);
+}
+
+/** An address as one line, for a message that names one. */
+function describe(address: Address): string {
+  return address.kind === "pid" ? `${address.pid.node}.${address.pid.id}` : `${address.name}@${address.ref.host}`;
 }

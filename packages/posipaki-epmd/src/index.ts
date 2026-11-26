@@ -81,11 +81,13 @@ export {
   show,
   type LocalProcess,
   type RemoteInTerm,
-  type RemoteProcess,
+  type ErlangProcess,
+  type Address,
+  type Reach,
   type VisibleTerm,
 } from "./processes.js";
 
-export { ErlangProxy, samePid, type EtfRaw, type ProxyArgs } from "./proxy.js";
+export { proxyOf, type ProxyNode } from "./proxy.js";
 
 export {
   startNode,

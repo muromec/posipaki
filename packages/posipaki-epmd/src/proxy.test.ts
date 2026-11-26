@@ -1,133 +1,100 @@
-// ── a registered process on a node, as an actor here ────────────────────────
+// ── a process on another node, as an actor here ─────────────────────────────
 //
-// The node is a double: what the proxy writes is what the far side reads, and what the far side writes is what the
-// proxy is handed. One connection, several pids — which is what the routing case is for.
+// The node is a double: it records what the proxy sends, gives it an address, and hands it what the far side answered.
+// The proxy's own two facts are what the cases measure — a term goes to the address it was built with, and what the node
+// delivers comes out with who asked.
 
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 
-import { memoryChannelPair } from "posipaki/port";
+import type { AnyProcess } from "posipaki";
 
-import { nodeRef, type NodeRef, type PidTerm, type Watch } from "./cluster.js";
-import { forgetNode, installNode, type Reach } from "./node.js";
-import type { WireMessage } from "./messages.js";
-import { ErlangProxy, type EtfRaw } from "./proxy.js";
-import { reference, type Term } from "./terms.js";
+import { nodeRef, type NodeRef, type PidTerm } from "./cluster.js";
+import type { EtfAsked } from "./node.js";
+import { processNamed, type ErlangProcess, type Reach } from "./processes.js";
+import { proxyOf } from "./proxy.js";
+import { atom, binary, type Term } from "./terms.js";
 
-const CLUSTER = "test";
-const REF: NodeRef = nodeRef("robot", "192.168.88.20", CLUSTER);
-const PID: PidTerm = { kind: "pid", node: "probe@192.168.88.27", id: 1, serial: 0, creation: 7 };
-const OTHER: PidTerm = { ...PID, id: 2 };
+const PEER_PID: PidTerm = { kind: "pid", node: "robot@192.168.88.20", id: 91, serial: 0, creation: 5 };
+const REF: NodeRef = nodeRef("robot", "192.168.88.20");
 
-/** A node whose one connection is a memory pair, with one address per proxy. */
+/** A node that records what was sent to a name, and the process it was told to hold. */
 function fakeNode() {
-  const pair = memoryChannelPair<WireMessage>();
-  const written: WireMessage[] = [];
-  const closed: string[] = [];
-  let next = 1;
-  // The double answers no watches: a promise that never settles is a peer that never ends anything.
+  const sent: Array<{ name: string; body: Term }> = [];
+  const held: AnyProcess[] = [];
   const node: Reach = {
-    channel: async () => pair.near,
-    pidOf: (): PidTerm => ({ ...PID, id: next++ }),
+    pidOf: (): PidTerm => PEER_PID,
     processOf: () => null,
     send: async () => undefined,
-    watch: () => new Promise<Watch>(() => undefined),
-    watchName: () => new Promise<Watch>(() => undefined),
+    sendReg: async (name: string, _ref: NodeRef, body: Term) => {
+      sent.push({ name, body });
+    },
+    watch: () => new Promise(() => undefined),
+    watchName: () => new Promise(() => undefined),
+    kill: async () => undefined,
+    link: async () => undefined,
+    hold: (process: AnyProcess) => {
+      held.push(process);
+    },
   };
-  pair.far.onFrame((said: WireMessage) => written.push(said));
-  pair.far.onClose((reason: string) => closed.push(reason));
-  installNode(node, CLUSTER);
-  return { node, written, closed, far: pair.far };
+  return { node, sent, held };
 }
 
-const atomOf = (name: string): Term => ({ kind: "atom", name });
-const say = (body: Term): EtfRaw => ({ type: "ETF_RAW", body });
-
-/** A proxy and everything it emitted. */
-async function proxyOf(processName = "relay") {
-  const out: EtfRaw[] = [];
-  const proxy = await ErlangProxy.spawn(
-    { node: REF, processName },
-    { toParent: (message: EtfRaw) => out.push(message) },
-  );
-  opened.push(proxy);
-  return { proxy, out };
-}
-
-/** A moment for the frames to cross. */
-const settle = (): Promise<void> => new Promise((resolve) => setTimeout(resolve, 50));
+/** The address a proxy is built with: a registered name, which is what a caller has before anything was said. */
+const relay = (node: Reach, name = "relay"): ErlangProcess => processNamed(REF, name, node);
 
 const opened: Array<{ stop(): Promise<unknown> }> = [];
 
 afterEach(async () => {
-  vi.restoreAllMocks();
   for (const proxy of opened.splice(0)) await proxy.stop().catch(() => undefined);
-  forgetNode(CLUSTER);
 });
 
-describe("ErlangProxy", () => {
-  it("carries a term to the name it was forked with", async () => {
-    const { written } = fakeNode();
-    const { proxy } = await proxyOf();
-    proxy.send(say(atomOf("hi")));
-    await settle();
-    expect(written).toHaveLength(1);
-    const first = written[0];
-    expect(first?.kind).toBe("message");
-    if (first?.kind !== "message") return;
-    expect(first.control).toEqual({ kind: "regSend", from: PID, to: "relay" });
-    expect(first.payload).toEqual(atomOf("hi"));
+describe("proxyOf", () => {
+  it("is held by the node, so what is sent to its address is handed to it", async () => {
+    const { node, held } = fakeNode();
+    const proxy = await proxyOf(node, relay(node)).spawn(undefined, {});
+    opened.push(proxy);
+    expect(held).toHaveLength(1);
+    expect(held[0]?.pname).toBe(proxy.pname);
   });
 
-  it("brings what the node addressed to its pid back out", async () => {
-    const { far } = fakeNode();
-    const { out } = await proxyOf();
-    await far.send({ kind: "message", control: { kind: "send", to: PID }, payload: atomOf("pong") });
-    await settle();
-    expect(out).toEqual([{ type: "ETF_RAW", body: atomOf("pong") }]);
+  it("sends what arrives to the address it was built with, and says who sent it", async () => {
+    const { node, sent } = fakeNode();
+    const proxy = await proxyOf(node, relay(node)).spawn(undefined, {});
+    opened.push(proxy);
+
+    await proxy.send({ type: "SEND", body: atom("hi") });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(sent).toHaveLength(1);
+    expect(sent[0]?.name).toBe("relay");
+    expect(sent[0]?.body).toEqual(atom("hi"));
   });
 
-  it("says nothing about a message for another pid on the same connection", async () => {
-    const { far } = fakeNode();
-    const { out } = await proxyOf();
-    await far.send({ kind: "message", control: { kind: "send", to: OTHER }, payload: atomOf("not mine") });
-    await settle();
-    expect(out).toEqual([]);
-  });
-
-  it("ends when the connection does", async () => {
-    const { far } = fakeNode();
-    const { proxy } = await proxyOf();
-    let ended = false;
-    void proxy.wait().then(() => {
-      ended = true;
+  it("brings what the node delivered back out, with who asked", async () => {
+    const { node } = fakeNode();
+    const heard: EtfAsked[] = [];
+    const proxy = await proxyOf(node, relay(node)).spawn(undefined, {
+      toParent: (asked: EtfAsked) => heard.push(asked),
     });
-    await settle();
-    expect(ended).toBe(false);
-    await far.close("the far end closed");
-    await settle();
-    expect(ended).toBe(true);
+    opened.push(proxy);
+
+    const asked: EtfAsked = { type: "ETF_RAW", body: binary(Buffer.from("pong", "utf8")) };
+    await proxy.send(asked);
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(heard.map((one) => one.body)).toEqual([asked.body]);
   });
 
-  it("publishes the pid it answers at", async () => {
-    fakeNode();
-    const { proxy } = await proxyOf();
-    expect(proxy.state?.erlangPid).toEqual(PID);
-  });
-
-  it("carries a reference a peer gave it, as the octets it arrived as", async () => {
-    const { written } = fakeNode();
-    const { proxy } = await proxyOf();
-    // A reference is not this side's to mint: what goes out is what a node sent it, byte for byte.
-    proxy.send(say(reference("robot@192.168.88.20", 9)));
-    await settle();
-    expect(written).toHaveLength(1);
-    const said = written[0];
-    expect(said.kind === "message" ? said.payload?.kind : null).toBe("ref");
-  });
-
-  it("says which nodes are running when the reference names a cluster with none", async () => {
-    await expect(
-      ErlangProxy.spawn({ node: nodeRef("robot", "192.168.88.20", "nowhere"), processName: "relay" }),
-    ).rejects.toThrow(/there is no node running as nowhere/);
+  it("ends when the process it stands for does", async () => {
+    const { node } = fakeNode();
+    const ended = processNamed(REF, "relay", { ...node, watchName: () => Promise.resolve(ENDED_AT_ONCE) });
+    let over = false;
+    const proxy = await proxyOf(node, ended).spawn(undefined, {});
+    opened.push(proxy);
+    void proxy.wait().then(() => {
+      over = true;
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(over).toBe(true);
   });
 });
+
+const ENDED_AT_ONCE = { ended: Promise.resolve(atom("normal")), cancel: () => undefined };

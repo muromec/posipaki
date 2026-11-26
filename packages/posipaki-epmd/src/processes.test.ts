@@ -4,9 +4,21 @@
 // node — the point is that a process is never an address a caller has to spell out.
 
 import { describe, expect, it } from "vitest";
+import { defineActor, defineMessages } from "posipaki";
 
-import type { ProcessHandle } from "./cluster.js";
-import { forHere, forWire, processTerm, remoteTerm, show, type PidTerm, type RemoteProcess } from "./processes.js";
+import { nodeRef, type ProcessHandle } from "./cluster.js";
+import {
+  forHere,
+  forWire,
+  processAt,
+  processNamed,
+  processTerm,
+  remoteTerm,
+  show,
+  type ErlangProcess,
+  type PidTerm,
+  type Reach,
+} from "./processes.js";
 import { atom, binary, list, map, pid, tuple } from "./terms.js";
 
 const CLI: ProcessHandle = { pname: "root:cli", id: Symbol("cli") };
@@ -17,9 +29,12 @@ const PEER_PID: PidTerm = pid("robot@192.168.88.20", 91, 0, 5);
 const pidOf = (handle: ProcessHandle): PidTerm => ({ ...OURS_PID, id: handle.id === CLI.id ? 1 : 2 });
 
 /** A process on the node, as a caller would be handed one. */
-const peer = (address: PidTerm): RemoteProcess => ({
-  pid: address,
+const peer = (address: PidTerm): ErlangProcess => ({
+  address: { kind: "pid", pid: address },
   send: async () => undefined,
+  monitor: () => new Promise(() => undefined),
+  kill: async () => undefined,
+  link: async () => undefined,
   // A walk never asks a process to wait; the double only has to exist.
   wait: () => new Promise(() => undefined),
 });
@@ -60,5 +75,73 @@ describe("show", () => {
   it("names a process as what it is rather than as an address", () => {
     expect(show(tuple(processTerm(CLI), atom("hi")))).toBe("{#process<root:cli>, hi}");
     expect(show(tuple(remoteTerm(peer(PEER_PID))))).toBe("{#remote<robot@192.168.88.20.91>}");
+  });
+});
+
+/** A process of this side, so a case can say who is sending. */
+const Sender = defineActor({
+  name: "sender",
+  inMessages: defineMessages<never>(),
+  outMessages: defineMessages<never>(),
+  handlers: {},
+});
+
+describe("a process of another node", () => {
+  /** A node that records the verbs a handle asks it for. */
+  function recording() {
+    const called: string[] = [];
+    const reach: Reach = {
+      pidOf: () => OURS_PID,
+      processOf: () => null,
+      send: async () => {
+        called.push("send");
+      },
+      sendReg: async () => {
+        called.push("sendReg");
+      },
+      watch: () => new Promise(() => undefined),
+      watchName: () => new Promise(() => undefined),
+      kill: async () => {
+        called.push("kill");
+      },
+      link: async () => {
+        called.push("link");
+      },
+      hold: () => undefined,
+    };
+    return { reach, called };
+  }
+
+  it("sends to a pid with no sender, and to a name only when one is given", async () => {
+    const { reach, called } = recording();
+    // A process of this side that sends: `send` and `link` take one, and a bare handle is not a process.
+    const sender = await Sender.spawn(undefined);
+    await processAt(PEER_PID, reach).send(atom("hi"));
+    expect(called).toEqual(["send"]);
+
+    // `{6, From, '', Name}` carries a sender, and a reference carries no process: the caller says who is sending.
+    const named = processNamed(nodeRef("robot", "192.168.88.20"), "relay", reach);
+    await expect(named.send(atom("hi"))).rejects.toThrow("must say who sent it");
+    await named.send(atom("hi"), sender);
+    expect(called).toEqual(["send", "sendReg"]);
+  });
+
+  it("exits and links a pid, and refuses to do either to a name", async () => {
+    const { reach, called } = recording();
+    await processAt(PEER_PID, reach).kill();
+    const sender = await Sender.spawn(undefined);
+    await processAt(PEER_PID, reach).link(sender);
+    expect(called).toEqual(["kill", "link"]);
+
+    // `{3, …}` and `{1, …}` carry addresses, and a name is not one.
+    const named = processNamed(nodeRef("robot", "192.168.88.20"), "relay", reach);
+    await expect(named.kill()).rejects.toThrow("a name cannot be exited");
+    await expect(named.link(sender)).rejects.toThrow("a name cannot be linked");
+  });
+
+  it("is a name when it was found by one, and a name has no place in a term", () => {
+    const { reach } = recording();
+    const named = processNamed(nodeRef("robot", "192.168.88.20"), "relay", reach);
+    expect(() => forWire(tuple(remoteTerm(named)), pidOf)).toThrow("a term carries addresses");
   });
 });

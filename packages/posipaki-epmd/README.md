@@ -34,20 +34,21 @@ another is given), `--self` (the node name this side claims, `posipaki@<host>`),
 
 ## A proxy actor
 
-`ErlangProxy` stands for a registered process on that node: `{node: NodeRef, processName}`, `ETF_RAW` in
-and out, the body being a BEAM term. What goes in becomes a `DOP_REG_SEND` to that name; what the node sends to the
-proxy's pid comes back out.
+`proxyOf(node, ref)` stands for a process on that node: `SEND` in — one BEAM term — and `ETF_RAW` out, with who sent
+what came back. The proxy is held by the node, so a term the far side addresses to its pid is handed to it, and a term it
+is told to send goes to `ref` — a pid, or a registered name, which is a `DOP_REG_SEND` and so says who is sending.
 
 ```
-const cluster = makeCluster({ self: "probe@192.168.88.27", cookie, creation });
-const node = await startNode(cluster, { port: 0 });   // the connection and the pids are the node's
-const proxy = await ErlangProxy.spawn({ node: nodeRef("robot", "192.168.88.20"), processName: "echo" });
-await proxy.send({ type: "ETF_RAW", body: tuple(proxy.state.erlangPid, binary(text)) });
+const node = await startNode(makeCluster({ self: "probe@192.168.88.27", cookie, creation }), { port: 0 });
+const ref = processNamed(nodeRef("robot", "192.168.88.20"), "echo", node);
+const proxy = await proxyOf(node, ref).spawn(undefined);
+await proxy.send({ type: "SEND", body: tuple(node.pidOf(aProcessOfOurs), binary(text)) });
 ```
 
-The pid it answers at is published on the process: `state.erlangPid`. It is minted from the process's own identity,
-never reused, and `node.pidOf(process)` answers the same one however often it is asked; `node.processOf(pid)` names the
-process a pid belongs to, in the incarnation this node is running now — a pid from an earlier one names nobody.
+A process of this side that a peer answers by pid is held by the node (`node.hold(process)`), which is what gives it an
+address and routes what arrives to it; `node.pidOf(process)` answers the same address however often it is asked, and
+`node.processOf(pid)` names the process a pid belongs to in the incarnation this node is running now. A `proxyOf` ends
+when the process it stands for does.
 
 ## Being watched
 
@@ -76,26 +77,25 @@ goes back over the connection the watch came in on.
 
 `node.close()` lets those answers go before the connection closes. A peer watching a process is owed the reason it
 ended, and `noconnection` is a different fact.
-
-The same wire the other way: `cluster.watch(pid)` and `cluster.watchName(ref, name)` settle with the reason — `normal`,
-`{error, Message}`, or `noproc` for an address that serves nobody, and `noconnection` when the peer goes. A
-`RemoteProcess` in a term has `wait()`, and an `ErlangProxy` ends when the name it stands for does.
+The same wire the other way: `node.watch(pid)` and `node.watchName(ref, name)` settle with the reason — `normal`,
+`{error, Message}`, or `noproc` for an address that serves nobody, and `noconnection` when the peer goes. An
+`ErlangProcess` in a term has `wait()`, `monitor()`, `kill()` and `link(process)`, and a `proxyOf` ends when the process
+it stands for does.
 
 Measured against tomato: a watch on a name nobody serves answers `noproc` at once, and a watch on a live one stays open.
 
 ## Starting a process over there
 
-`cluster.spawn(ref, {module, function, args})` asks a node to run `module:function(args)` and answers a
-`RemoteProcess` for the process it started — the same handle a pid in a term gives, so `send` and `wait` work on it at
-once.
+`node.spawn(ref, {module, function, args})` asks a node to run `module:function(args)` and answers an `ErlangProcess` for
+the process it started — the same handle a pid in a term gives, so `send`, `monitor`, `kill` and `wait` work on it.
 
 ```
-const started = await cluster.spawn(nodeRef("robot", "192.168.88.20"), {
+const started = await node.spawn(nodeRef("robot", "192.168.88.20"), {
   module: "timer",
   function: "sleep",
   args: [integer(200)],
 });
-console.log(show(started.pid));            // #PID<robot@192.168.88.20.95.0>
+console.log(started.address.kind);       // pid: what the wire writes, and what a term carries
 console.log(show(await started.wait()));   // normal
 ```
 
@@ -161,12 +161,14 @@ Bottom up, one file each, each with its own tests:
 - `handshake.ts` — both roles, `initiate` and `accept`, and the point where the wire widens.
 - `epmd.ts` — the port mapper at both ends: where a node listens, and the mapper on this host that nodes register with.
 - `connection.ts`, `listen.ts` — the two roles of a connection, each proving the cookie before handing over a channel.
-- `cluster.ts` — the nodes one identity can reach: discovery, one connection per node, and the pids this side answers
-  at. A `NodeRef` names a cluster and a node in it; nothing in it is a connection.
-- `proxy.ts` — a registered process on a node as an actor here.
-- `node.ts` — this side as a node: a listener, a registration, and the two tables that route what a peer sends. A served
-  process is an ordinary actor: `ETF_RAW {from?, body}` in, `{to, body}` out.
-- `index.ts` — the exports; nothing in it decides anything.
+- `cluster.ts` — the configuration a node runs from, and the grammar of a node's name: a `NodeRef` is a node, the cluster
+  whose configuration reaches it, and its host. It holds no connection and no table.
+- `processes.ts` — processes in a term: what a caller writes, and what it is handed back. An `ErlangProcess` is an address
+  (a pid, or a registered name) with `send`, `monitor`, `kill`, `link` and `wait`.
+- `proxy.ts` — `proxyOf(node, ref)`: a process on another node as an actor here.
+- `node.ts` — this side as a node, both directions: a listener, a registration and the tables that route what a peer
+  sends, and the connections, pids, watches and starts this side makes to a peer. A served process is an ordinary actor:
+  `ETF_RAW {from?, body}` in, `{to, body}` out.
 - `demo/` — `client.ts`, `node.ts`, `monitored.ts`, and the argument parsing `client.ts` uses.
 - `src/mapper-cli.ts` — the mapper as a program (`posipaki-epmd-mapper`, or `bun src/mapper-cli.ts`). A node with
   `epmd: { start: "auto" }` runs the same `serveEpmd` inside itself; this is the copy that outlives it.
@@ -185,7 +187,7 @@ the connections, and a real node on a port of its own for what a node serves.
   The stack is not carried.
 - A name is only a name where this side serves one: `node.serve` decides what it means, and a name nothing serves is
   complained about once and dropped, as erts drops one.
-- A spawn request is answered by a node that runs BEAM code, and a node of this side does not answer one: `cluster.spawn`
+- A spawn request is answered by a node that runs BEAM code, and a node of this side does not answer one: `node.spawn`
   starts an Erlang function, and starting a definition of this side at a peer waits on a registry. A peer that reports an
   error to the group leader of a process started here sends a term this side may not read — a bignum, so far — and that
   frame is complained about and dropped while the connection carries on.

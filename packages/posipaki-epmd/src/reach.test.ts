@@ -301,7 +301,7 @@ describe("a start this side asks for", () => {
       args: [integer(200)],
     });
 
-    expect(process.pid).toEqual(started);
+    expect(process.address).toEqual({ kind: "pid", pid: started });
     // The control names the function and its arity; the arguments ride the message after it.
     expect(call).toEqual([tuple(atom("timer"), atom("sleep"), integer(1))]);
     expect(args).toEqual([list(integer(200))]);

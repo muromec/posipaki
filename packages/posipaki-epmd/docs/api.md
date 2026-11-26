@@ -1,9 +1,9 @@
 # The surfaces, and the two levels
 
-Status: the cluster holds configuration only, and the node is the surface. `ServedProcess`, the runtime `Cluster`
-interface, `installCluster`, `clusterNamed` and `makeCluster`'s connection table are gone; `ErlangProxy` and the
-`ErlangProcess`/`proxyOf` pair that replaces it are the one part still to do. Nothing here is invented — every rule below
-is the wire's own, written down after measuring it against a live node.
+Status: built. The cluster holds configuration only, the node is the surface, and both directions of the protocol live in
+it. `ServedProcess`, the runtime `Cluster` interface, `installCluster`, `clusterNamed`, `makeCluster`'s connection table and
+`ErlangProxy` are gone. Nothing here is invented — every rule below is the wire's own, written down after measuring it
+against a live node.
 
 ## The division
 
@@ -49,23 +49,22 @@ So a shallow ref carries **no** local process. `send`, `monitor` and `kill` need
 itself; `link` takes the process as an argument, because the same ref may be held by two actors and each would want its
 own end joined.
 
-## The actor wrapper
+`proxyOf(node, ref)` answers an `ActorDefinition`, and the node does the routing: the actor is held (`node.hold`), so what
+the other side sends to its pid arrives as `{from?, body}` and is emitted up; a `SEND` in is forwarded with `ref.send`.
+It ends when `ref.monitor()` says so.
 
-`proxyOf(node, ref)` answers an `ActorDefinition`, and does two things: the node serves it, so what the other side sends
-to its pid arrives as `{from?, body}` and is emitted up; and an `ETF_RAW` in is forwarded with `ref.send`. It ends when
-`ref.monitor()` says so.
-
-That is the whole of `ErlangProxy`, which goes with it — its own frame reading was a workaround for having no node to
-read the connection.
+`ErlangProcess` is the one shallow ref: an address — a pid, or a name its node registered — and `send`, `monitor`, `kill`
+and `link(process)`. `wait()` is `monitor().ended`. A name carries no sender, so `send` takes the process sending, and a
+name cannot be exited or linked: those controls carry pids.
 
 ## What this deletes
 
-`ServedProcess` (a hand-written mirror of posipaki's `AnyProcess`), the runtime `Cluster` interface, `installCluster` and
-`clusterNamed` — all three gone — and, still to go, `ErlangProxy`, which `proxyOf` replaces.
+`ServedProcess` (a hand-written mirror of posipaki's `AnyProcess`), the runtime `Cluster` interface, `installCluster`,
+`clusterNamed`, `makeCluster`'s connection table, `ErlangProxy` and `RemoteProcess` — all gone.
 
 ## Open
 
-- A name-ref has no sender unless one is given: either it is made by a process (`node.process(name, ref, owner)`) or
-  `send` takes the owner each time. Not decided here.
+- A name-addressed send says who sends it, and the caller passes the process at that call. A ref minted once and used by
+  two actors therefore sends as whoever is asking at the time; whether a ref should instead carry its owner is open.
 - A term a peer sends that this side cannot read — a bignum, so far — is complained about and dropped rather than
   flattened or refused at the connection.
