@@ -9,7 +9,7 @@
 // everywhere a term goes. `write` refuses both kinds, so a term that has not been through here cannot be put on the
 // wire by accident.
 
-import type { Cluster, ProcessHandle } from "./cluster.js";
+import type { ProcessHandle, Watch } from "./cluster.js";
 import { render, type Term } from "./terms.js";
 
 /** A pid, as the wire writes it. */
@@ -139,14 +139,27 @@ export function show(term: VisibleTerm): string {
  * Sending goes through the cluster, which keeps one connection per node; waiting is a watch on its address, so it
  * settles with the reason and never rejects.
  */
-export function remoteProcess(pid: PidTerm, cluster: Cluster): RemoteProcess {
+
+/**
+ * What a process of another node needs of this side: the verbs a cluster and a node both answer.
+ *
+ * Written as the four methods rather than as either type, so a process handed out by the cluster and one handed out by
+ * the node are the same kind of handle.
+ */
+export interface Reacher {
+  pidOf(handle: ProcessHandle): PidTerm;
+  processOf(pid: PidTerm): ProcessHandle | null;
+  send(pid: PidTerm, body: Term): Promise<void>;
+  watch(pid: PidTerm): Promise<Watch>;
+}
+export function remoteProcess(pid: PidTerm, reach: Reacher): RemoteProcess {
   return {
     pid,
-    send: (body) => cluster.send(pid, forWire(body, (handle) => cluster.pidOf(handle))),
+    send: (body) => reach.send(pid, forWire(body, (handle) => reach.pidOf(handle))),
     wait: async () =>
-      forHere(await (await cluster.watch(pid)).ended, {
-        here: (found) => cluster.processOf(found),
-        there: (found) => remoteProcess(found, cluster),
+      forHere(await (await reach.watch(pid)).ended, {
+        here: (found) => reach.processOf(found),
+        there: (found) => remoteProcess(found, reach),
       }),
   };
 }

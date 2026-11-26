@@ -13,7 +13,16 @@
 import type { AnyProcess, Message } from "posipaki";
 import type { Channel } from "posipaki/port";
 
-import { refOf, type Cluster, type NodeRef, type PidTerm, type Start, type Watch } from "./cluster.js";
+import {
+  DEFAULT_CLUSTER,
+  refOf,
+  type Cluster,
+  type NodeRef,
+  type PidTerm,
+  type ProcessHandle,
+  type Start,
+  type Watch,
+} from "./cluster.js";
 import type { Control } from "./control.js";
 import type { Registration } from "./epmd.js";
 import { listen, type Listener } from "./listen.js";
@@ -99,7 +108,7 @@ export interface ErlangNode {
   /** Asks a node to start `module:function(args)` and answers a handle to the process. */
   spawn(ref: NodeRef, call: Start): Promise<RemoteProcess>;
   /** The pid this node answers at for a process it serves, minted once for its lifetime. */
-  pidOf(process: AnyProcess): PidTerm;
+  pidOf(process: ProcessHandle): PidTerm;
   /** The process a pid names here, or null for a pid this node does not serve. */
   processOf(pid: PidTerm): AnyProcess | null;
   close(): Promise<void>;
@@ -344,7 +353,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     throw error;
   }
 
-  return {
+  const made: ErlangNode = {
     name: facts.self,
     port: listener.port,
     serve,
@@ -363,7 +372,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     watch: (pid: PidTerm) => facts.cluster.watch(pid),
     watchName: (ref: NodeRef, name: string) => facts.cluster.watchName(ref, name),
     spawn: (ref: NodeRef, call: Start) => facts.cluster.spawn(ref, call),
-    pidOf: (process: AnyProcess) => facts.cluster.pidOf({ pname: process.pname, id: process.id }),
+    pidOf: (process: ProcessHandle) => facts.cluster.pidOf({ pname: process.pname, id: process.id }),
     processOf: (pid: PidTerm) => {
       const known = facts.cluster.processOf(pid);
       return known === null ? null : (byId.get(known.id) ?? null);
@@ -396,6 +405,9 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
       await listener.close();
     },
   };
+  // Reachable by name, so an actor given a cluster name finds this node rather than a connection table.
+  installNode(made, facts.cluster.name);
+  return made;
 }
 
 /** Whether an out-message of a served process is a term to send. Its EXIT arrives on the same channel. */
@@ -418,4 +430,28 @@ function described(control: Control): string {
  */
 function failureTerm(failure: unknown): Term {
   return tuple(atom("error"), binary(Buffer.from(failure instanceof Error ? failure.message : String(failure), "utf8")));
+}
+
+/** What an actor needs to reach a running node: the verbs, not the node. */
+export type Reach = Pick<ErlangNode, "channel" | "pidOf" | "processOf" | "send" | "watch" | "watchName">;
+
+/** The nodes this runtime runs, by the cluster name their configuration carries: what an actor resolves by name. */
+const running = new Map<string, Reach>();
+
+/** Says a node is running, so an actor that was given its name can reach it. */
+export function installNode(node: Reach, cluster: string = DEFAULT_CLUSTER): void {
+  running.set(cluster, node);
+}
+
+/** The node running under a cluster name, or a sentence saying which ones there are. */
+export function nodeNamed(cluster: string = DEFAULT_CLUSTER): Reach {
+  const found = running.get(cluster);
+  if (found !== undefined) return found;
+  const known = [...running.keys()].join(", ");
+  throw new Error(`there is no node running as ${cluster}: this runtime has ${known === "" ? "none" : known}`);
+}
+
+/** Forgets a node by name: what a runtime does when it shuts one down. */
+export function forgetNode(cluster: string = DEFAULT_CLUSTER): void {
+  running.delete(cluster);
 }
