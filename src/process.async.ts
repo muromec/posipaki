@@ -98,8 +98,10 @@ export class AsyncProcess<
    * or by the process itself when it opens one.
    */
   connection: FrameChannel | null = null;
-  /** Subscribers to this process's message channel (`ctx.toParent`). */
-  private messageSubscribers: Array<MessageCallback<OutMessage>> = [];
+  /** The subscriber list is stored with the out-message type erased: a process declaring no out-messages holds
+   *  `MessageCallback<never>` callbacks, and a list typed by `OutMessage` would make such a process unassignable to
+   *  `AnyProcess`. What is stored is what it is — callbacks the process calls with its own messages. */
+  private messageSubscribers: Array<MessageCallback<any>> = [];
   id: symbol;
   state: State | null;
 
