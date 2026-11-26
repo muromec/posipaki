@@ -3,9 +3,9 @@
 // Talk to an Erlang node over its own distribution protocol. Bottom up: `frame` cuts packets by the length they
 // announce, `terms` reads and writes BEAM terms, `control` names the control message a distribution message carries,
 // `messages` says what a frame is, `handshake` proves the cookie from either side, `epmd` is the port mapper at both
-// ends, `connection` and `listen` are the two roles of a connection, `cluster` is the table of the nodes this runtime
-// can reach — and of the pids its own processes answer at, and `node` is this side as a node: a listener, a
-// registration, and the processes it serves.
+// ends, `connection` and `listen` are the two roles of a connection, `cluster` is the configuration a node runs from and
+// the grammar of a node's name, and `node` is this side as a node: a listener, a registration, the processes it serves
+// and the peers it reaches.
 //
 // Two actors sit on top: `proxy` stands for a process on another node, and a served process is handed a term as
 // `ETF_RAW` and answers with one.
@@ -59,10 +59,7 @@ export { connect, open, type Connection, type ConnectionOptions } from "./connec
 export { listen, type Listener, type ListenerHandlers, type ListenOptions } from "./listen.js";
 
 export {
-  clusterNamed,
   DEFAULT_CLUSTER,
-  forgetCluster,
-  installCluster,
   makeCluster,
   nodeName,
   nodeRef,
@@ -95,7 +92,6 @@ export {
   type ErlangNode,
   type EtfAnswered,
   type EtfAsked,
-  type NodeFacts,
   type NodeOptions,
 } from "./node.js";
 

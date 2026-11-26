@@ -1,18 +1,18 @@
 // ── a node, from this side ──────────────────────────────────────────────────
 //
 // A node on a real socket and a peer on the other end of it: the handshake, the frames, the control message, and one
-// process served under a name and under the pid the cluster minted for it. Nothing here is a double but the process.
+// process served under a name and under the pid this node minted for it. Nothing here is a double but the process.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { defineActor, defineMessages } from "posipaki";
 import type { Channel } from "posipaki/port";
 
-import { forgetCluster, installCluster, makeCluster, nodeRef, type Cluster } from "./cluster.js";
+import { makeCluster, nodeRef } from "./cluster.js";
 import { open } from "./connection.js";
 import { listen } from "./listen.js";
 import type { WireMessage } from "./messages.js";
-import { startNode, type ErlangNode, type EtfAnswered, type EtfAsked } from "./node.js";
+import { forgetNode, startNode, type ErlangNode, type EtfAnswered, type EtfAsked } from "./node.js";
 import { processTerm, show, type RemoteProcess, type VisibleTerm } from "./processes.js";
 import { atom, binary, pid, reference, tuple } from "./terms.js";
 
@@ -62,7 +62,6 @@ const Crasher = defineActor({
 
 /** A node listening on a port nobody knows, and a peer connected to it. */
 interface Serving {
-  readonly cluster: Cluster;
   readonly node: ErlangNode;
   readonly answerer: Awaited<ReturnType<typeof Answerer.spawn>>;
   readonly peer: Channel<WireMessage>;
@@ -77,24 +76,23 @@ afterEach(async () => {
   // Last started, first stopped: the reverse of the order the case started them in.
   const stops = running.splice(0);
   for (let index = stops.length - 1; index >= 0; index -= 1) await stops[index]?.().catch(() => undefined);
-  forgetCluster(CLUSTER);
+  forgetNode(CLUSTER);
 });
 
 async function serving(): Promise<Serving> {
-  // A node is only asked where to listen: a test names the port itself and leaves the box's mapper out of it.
-  const cluster = installCluster(makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7, announce: false }));
-  const node = await cluster.node({ host: "127.0.0.1", port: 0 });
+  // The node is only asked where to listen: a test names the port itself and leaves the box's mapper out of it.
+  const node = await startNode(
+    makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7, announce: false }),
+    { host: "127.0.0.1", port: 0 },
+  );
   const answerer = await Answerer.spawn(undefined);
   node.serve("answer", answerer);
   const opened = await open(node.port, { host: "127.0.0.1", node: "probe", cookie: COOKIE, self: PEER, creation: 9 });
   const frames: WireMessage[] = [];
   opened.messages.onFrame((said) => frames.push(said));
-  running.push(async () => {
-    await node.close();
-    await cluster.close();
-  });
+  running.push(async () => node.close());
   running.push(async () => answerer.stop());
-  return { cluster, node, answerer, peer: opened.messages, frames };
+  return { node, answerer, peer: opened.messages, frames };
 }
 
 /** Waits for a fact the test can see, and says what it waited for when it does not come. */
@@ -142,8 +140,8 @@ describe("a node", () => {
   });
 
   it("reaches the same process by the pid the cluster minted for it, and that send carries no sender", async () => {
-    const { cluster, answerer, peer, frames } = await serving();
-    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    const { node, answerer, peer, frames } = await serving();
+    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
     await peer.send({
       kind: "message",
       control: { kind: "send", to: address },
@@ -199,7 +197,7 @@ describe("a node", () => {
   it("announces itself under the name it answers to, and lets the registration go on close", async () => {
     const told: Array<{ node: string; host: string; port: number }> = [];
     const closed: string[] = [];
-    const cluster = installCluster(
+    const node = await startNode(
       makeCluster({
         name: CLUSTER,
         self: SELF,
@@ -214,22 +212,29 @@ describe("a node", () => {
           };
         },
       }),
+      { host: "127.0.0.1", port: 0 },
     );
-    const node = await cluster.node({ host: "127.0.0.1", port: 0 });
     // The host is the one its own name carries: what a peer's lookup asks, answered by the same mapper.
     expect(told).toEqual([{ node: "probe", host: "127.0.0.1", port: node.port }]);
     await node.close();
     expect(closed).toEqual(["registration"]);
   });
 
-  it("runs one node per cluster", async () => {
-    const { cluster } = await serving();
-    await expect(cluster.node({ host: "127.0.0.1", port: 0 })).rejects.toThrow(/already runs a node/);
+  it("runs one node per cluster name: two would mint the same pids", async () => {
+    await serving();
+    await expect(
+      startNode(makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7, announce: false }), {
+        host: "127.0.0.1",
+        port: 0,
+      }),
+    ).rejects.toThrow(/already runs a node/);
   });
 
   it("stops listening when it is closed", async () => {
-    const cluster = installCluster(makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7, announce: false }));
-    const node = await startNode({ cluster, self: SELF, cookie: COOKIE, creation: 7, announce: false }, { host: "127.0.0.1", port: 0 });
+    const node = await startNode(
+      makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7, announce: false }),
+      { host: "127.0.0.1", port: 0 },
+    );
     const port = node.port;
     await node.close();
     await expect(open(port, { host: "127.0.0.1", node: "probe", cookie: COOKIE, self: PEER, creation: 9 })).rejects.toThrow();
@@ -243,8 +248,8 @@ describe("a node", () => {
     });
 
   it("reports a watched process's end to the pid that asked, with the ref it minted", async () => {
-    const { cluster, answerer, peer, frames } = await serving();
-    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    const { node, answerer, peer, frames } = await serving();
+    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
     const ref = reference(PEER, 9);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     // Frames on one connection are read in the order they arrive, so an answer proves the watch was recorded.
@@ -301,8 +306,8 @@ describe("a node", () => {
   });
 
   it("forgets a watch the peer cancelled: the process ends and nothing is said about it", async () => {
-    const { cluster, answerer, peer, frames } = await serving();
-    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    const { node, answerer, peer, frames } = await serving();
+    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
     const ref = reference(PEER, 12);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     await beat(peer);
@@ -317,8 +322,8 @@ describe("a node", () => {
   });
 
   it("lets the ending it reported finish before the connection it goes over is let go", async () => {
-    const { cluster, answerer, node, peer, frames } = await serving();
-    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    const { node, answerer, peer, frames } = await serving();
+    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
     const ref = reference(PEER, 13);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     await beat(peer);
@@ -331,11 +336,11 @@ describe("a node", () => {
   });
 
   it("answers a watch with the failure a process died of, not with normal", async () => {
-    const { cluster, node, peer, frames } = await serving();
+    const { node, peer, frames } = await serving();
     const crasher = await Crasher.spawn(undefined);
     node.serve("crash", crasher);
     running.push(async () => crasher.stop());
-    const address = cluster.pidOf({ pname: crasher.pname, id: crasher.id });
+    const address = node.pidOf({ pname: crasher.pname, id: crasher.id });
     const ref = reference(PEER, 14);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     await beat(peer);
@@ -355,8 +360,8 @@ describe("a node", () => {
   });
 
   it("ends a process here when the other end of a link says it ended", async () => {
-    const { cluster, answerer, peer } = await serving();
-    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    const { node, answerer, peer } = await serving();
+    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
     await peer.send({ kind: "message", control: { kind: "link", from: PEER_PID, to: address }, payload: null });
     await peer.send({
       kind: "message",
@@ -369,8 +374,8 @@ describe("a node", () => {
   });
 
   it("leaves a process alone when the other end of a link ended normally", async () => {
-    const { cluster, answerer, peer, frames } = await serving();
-    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    const { node, answerer, peer, frames } = await serving();
+    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
     await peer.send({ kind: "message", control: { kind: "link", from: PEER_PID, to: address }, payload: null });
     await peer.send({
       kind: "message",
@@ -384,8 +389,8 @@ describe("a node", () => {
   });
 
   it("tells the other end of a link when a process here ends", async () => {
-    const { cluster, node, answerer, frames } = await serving();
-    const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
+    const { node, answerer, frames } = await serving();
+    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
     await node.link(address, PEER_PID);
 
     await answerer.stop();

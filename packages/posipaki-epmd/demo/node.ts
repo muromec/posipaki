@@ -12,7 +12,8 @@
 
 import { randomBytes } from "node:crypto";
 
-import { installCluster, makeCluster, refFromName } from "../src/cluster.js";
+import { makeCluster, refFromName } from "../src/cluster.js";
+import { startNode } from "../src/node.js";
 import { ErlangProxy, type EtfRaw } from "../src/proxy.js";
 import { show } from "../src/processes.js";
 import { binary, tuple } from "../src/terms.js";
@@ -46,8 +47,8 @@ async function main(): Promise<void> {
   const message = flag(argv, "message", "hi");
   const creation = randomBytes(4).readUInt32BE(0) || 1;
 
-  const cluster = installCluster(makeCluster({ name: "demo", self, cookie, creation }));
-  const node = await cluster.node({ host, port });
+  const cluster = makeCluster({ name: "demo", self, cookie, creation });
+  const node = await startNode(cluster, { host, port });
   // One process, served under this node's name and reachable by its pid: what a peer addresses arrives there.
   const answerer = await Answerer.spawn(undefined);
   node.serve(localPart(self), answerer);
@@ -62,14 +63,15 @@ async function main(): Promise<void> {
     );
     console.log(`saying ${JSON.stringify(message)} to ${to} on ${say}`);
     // The term carries this process's own pid, so whoever it reaches has somewhere to answer.
-    proxy.send({ type: "ETF_RAW", body: tuple(cluster.pidOf(answerer), binary(Buffer.from(message, "utf8"))) });
+    // The term carries this process's own pid, so whoever it reaches has somewhere to answer.
+    proxy.send({ type: "ETF_RAW", body: tuple(node.pidOf(answerer), binary(Buffer.from(message, "utf8"))) });
   }
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
       void (async () => {
         await node.close();
-        await cluster.close();
+        await node.close();
         process.exit(0);
       })();
     });

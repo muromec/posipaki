@@ -39,15 +39,15 @@ and out, the body being a BEAM term. What goes in becomes a `DOP_REG_SEND` to th
 proxy's pid comes back out.
 
 ```
-const cluster = installCluster(makeCluster({ self: "probe@192.168.88.27", cookie, creation }));
+const cluster = makeCluster({ self: "probe@192.168.88.27", cookie, creation });
+const node = await startNode(cluster, { port: 0 });   // the connection and the pids are the node's
 const proxy = await ErlangProxy.spawn({ node: nodeRef("robot", "192.168.88.20"), processName: "echo" });
 await proxy.send({ type: "ETF_RAW", body: tuple(proxy.state.erlangPid, binary(text)) });
 ```
 
 The pid it answers at is published on the process: `state.erlangPid`. It is minted from the process's own identity,
-never reused, and `cluster.pidOf(process)` answers the same one however often it is asked; `cluster.processOf(pid)`
-names the process a pid belongs to, in the incarnation this runtime is running now — a pid from an earlier one names
-nobody.
+never reused, and `node.pidOf(process)` answers the same one however often it is asked; `node.processOf(pid)` names the
+process a pid belongs to, in the incarnation this node is running now — a pid from an earlier one names nobody.
 
 ## Being watched
 
@@ -115,12 +115,13 @@ bun demo/node.ts --name probe@192.168.88.27 --port 46001 \
     --say robot@192.168.88.20 --to relay                           # node 1: says hi, and accepts
 ```
 
-The node is a handle, not a process: `cluster.node()` listens and registers with the mapper at the node's own host, and
-`node.serve(name, process)` gives it an ordinary actor to answer with. Its port is the OS's to pick: a mapper is what
+The node is a handle, not a process: `startNode(cluster)` listens and registers with the mapper at the node's own host,
+and `node.serve(name, process)` gives it an ordinary actor to answer with. Its port is the OS's to pick: a mapper is what
 makes a node findable, and a node whose port must be known is one nobody can look up.
 
 ```
-const node = await cluster.node({ port: 46002 });   // a fixed port, for a host with no mapper at all
+const node = await startNode(makeCluster({ self, cookie, creation }), { port: 46002 });
+node.serve("posipaki", answerer);
 node.serve("posipaki", answerer);
 ```
 

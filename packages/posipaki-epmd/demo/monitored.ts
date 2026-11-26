@@ -17,8 +17,8 @@ import { randomBytes } from "node:crypto";
 
 import { defineActor, defineMessages } from "posipaki";
 
-import { installCluster, makeCluster, nodeRef } from "../src/cluster.js";
-import type { EtfAsked } from "../src/node.js";
+import { makeCluster, nodeRef } from "../src/cluster.js";
+import { startNode, type EtfAsked } from "../src/node.js";
 import { ErlangProxy } from "../src/proxy.js";
 import { show, type VisibleTerm } from "../src/processes.js";
 import { atom, binary, tuple } from "../src/terms.js";
@@ -61,14 +61,18 @@ async function main(argv: string[]): Promise<void> {
   const self = flag(argv, "self", `posipaki@${host}`);
   const served = localPart(self);
 
-  const cluster = installCluster(
+  const cluster = makeCluster({
     // Nobody looks this node up: this side opens the connection, and the peer answers on that one rather than dialling.
-    makeCluster({ self, cookie, creation: randomBytes(4).readUInt32BE(0) || 1, timeoutMs: TIMEOUT_MS, announce: false }),
-  );
-  const node = await cluster.node();
+    self,
+    cookie,
+    creation: randomBytes(4).readUInt32BE(0) || 1,
+    timeoutMs: TIMEOUT_MS,
+    announce: false,
+  });
+  const node = await startNode(cluster, { port: 0 });
   const watched = await Monitored.spawn(undefined);
   node.serve(served, watched);
-  const pid = cluster.pidOf({ pname: watched.pname, id: watched.id });
+  const pid = node.pidOf({ pname: watched.pname, id: watched.id });
   console.log(`${self} listening on ${node.port}, serving ${served}`);
 
   try {
@@ -79,7 +83,7 @@ async function main(argv: string[]): Promise<void> {
   } finally {
     // The answers a watch is owed go out before the connection they go over: what follows is the last word on it.
     await node.close();
-    await cluster.close();
+    await node.close();
   }
 }
 

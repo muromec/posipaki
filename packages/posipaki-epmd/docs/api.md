@@ -1,8 +1,9 @@
 # The surfaces, and the two levels
 
-Status: the shape this package is being built to. Today a `cluster` owns the connections, the pids, the watches and the
-starts; this moves all of it onto the node and leaves the cluster as configuration. Nothing here is invented — every
-rule below is the wire's own, written down after measuring it against a live node.
+Status: the cluster holds configuration only, and the node is the surface. `ServedProcess`, the runtime `Cluster`
+interface, `installCluster`, `clusterNamed` and `makeCluster`'s connection table are gone; `ErlangProxy` and the
+`ErlangProcess`/`proxyOf` pair that replaces it are the one part still to do. Nothing here is invented — every rule below
+is the wire's own, written down after measuring it against a live node.
 
 ## The division
 
@@ -60,7 +61,7 @@ read the connection.
 ## What this deletes
 
 `ServedProcess` (a hand-written mirror of posipaki's `AnyProcess`), the runtime `Cluster` interface, `installCluster` and
-`clusterNamed`, and `ErlangProxy`.
+`clusterNamed` — all three gone — and, still to go, `ErlangProxy`, which `proxyOf` replaces.
 
 ## Open
 
