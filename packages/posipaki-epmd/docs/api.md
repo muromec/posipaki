@@ -25,11 +25,11 @@ The node speaks the wire's words — pids, names, terms. The application speaks 
 | the node | what it writes |
 | --- | --- |
 | `send(pid, body)` | `{2, '', To}`, which carries no sender |
-| `sendReg(name, ref, body, from: OpenProcess)` | `{6, pidOf(from), '', name}` |
+| `sendReg(name, ref, body, from: AnyProcess)` | `{6, pidOf(from), '', name}` |
 | `watch(pid)`, `watchName(ref, name)` | `{19, From, ToProc, Ref}`, answered by `{21, FromProc, ToPid, Ref, Reason}` |
 | `link(from: PidTerm, to: PidTerm)`, `unlink(from, to)` | `{1, From, To}`, `{4, From, To}` |
 | `spawn(ref, {module, function, args})` | `{29, Ref, From, GL, {M, F, Arity}, []}` and the arguments after it |
-| `pidOf(process: OpenProcess)` | the pid, and the table a `{2}` resolves against: an address this node answers at |
+| `pidOf(process: AnyProcess)` | the pid, and the table a `{2}` resolves against: an address this node answers at |
 | `registerProcess(name, process)` | the table a `{6}` resolves against |
 
 ## What each verb needs locally
