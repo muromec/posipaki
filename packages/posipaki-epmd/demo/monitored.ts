@@ -19,8 +19,8 @@ import { defineActor, defineMessages } from "posipaki";
 
 import { makeCluster, nodeRef } from "../src/cluster.js";
 import { startNode, type EtfAsked } from "../src/node.js";
-import { proxyOf } from "../src/proxy.js";
-import { processNamed, show, type VisibleTerm } from "../src/processes.js";
+import { makeErlangConnect } from "../src/actor.js";
+import { show, type VisibleTerm } from "../src/processes.js";
 import { atom, binary, tuple } from "../src/terms.js";
 
 /** How long the peer may take to answer before the connection gives up on it. */
@@ -76,8 +76,8 @@ async function main(argv: string[]): Promise<void> {
   console.log(`${self} listening on ${node.port}, serving ${served}`);
 
   try {
-    const proxy = await proxyOf(node, processNamed(nodeRef(nodeName, host), to, node)).spawn(undefined);
-    await proxy.send({ type: "SEND", body: tuple(pid, atom(served), binary(Buffer.from("ping", "utf8"))) });
+    const peer = await makeErlangConnect().spawn({ node: nodeRef(nodeName, host), process: to });
+    await peer.send({ type: "ETF_RAW", body: tuple(pid, atom(served), binary(Buffer.from("ping", "utf8"))) });
     console.log(`asked ${to} on ${nodeName}@${host} to watch ${show(pid)} and ${served}`);
     await watched.wait();
   } finally {

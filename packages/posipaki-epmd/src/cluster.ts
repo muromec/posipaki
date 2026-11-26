@@ -90,12 +90,6 @@ export interface Watch {
 }
 
 
-/** What a node is asked to start: one module and function, and the arguments it is called with. */
-export interface Start {
-  readonly module: string;
-  readonly function: string;
-  readonly args: readonly Term[];
-}
 
 /** A pid, as the wire writes it: a node, an id, a serial, and the incarnation of the node that minted it. */
 export type PidTerm = Extract<Term, { kind: "pid" }>;

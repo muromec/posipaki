@@ -111,6 +111,9 @@ describe("a process of another node", () => {
       link: async () => {
         called.push("link");
       },
+      spawn: async () => {
+        throw new Error("this double starts nothing");
+      },
     };
     return { reach, called };
   }

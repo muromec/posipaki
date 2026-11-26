@@ -1,17 +1,17 @@
 // ── the command line, as an actor ───────────────────────────────────────────
 //
-// It forks the proxy for the name it was given, sends it one term, prints what comes back and exits. Nothing here
-// waits on a wire: the child's answer is this actor's own in-message, which is what an actor is for.
+// It forks an actor that stands for the name it was given, sends it one term, prints what comes back and exits. Nothing
+// here waits on a wire: the answer is this actor's own in-message, because the term carries this actor's address.
 //
-// The node is asked for by the cluster name the reference carries, and this actor is held by it: the term carries this
-// process's own address, so the answer is routed back here.
+// The node is asked for by the cluster name the reference carries, and this actor is served by it: the term carries this
+// process's own address, which is what the answer is routed to.
 
 import { defineActor, defineMessages } from "posipaki";
 
+import { makeErlangRef } from "../src/actor.js";
 import type { NodeRef } from "../src/cluster.js";
 import { nodeNamed, type EtfAsked } from "../src/node.js";
-import { processNamed, processTerm, show } from "../src/processes.js";
-import { proxyOf } from "../src/proxy.js";
+import { processTerm, show } from "../src/processes.js";
 import { binary, tuple } from "../src/terms.js";
 
 export interface CliArgs {
@@ -33,12 +33,11 @@ export const Cli = defineActor({
     const node = nodeNamed(args.node.cluster);
     // An address for this actor: the answer is addressed to the pid the term carries, and the node routes it here.
     node.pidOf(this.self);
-    const proxy = await this.fork(proxyOf(node, processNamed(args.node, args.processName, node)), undefined, {
+    const peer = await this.fork(makeErlangRef({ node: args.node, process: args.processName }), undefined, {
       name: args.processName,
     });
-    // The actor names a process and nothing else: the term carries `this.self`, and the layers turn it into an address
-    // on the way out and back into a handle on the way in.
-    await proxy.send({ type: "SEND", body: tuple(processTerm(this.self), binary(Buffer.from(args.message, "utf8"))) });
+    // The term names this process, and the layers turn that into an address on the way out and a handle on the way in.
+    await peer.send({ type: "ETF_RAW", body: tuple(processTerm(this.self), binary(Buffer.from(args.message, "utf8"))) });
     return { public: null, private: { args } };
   },
 

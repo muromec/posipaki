@@ -49,6 +49,9 @@ function fakeNode() {
     watchName: () => new Promise(() => undefined),
     kill: async () => undefined,
     link: async () => undefined,
+      spawn: async () => {
+        throw new Error("this double starts nothing");
+      },
   };
   installNode(node, CLUSTER);
   return { sent, held, pids };

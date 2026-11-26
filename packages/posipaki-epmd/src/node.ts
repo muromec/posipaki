@@ -11,7 +11,7 @@
 // The tables are the whole of the routing: a name a node sends to, and a pid this node minted for a process. A pid for a
 // process it does not serve names nobody here, however well this node knows it.
 
-import type { AnyProcess, Message } from "posipaki";
+import type { Message } from "posipaki";
 import type { Channel } from "posipaki/port";
 import { socketChannel } from "posipaki/port/node";
 
@@ -24,7 +24,6 @@ import {
   type NodeRef,
   type PidTerm,
   type ProcessHandle,
-  type Start,
   type Watch,
 } from "./cluster.js";
 import { open } from "./connection.js";
@@ -47,6 +46,8 @@ import {
   processAt,
   type ErlangProcess,
   type Reach,
+  type OpenProcess,
+  type Start,
   type VisibleTerm,
 } from "./processes.js";
 import { atom, binary, integer, list, reference, render, tuple, type Term } from "./terms.js";
@@ -73,7 +74,7 @@ interface PeerWatch {
   readonly watcher: Term;
   /** The reference the peer minted for this watch, echoed back unchanged. */
   readonly ref: Term;
-  readonly process: AnyProcess;
+  readonly process: OpenProcess;
   /** The connection the watch came in on: the answer goes back the way it was asked for. */
   readonly messages: Channel<WireMessage>;
 }
@@ -107,7 +108,7 @@ export interface ErlangNode {
   unlink(from: PidTerm, to: PidTerm): Promise<void>;
   readonly port: number;
   /** Registers a process under a name: what another node addresses it by. A name already held is refused. */
-  registerProcess(name: string, process: AnyProcess): void;
+  registerProcess(name: string, process: OpenProcess): void;
   /** Serves the processes on a connection whose frames nobody else reads — one this side opened. */
   attach(messages: Channel<WireMessage>): void;
   /** The channel to one node, opened on first use and shared by everything that addresses it. */
@@ -115,7 +116,7 @@ export interface ErlangNode {
   /** One term to a process of another node. `{2, '', To}` carries no sender. */
   send(pid: PidTerm, body: Term): Promise<void>;
   /** One term to a registered name. `{6, From, '', Name}` carries the sender, so one is needed. */
-  sendReg(name: string, ref: NodeRef, body: Term, from: AnyProcess): Promise<void>;
+  sendReg(name: string, ref: NodeRef, body: Term, from: OpenProcess): Promise<void>;
   /** Watches a process of another node: what settles with the reason it ended. */
   watch(pid: PidTerm): Promise<Watch>;
   /** The same watch, where the other node knows the process by a registered name. */
@@ -130,9 +131,9 @@ export interface ErlangNode {
    * Serving it is what makes the address mean something: a pid this node wrote for a process nothing routes to would
    * promise more than it keeps.
    */
-  pidOf(process: AnyProcess): PidTerm;
+  pidOf(process: OpenProcess): PidTerm;
   /** The process a pid names here, or null for a pid this node does not serve. */
-  processOf(pid: PidTerm): AnyProcess | null;
+  processOf(pid: PidTerm): OpenProcess | null;
   close(): Promise<void>;
 }
 
@@ -141,8 +142,8 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   // One node per name: two of them would mint the same pids and answer for each other's processes.
   if (running.has(cluster.name)) throw new Error(`the cluster ${cluster.name} already runs a node`);
 
-  const byName = new Map<string, AnyProcess>();
-  const byId = new Map<symbol, AnyProcess>();
+  const byName = new Map<string, OpenProcess>();
+  const byId = new Map<symbol, OpenProcess>();
   /** How to stop watching each served process's out-messages, by the process's own id. */
   const leaving = new Map<symbol, () => void>();
   /** How to stop reading each connection's frames. */
@@ -151,14 +152,14 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   /** The peers each of this node's processes is linked to, by the process's own id. */
   const linked = new Map<symbol, Set<PidTerm>>();
   /** Records a link a peer made to a process here, or one this side made to a peer.'s. */
-  const linkTo = (process: AnyProcess, peer: PidTerm): void => {
+  const linkTo = (process: OpenProcess, peer: PidTerm): void => {
     const known = linked.get(process.id) ?? new Set<PidTerm>();
     known.add(peer);
     linked.set(process.id, known);
   };
 
   /** Forgets one link. Both ends are told when one of them ends, so a link ends once. */
-  const unlinkFrom = (process: AnyProcess, peer: PidTerm): void => {
+  const unlinkFrom = (process: OpenProcess, peer: PidTerm): void => {
     linked.get(process.id)?.delete(peer);
   };
 
@@ -169,7 +170,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   };
 
   /** The pid this node answers at for a process it serves. */
-  const pidFor = (process: AnyProcess): PidTerm => pidOf(process);
+  const pidFor = (process: OpenProcess): PidTerm => pidOf(process);
 
   /** Watches a peer set, by the octets of the ref it minted: one table, walked when a process ends. */
   const watches = new Map<string, PeerWatch>();
@@ -177,7 +178,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   const sending = new Set<Promise<void>>();
 
   /** The process a pid names, when this node serves it. A pid of a process it does not serve names nobody here. */
-  const byPid = (address: Term): AnyProcess | null => {
+  const byPid = (address: Term): OpenProcess | null => {
     if (address.kind !== "pid") return null;
     const holder = holderOf(address);
     return holder === null ? null : (byId.get(holder.id) ?? null);
@@ -224,7 +225,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   };
 
   /** Tells every peer watching `process`, in the words the wire uses for it, that the process is over. */
-  const answerEnded = (process: AnyProcess, reason: Term): void => {
+  const answerEnded = (process: OpenProcess, reason: Term): void => {
     for (const [key, watch] of watches) {
       if (watch.process !== process) continue;
       watches.delete(key);
@@ -232,7 +233,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     }
   };
   /** Says why a process of this node is over: to every watch it had, and down every link it was part of. */
-  const ended = (process: AnyProcess, reason: Term): void => {
+  const ended = (process: OpenProcess, reason: Term): void => {
     answerEnded(process, reason);
     for (const peer of linked.get(process.id) ?? []) {
       void controlTo(peer, { kind: "exit", from: pidFor(process), to: peer, reason }).catch(() => undefined);
@@ -306,7 +307,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     });
   };
 
-  const forget = (process: AnyProcess): void => {
+  const forget = (process: OpenProcess): void => {
     for (const [name, served] of byName) {
       if (served.id === process.id) byName.delete(name);
     }
@@ -316,7 +317,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   };
 
   /** Serves a process at its pid: the table a `{2}` resolves against. Idempotent. */
-  const serve = (process: AnyProcess): void => {
+  const serve = (process: OpenProcess): void => {
     if (byId.has(process.id)) return;
     byId.set(process.id, process);
     leaving.set(
@@ -340,7 +341,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   };
 
   /** Registers a process under a name: what a `{6}` resolves against. A name already held by another is refused. */
-  const registerProcess = (name: string, process: AnyProcess): void => {
+  const registerProcess = (name: string, process: OpenProcess): void => {
     const known = byName.get(name);
     if (known !== undefined && known.id !== process.id) {
       throw new Error(`${cluster.self} already serves ${name} with ${known.pname}`);
@@ -469,7 +470,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
    * Minting is the whole of it: a pid this node wrote for a process nothing can route a term to would promise more than
    * it keeps, so the same call is the one that serves the process.
    */
-  const pidOf = (process: AnyProcess): PidTerm => {
+  const pidOf = (process: OpenProcess): PidTerm => {
     serve(process);
     return addressFor(process);
   };
@@ -586,7 +587,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
         call: tuple(atom(call.module), atom(call.function), integer(call.args.length)),
         options: list(),
       },
-      payload: list(...call.args),
+      payload: forWire(list(...call.args), pidOf),
     });
     return processAt(await started, reach);
   };
@@ -603,13 +604,13 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   };
 
   /** The process this node serves that a pid of this node names: a pid of a process it does not serve names nobody. */
-  const servedBy = (pid: PidTerm): AnyProcess | null => {
+  const servedBy = (pid: PidTerm): OpenProcess | null => {
     const holder = holderOf(pid);
     return holder === null ? null : (byId.get(holder.id) ?? null);
   };
 
   /** One term to a name a node registered. `{6, From, '', Name}` carries a sender, so one is given. */
-  const sendReg = async (name: string, ref: NodeRef, body: Term, from: AnyProcess): Promise<void> => {
+  const sendReg = async (name: string, ref: NodeRef, body: Term, from: OpenProcess): Promise<void> => {
     const messages = await channel(ref);
     await messages.send({
       kind: "message",
@@ -643,6 +644,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     watchName: (ref: NodeRef, name: string) => watchOver(atom(name), ref),
     kill: killOn,
     link: linkFrom,
+    spawn: startOn,
   };
 
   /** Says a connection a peer opened is how a pid on that node is answered, so this side sends over it, not a second. */

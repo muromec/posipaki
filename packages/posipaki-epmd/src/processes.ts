@@ -8,7 +8,7 @@
 // everywhere a term goes. `write` refuses both kinds, so a term that has not been through here cannot be put on the
 // wire by accident.
 
-import type { AnyProcess } from "posipaki";
+import type { AsyncProcess } from "posipaki";
 
 import type { NodeRef, ProcessHandle, Watch } from "./cluster.js";
 import { render, type Term } from "./terms.js";
@@ -16,10 +16,19 @@ import { render, type Term } from "./terms.js";
 /** A pid, as the wire writes it. */
 export type PidTerm = Extract<Term, { kind: "pid" }>;
 
+/**
+ * A process at a boundary that needs one and not what it carries.
+ *
+ * posipaki's `AnyProcess` is `AsyncProcess<unknown, unknown, Message, Message, {}>`, and a process is invariant in those
+ * parameters, so no real process is assignable to it: an actor handing over its own `this.self` cannot pass one. This is
+ * the same handle with its parameters open, which every process satisfies and which nothing has to be cast into.
+ */
+export type OpenProcess = AsyncProcess<any, any, any, any, any>;
+
 /** A process of this side in a term that has not crossed: the layers below swap it for its pid. */
 export interface LocalProcess {
   readonly kind: "process";
-  readonly handle: AnyProcess;
+  readonly handle: OpenProcess;
 }
 
 /** The leaf that stands for a process of the other node. */
@@ -32,7 +41,7 @@ export interface RemoteInTerm {
 export type VisibleTerm = Term<LocalProcess | RemoteInTerm>;
 
 /** The value a local process is written as, before it crosses. */
-export function processTerm(handle: AnyProcess): Term<LocalProcess> {
+export function processTerm(handle: OpenProcess): Term<LocalProcess> {
   return { kind: "process", handle };
 }
 
@@ -50,7 +59,7 @@ function isRemote(term: VisibleTerm): term is RemoteInTerm {
 }
 
 /** The same term with every process replaced by the address `pidOf` gives it. */
-export function forWire(term: VisibleTerm, pidOf: (process: AnyProcess) => PidTerm): Term {
+export function forWire(term: VisibleTerm, pidOf: (process: OpenProcess) => PidTerm): Term {
   if (isProcess(term)) return pidOf(term.handle);
   if (isRemote(term)) return wirePidOf(term.process.address);
   switch (term.kind) {
@@ -74,7 +83,7 @@ export function forWire(term: VisibleTerm, pidOf: (process: AnyProcess) => PidTe
 /** What a pid means to the caller of a proxy. */
 export interface Readers {
   /** A pid of this runtime's own node: the process it names, or null when nobody holds that id. */
-  here(pid: PidTerm): AnyProcess | null;
+  here(pid: PidTerm): OpenProcess | null;
   /** A pid of the node the term came from: how to send back to it. */
   there(pid: PidTerm): ErlangProcess;
 }
@@ -121,20 +130,30 @@ export function show(term: VisibleTerm): string {
   }
 }
 
+/** What a node is asked to start: one module and function, and the arguments it is called with. */
+export interface Start {
+  readonly module: string;
+  readonly function: string;
+  /** The function's parameters. A process of this side may be one: it crosses as its pid. */
+  readonly args: readonly VisibleTerm[];
+}
+
 /**
  * What an actor beside a node uses of it: the verbs for a process over there, and the one that gives it an address here.
- * Written out rather than as the node's type, so a handle carries no process and a double answers eight methods.
+ * Written out rather than as the node's type, so a handle carries no process and a double answers nine methods.
  */
 export interface Reach {
   /** The pid this side answers at for a process, and what serves it at that address. */
-  pidOf(process: AnyProcess): PidTerm;
-  processOf(pid: PidTerm): AnyProcess | null;
+  pidOf(process: OpenProcess): PidTerm;
+  processOf(pid: PidTerm): OpenProcess | null;
   send(pid: PidTerm, body: Term): Promise<void>;
-  sendReg(name: string, ref: NodeRef, body: Term, from: AnyProcess): Promise<void>;
+  sendReg(name: string, ref: NodeRef, body: Term, from: OpenProcess): Promise<void>;
   watch(pid: PidTerm): Promise<Watch>;
   watchName(ref: NodeRef, name: string): Promise<Watch>;
   kill(pid: PidTerm): Promise<void>;
   link(from: PidTerm, to: PidTerm): Promise<void>;
+  /** Asks the node to start `module:function(args)` and answers a handle to the process it started. */
+  spawn(ref: NodeRef, call: Start): Promise<ErlangProcess>;
 }
 
 /**
@@ -145,13 +164,13 @@ export interface Reach {
  */
 export interface ErlangProcess {
   readonly address: Address;
-  send(body: VisibleTerm, from?: AnyProcess): Promise<void>;
+  send(body: VisibleTerm, from?: OpenProcess): Promise<void>;
   /** A watch on it: settles with the reason it ended and never rejects. Nothing is owed the other way. */
   monitor(): Promise<Watch>;
   /** Ends it with `kill`. The wire wants a sender, and this side mints one. */
   kill(): Promise<void>;
   /** Links a process of this side to this one: whichever ends first takes the other with it. */
-  link(process: AnyProcess): Promise<void>;
+  link(process: OpenProcess): Promise<void>;
   /** The reason it ended: `monitor().ended`. */
   wait(): Promise<VisibleTerm>;
 }

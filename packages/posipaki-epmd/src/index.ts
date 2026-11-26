@@ -7,7 +7,7 @@
 // the grammar of a node's name, and `node` is this side as a node: a listener, a registration, the processes it serves
 // and the peers it reaches.
 //
-// Two actors sit on top: `proxy` stands for a process on another node, and a served process is handed a term as
+// Two actors sit on top: `actor` stands for a process on another node, and a served process is handed a term as
 // `ETF_RAW` and answers with one.
 //
 // The demos are in `demo/`: they are the only things here that decide anything about a command line.
@@ -87,7 +87,17 @@ export {
   type VisibleTerm,
 } from "./processes.js";
 
-export { proxyOf, type ProxyNode } from "./proxy.js";
+export {
+  erlangActor,
+  makeErlangConnect,
+  makeErlangFactory,
+  makeErlangRef,
+  type ErlangAddress,
+  type ErlangFactory,
+  type ErlangFound,
+  type ErlangPublic,
+  type ErlangSpec,
+} from "./actor.js";
 
 export {
   startNode,
