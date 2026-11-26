@@ -71,6 +71,12 @@ type MessageCallback<M extends Message> = (msg: M, from: SenderInfo) => void;
 /** How long a parent waits for a child to stop before continuing shutdown. */
 const CHILD_STOP_TIMEOUT_MS = 1_000;
 
+/** Who sent a message, as a `SenderInfo`: a process is stamped with its name and its symbol. */
+function senderOf(from: SenderInfo | AnyProcess | undefined): SenderInfo | undefined {
+  if (from === undefined || "fromName" in from) return from;
+  return { fromName: from.pname, fromId: from.id };
+}
+
 /**
  * A process driven by an async generator. Functionally identical to
  * {@link Process} but supports `await` inside reducers.
@@ -405,17 +411,17 @@ export class AsyncProcess<
     this.children.forEach((p) => p.send([msg, stamp] as WithSender<Message>));
   }
 
-  /** Stamp and enqueue a message from a named sender (external API). */
-  send(msg: InMessage | StopMessage, from?: SenderInfo): void;
+  /** Stamp and enqueue a message from a named sender, or from a process: a shallow ref has only a pid to offer. */
+  send(msg: InMessage | StopMessage, from?: SenderInfo | AnyProcess): void;
   /** Enqueue a pre-stamped message (internal: fromChild, toAllChildren). */
   send(msgAndSender: WithSender<InMessage | StopMessage>): void;
   send(
     msgOrTuple: InMessage | StopMessage | WithSender<InMessage | StopMessage>,
-    from?: SenderInfo,
+    from?: SenderInfo | AnyProcess,
   ): void {
     if (this.pvtDead) return;
     if ("type" in msgOrTuple) {
-      this.buffer.push([msgOrTuple as InMessage | StopMessage, from as SenderInfo]);
+      this.buffer.push([msgOrTuple as InMessage | StopMessage, senderOf(from) as SenderInfo]);
     } else {
       this.buffer.push(msgOrTuple as WithSender<InMessage | StopMessage>);
     }
