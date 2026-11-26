@@ -4,9 +4,9 @@
 // DOP_REG_SEND whose payload is that term; what the node sends to this proxy's pid comes back out as ETF_RAW, with
 // the term the node wrote.
 //
-// Its argument is a *name* — a `NodeRef`, which is a cluster and a node in it — so the connection is looked up and
-// opened in `setup`, through the cluster that owns such things, and the actor itself knows nothing about hosts,
-// mappers or handshakes.
+// Its argument is a *name* — a `NodeRef`, which is a node and the cluster whose configuration names it — and the
+// connection is looked up and opened in `setup` through the node running under that cluster name, so the actor itself
+// knows nothing about hosts, mappers or handshakes.
 //
 // The body is a term and not a run of octets: a caller composes it with the writers in `terms.ts`, and a term this
 // side can read but cannot write — a reference, a fun, a port — is complained about where it is sent, loudly, and
@@ -19,8 +19,9 @@
 import { defineActor, defineMessages } from "posipaki";
 import type { Channel } from "posipaki/port";
 
-import { clusterNamed, type Cluster, type NodeRef, type PidTerm } from "./cluster.js";
+import { type NodeRef, type PidTerm } from "./cluster.js";
 import type { WireMessage } from "./messages.js";
+import { nodeNamed, type Reach } from "./node.js";
 import { forHere, forWire, remoteProcess, type VisibleTerm } from "./processes.js";
 import type { Term } from "./terms.js";
 
@@ -43,9 +44,9 @@ export interface EtfPublic {
 }
 
 interface Private {
-  readonly node: NodeRef;
   readonly processName: string;
-  readonly cluster: Cluster;
+  /** The node this proxy reaches: the one running under the cluster name the reference carries. */
+  readonly node: Reach;
   readonly pid: PidTerm;
   readonly messages: Channel<WireMessage>;
   /** The pid of the process this proxy speaks for: the one the caller put in its term, and the one an answer names. */
@@ -71,21 +72,20 @@ export const ErlangProxy = defineActor({
   outMessages: defineMessages<EtfRaw>(),
 
   async setup(args: ProxyArgs): Promise<{ public: EtfPublic; private: Private }> {
-    const cluster = clusterNamed(args.node.cluster);
-    const messages = await cluster.channel(args.node);
+    const node = nodeNamed(args.node.cluster);
+    const messages = await node.channel(args.node);
     const held: Private = {
-      node: args.node,
       processName: args.processName,
-      cluster,
+      node,
       // This proxy's own pid, from its own identity: the address a node answers when it is this process it was told
       // about.
-      pid: cluster.pidOf(this.self),
+      pid: node.pidOf(this.self),
       // And the caller's, because the caller is the one that wants the answer: it puts its own pid in the term it
       // sends, so a reply comes back addressed to a process this connection does not belong to.
       caller:
         this.ctx.parentName === null || this.ctx.parentId === null
           ? null
-          : cluster.pidOf({ pname: this.ctx.parentName, id: this.ctx.parentId }),
+          : node.pidOf({ pname: this.ctx.parentName, id: this.ctx.parentId }),
       messages,
       stopReading: () => undefined,
     };
@@ -100,15 +100,15 @@ export const ErlangProxy = defineActor({
       this.emit({
         type: "ETF_RAW",
         body: forHere(said.payload, {
-          here: (pid) => held.cluster.processOf(pid),
-          there: (pid) => remoteProcess(pid, held.cluster),
+          here: (pid) => held.node.processOf(pid),
+          there: (pid) => remoteProcess(pid, held.node),
         }),
       });
     });
     messages.onClose((reason) => this.exit(`the connection to ${args.node.node} ended: ${reason}`));
 
     // A proxy stands for a registered process: when that process ends, so does this one, with the same reason.
-    void cluster
+    void node
       .watchName(args.node, args.processName)
       .then((watch) => watch.ended)
       .then((reason) => this.exit(reason));
@@ -136,7 +136,7 @@ export const ErlangProxy = defineActor({
       const held = this.state.private;
       // Every process the caller left in the term becomes an address here: what crosses is a term, and a term holds
       // pids.
-      const wire = forWire(body, (handle) => held.cluster.pidOf(handle));
+      const wire = forWire(body, (handle) => held.node.pidOf(handle));
       await held.messages.send({
         kind: "message",
         control: { kind: "regSend", from: held.pid, to: held.processName },

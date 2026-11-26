@@ -1,21 +1,14 @@
 // ── the command line, as an actor ───────────────────────────────────────────
 //
-// The CLI over a cluster that is a memory pair: it forks the proxy as its child, that child writes to the far side,
-// and an answer written back ends the CLI with the text printed.
+// The CLI over a node that is a memory pair: it forks the proxy as its child, that child writes to the far side, and an
+// answer written back ends the CLI with the text printed.
 
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { memoryChannelPair } from "posipaki/port";
 
-import {
-  forgetCluster,
-  installCluster,
-  nodeRef,
-  type Cluster,
-  type PidTerm,
-  type ProcessHandle,
-  type Watch,
-} from "../src/cluster.js";
+import { nodeRef, type PidTerm, type ProcessHandle, type Watch } from "../src/cluster.js";
+import { forgetNode, installNode, type Reach } from "../src/node.js";
 import type { WireMessage } from "../src/messages.js";
 import { binary, type Term } from "../src/terms.js";
 import { Cli } from "./cli.js";
@@ -29,17 +22,15 @@ const spawned: Array<{ stop(): Promise<unknown> }> = [];
 afterEach(async () => {
   vi.restoreAllMocks();
   for (const proc of spawned.splice(0)) await proc.stop().catch(() => undefined);
-  forgetCluster(CLUSTER);
+  forgetNode(CLUSTER);
 });
 
-
-/** A cluster whose one node is a memory pair, minting one pid per process. */
-function fakeCluster() {
+/** A node whose one connection is a memory pair, minting one pid per process. */
+function fakeNode() {
   const pair = memoryChannelPair<WireMessage>();
   const written: WireMessage[] = [];
   const pids = new Map<symbol, PidTerm>();
-  const cluster: Cluster = {
-    name: CLUSTER,
+  const node: Reach = {
     channel: async () => pair.near,
     pidOf: (process: ProcessHandle): PidTerm => {
       const known = pids.get(process.id);
@@ -50,26 +41,17 @@ function fakeCluster() {
     },
     processOf: () => null,
     send: async () => undefined,
-    adopt: () => undefined,
     // The double answers no watches: a promise that never settles is a peer that never ends anything.
     watch: () => new Promise<Watch>(() => undefined),
     watchName: () => new Promise<Watch>(() => undefined),
-    spawn: async () => {
-      throw new Error("a double starts no process");
-    },
-    // This double is a cluster a test addresses, not one that serves: nothing asks it for a node.
-    node: async () => {
-      throw new Error("a double starts no node");
-    },
-    close: async () => undefined,
   };
   pair.far.onFrame((said: WireMessage) => written.push(said));
-  installCluster(cluster);
+  installNode(node, CLUSTER);
   return { written, far: pair.far };
 }
 describe("Cli", () => {
   it("forks the proxy, sends it the term, and ends with the answer printed", async () => {
-    const { written, far } = fakeCluster();
+    const { written, far } = fakeNode();
     const printed = vi.spyOn(console, "log").mockImplementation(() => undefined);
 
     const cli = await Cli.spawn({ node: REF, processName: "echo", message: "hi" });
