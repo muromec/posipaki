@@ -29,6 +29,7 @@ The node speaks the wire's words — pids, names, terms. The application speaks 
 | `link(from: PidTerm, to: PidTerm)`, `unlink(from, to)` | `{1, From, To}`, `{4, From, To}` |
 | `spawn(ref, {module, function, args})` | `{29, Ref, From, GL, {M, F, Arity}, []}` and the arguments after it |
 | `serve(name, process: AnyProcess)` | the table a `{6}` resolves against |
+| `hold(process: AnyProcess)` | the table a `{2}` resolves against: an address, and no name |
 
 `ErlangProcess` is the application's handle on a process over there: an address, `send`, `monitor`, `kill`, and
 `link(process)`. `wait()` is `monitor().ended`.
