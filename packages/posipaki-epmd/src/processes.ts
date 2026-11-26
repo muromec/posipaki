@@ -19,7 +19,7 @@ export type PidTerm = Extract<Term, { kind: "pid" }>;
 /** A process of this side in a term that has not crossed: the layers below swap it for its pid. */
 export interface LocalProcess {
   readonly kind: "process";
-  readonly handle: ProcessHandle;
+  readonly handle: AnyProcess;
 }
 
 /** The leaf that stands for a process of the other node. */
@@ -32,7 +32,7 @@ export interface RemoteInTerm {
 export type VisibleTerm = Term<LocalProcess | RemoteInTerm>;
 
 /** The value a local process is written as, before it crosses. */
-export function processTerm(handle: ProcessHandle): Term<LocalProcess> {
+export function processTerm(handle: AnyProcess): Term<LocalProcess> {
   return { kind: "process", handle };
 }
 
@@ -50,7 +50,7 @@ function isRemote(term: VisibleTerm): term is RemoteInTerm {
 }
 
 /** The same term with every process replaced by the address `pidOf` gives it. */
-export function forWire(term: VisibleTerm, pidOf: (handle: ProcessHandle) => PidTerm): Term {
+export function forWire(term: VisibleTerm, pidOf: (process: AnyProcess) => PidTerm): Term {
   if (isProcess(term)) return pidOf(term.handle);
   if (isRemote(term)) return wirePidOf(term.process.address);
   switch (term.kind) {
@@ -74,7 +74,7 @@ export function forWire(term: VisibleTerm, pidOf: (handle: ProcessHandle) => Pid
 /** What a pid means to the caller of a proxy. */
 export interface Readers {
   /** A pid of this runtime's own node: the process it names, or null when nobody holds that id. */
-  here(pid: PidTerm): ProcessHandle | null;
+  here(pid: PidTerm): AnyProcess | null;
   /** A pid of the node the term came from: how to send back to it. */
   there(pid: PidTerm): ErlangProcess;
 }
@@ -122,20 +122,19 @@ export function show(term: VisibleTerm): string {
 }
 
 /**
- * What an actor beside a node uses of it: the verbs for a process over there, and the one for itself. Written out
- * rather than as the node's type, so a handle carries no process and a double answers nine methods.
+ * What an actor beside a node uses of it: the verbs for a process over there, and the one that gives it an address here.
+ * Written out rather than as the node's type, so a handle carries no process and a double answers eight methods.
  */
 export interface Reach {
-  pidOf(handle: ProcessHandle): PidTerm;
-  processOf(pid: PidTerm): ProcessHandle | null;
+  /** The pid this side answers at for a process, and what serves it at that address. */
+  pidOf(process: AnyProcess): PidTerm;
+  processOf(pid: PidTerm): AnyProcess | null;
   send(pid: PidTerm, body: Term): Promise<void>;
   sendReg(name: string, ref: NodeRef, body: Term, from: AnyProcess): Promise<void>;
   watch(pid: PidTerm): Promise<Watch>;
   watchName(ref: NodeRef, name: string): Promise<Watch>;
   kill(pid: PidTerm): Promise<void>;
   link(from: PidTerm, to: PidTerm): Promise<void>;
-  /** Serves a process of this side: at its pid, and under a name when one is given. */
-  serve(name: string | null, process: AnyProcess): void;
 }
 
 /**
@@ -199,7 +198,7 @@ export function erlangProcess(address: Address, reach: Reach): ErlangProcess {
     async link(process) {
       const pid = pidOfAddress(address);
       if (pid === null) throw new Error(`a name cannot be linked: \`{1, From, To}\` carries a pid`);
-      await reach.link(reach.pidOf({ pname: process.pname, id: process.id }), pid);
+      await reach.link(reach.pidOf(process), pid);
     },
     async wait() {
       return forHere(await (await watch()).ended, {

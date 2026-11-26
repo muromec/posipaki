@@ -101,8 +101,8 @@ async function served(name: string) {
   );
   nodes.push(node);
   const proc = await Stand.spawn(undefined);
-  node.serve(name, proc);
-  return { node, proc, pid: node.pidOf({ pname: proc.pname, id: proc.id }) };
+  node.registerProcess(name, proc);
+  return { node, proc, pid: node.pidOf(proc) };
 }
 
 describe("reaching a node", () => {
@@ -146,10 +146,12 @@ describe("reaching a node", () => {
   it("gives a process one pid, minted once, and answers its process by that pid", async () => {
     const { node, proc, pid } = await served("answer");
     expect(pid).toEqual({ kind: "pid", node: "probe@127.0.0.1", id: 1, serial: 0, creation: 7 });
-    expect(node.pidOf({ pname: proc.pname, id: proc.id })).toBe(pid);
+    expect(node.pidOf(proc)).toBe(pid);
 
     expect(node.processOf(pid)).toBe(proc);
-    expect(node.pidOf({ pname: "root:other", id: Symbol("other") }).id).not.toBe(pid.id);
+    const other = await Stand.spawn(undefined);
+    expect(node.pidOf(other).id).not.toBe(pid.id);
+    await other.stop();
   });
 
   it("answers nobody for a pid of another incarnation, another node, or a process it does not serve", async () => {

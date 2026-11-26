@@ -106,13 +106,8 @@ export interface ErlangNode {
   /** Ends a link this side set. The peer is told, and neither end is owed anything after it. */
   unlink(from: PidTerm, to: PidTerm): Promise<void>;
   readonly port: number;
-  /**
-   * Serves a process: at its pid always, and under a name when one is given.
-   *
-   * The pid is what a term carries and what a peer that was handed an address sends to; a name is what a `{6}` resolves
-   * against. `null` serves the address alone. A name already served by another process is refused.
-   */
-  serve(name: string | null, process: AnyProcess): void;
+  /** Registers a process under a name: what another node addresses it by. A name already held is refused. */
+  registerProcess(name: string, process: AnyProcess): void;
   /** Serves the processes on a connection whose frames nobody else reads — one this side opened. */
   attach(messages: Channel<WireMessage>): void;
   /** The channel to one node, opened on first use and shared by everything that addresses it. */
@@ -129,8 +124,13 @@ export interface ErlangNode {
   kill(pid: PidTerm): Promise<void>;
   /** Asks a node to start `module:function(args)` and answers a handle to the process. */
   spawn(ref: NodeRef, call: Start): Promise<ErlangProcess>;
-  /** The pid this node answers at for a process it serves, minted once for its lifetime. */
-  pidOf(process: ProcessHandle): PidTerm;
+  /**
+   * The pid this node answers at for a process: minted once for its lifetime, and served by the same call.
+   *
+   * Serving it is what makes the address mean something: a pid this node wrote for a process nothing routes to would
+   * promise more than it keeps.
+   */
+  pidOf(process: AnyProcess): PidTerm;
   /** The process a pid names here, or null for a pid this node does not serve. */
   processOf(pid: PidTerm): AnyProcess | null;
   close(): Promise<void>;
@@ -169,7 +169,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   };
 
   /** The pid this node answers at for a process it serves. */
-  const pidFor = (process: AnyProcess): PidTerm => pidOf({ pname: process.pname, id: process.id });
+  const pidFor = (process: AnyProcess): PidTerm => pidOf(process);
 
   /** Watches a peer set, by the octets of the ref it minted: one table, walked when a process ends. */
   const watches = new Map<string, PeerWatch>();
@@ -315,25 +315,10 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     leaving.delete(process.id);
   };
 
-  /**
-   * Serves a process: at its pid always, and under a name when one is given.
-   *
-   * The pid is what a term carries and what a peer that was handed an address sends to; a name is what a `{6}` resolves
-   * against. An actor a peer reaches by pid alone is served with `null` and has no name on the wire.
-   */
-  const serve = (name: string | null, process: AnyProcess): void => {
-    if (name !== null) {
-      const known = byName.get(name);
-      if (known !== undefined && known.id !== process.id) {
-        throw new Error(`${cluster.self} already serves ${name} with ${known.pname}`);
-      }
-      byName.set(name, process);
-    }
+  /** Serves a process at its pid: the table a `{2}` resolves against. Idempotent. */
+  const serve = (process: AnyProcess): void => {
     if (byId.has(process.id)) return;
-
     byId.set(process.id, process);
-    // The address a node will write for this process, minted now: a peer addresses it, and this node looks it up.
-    pidOf({ pname: process.pname, id: process.id });
     leaving.set(
       process.id,
       process.subscribe("message", (message) => {
@@ -352,6 +337,16 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       () => ended(process, atom("normal")),
       (failure: unknown) => ended(process, failureTerm(failure)),
     );
+  };
+
+  /** Registers a process under a name: what a `{6}` resolves against. A name already held by another is refused. */
+  const registerProcess = (name: string, process: AnyProcess): void => {
+    const known = byName.get(name);
+    if (known !== undefined && known.id !== process.id) {
+      throw new Error(`${cluster.self} already serves ${name} with ${known.pname}`);
+    }
+    byName.set(name, process);
+    pidOf(process);
   };
 
   // ── reaching another node ────────────────────────────────────────────────
@@ -458,14 +453,25 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   const pids = new Map<symbol, PidTerm>();
   const owners = new Map<number, ProcessHandle>();
 
-  /** The pid this side answers at for a process: minted once for its lifetime, and what a peer addresses. */
-  const pidOf = (process: ProcessHandle): PidTerm => {
-    const known = pids.get(process.id);
+  /** Mints an address for a handle, remembered once: what a watcher or a sender of this side writes on the wire. */
+  const addressFor = (handle: ProcessHandle): PidTerm => {
+    const known = pids.get(handle.id);
     if (known !== undefined) return known;
     const minted: PidTerm = { kind: "pid", node: cluster.self, id: nextId++, serial: 0, creation: cluster.creation };
-    pids.set(process.id, minted);
-    owners.set(minted.id, process);
+    pids.set(handle.id, minted);
+    owners.set(minted.id, handle);
     return minted;
+  };
+
+  /**
+   * The pid this node answers at for a process: minted once, and the address a peer that holds it sends to.
+   *
+   * Minting is the whole of it: a pid this node wrote for a process nothing can route a term to would promise more than
+   * it keeps, so the same call is the one that serves the process.
+   */
+  const pidOf = (process: AnyProcess): PidTerm => {
+    serve(process);
+    return addressFor(process);
   };
 
   /** The process a pid of this node names, or null for a pid of another node or another incarnation. */
@@ -495,7 +501,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
    */
   const watchOver = async (to: Term, ref: NodeRef): Promise<Watch> => {
     const where = await connection(ref);
-    const watcher = pidOf({ pname: `watch:${nextRef}`, id: Symbol("watch") });
+    const watcher = addressFor({ pname: `watch:${nextRef}`, id: Symbol("watch") });
     const minted = reference(cluster.self, cluster.creation, [nextRef, 0, 0, 0]);
     nextRef += 1;
     const key = minted.bytes.toString("hex");
@@ -564,7 +570,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
    */
   const startOn = async (ref: NodeRef, call: Start): Promise<ErlangProcess> => {
     const where = await connection(ref);
-    const from = pidOf({ pname: `spawn:${nextRef}`, id: Symbol("spawn") });
+    const from = addressFor({ pname: `spawn:${nextRef}`, id: Symbol("spawn") });
     const minted = reference(cluster.self, cluster.creation, [nextRef, 0, 0, 0]);
     nextRef += 1;
     const started = new Promise<PidTerm>((resolve, reject) => {
@@ -607,14 +613,14 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     const messages = await channel(ref);
     await messages.send({
       kind: "message",
-      control: { kind: "regSend", from: pidOf({ pname: from.pname, id: from.id }), to: name },
-      payload: forWire(body, (handle) => pidOf(handle)),
+      control: { kind: "regSend", from: pidOf(from), to: name },
+      payload: forWire(body, pidOf),
     });
   };
 
   /** Ends a process of another node with `kill`. `{3, From, To, kill}` carries a sender, so this node mints one. */
   const killOn = async (pid: PidTerm): Promise<void> => {
-    const from = pidOf({ pname: `exit:${nextRef}`, id: Symbol("exit") });
+    const from = addressFor({ pname: `exit:${nextRef}`, id: Symbol("exit") });
     nextRef += 1;
     await controlTo(pid, { kind: "exit", from, to: pid, reason: atom("kill") });
   };
@@ -637,7 +643,6 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     watchName: (ref: NodeRef, name: string) => watchOver(atom(name), ref),
     kill: killOn,
     link: linkFrom,
-    serve,
   };
 
   /** Says a connection a peer opened is how a pid on that node is answered, so this side sends over it, not a second. */
@@ -700,7 +705,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   const made: ErlangNode = {
     name: cluster.self,
     port: listener.port,
-    serve,
+    registerProcess,
     attach,
     channel,
     send: sendTo,

@@ -17,12 +17,15 @@ import { atom, binary, type Term } from "./terms.js";
 const PEER_PID: PidTerm = { kind: "pid", node: "robot@192.168.88.20", id: 91, serial: 0, creation: 5 };
 const REF: NodeRef = nodeRef("robot", "192.168.88.20");
 
-/** A node that records what was sent to a name, and the process it was told to serve. */
+/** A node that records what was sent to a name, and the processes it was asked for an address for. */
 function fakeNode() {
   const sent: Array<{ name: string; body: Term }> = [];
-  const held: AnyProcess[] = [];
+  const addressed: AnyProcess[] = [];
   const node: Reach = {
-    pidOf: (): PidTerm => PEER_PID,
+    pidOf: (process: AnyProcess): PidTerm => {
+      addressed.push(process);
+      return PEER_PID;
+    },
     processOf: () => null,
     send: async () => undefined,
     sendReg: async (name: string, _ref: NodeRef, body: Term) => {
@@ -32,11 +35,8 @@ function fakeNode() {
     watchName: () => new Promise(() => undefined),
     kill: async () => undefined,
     link: async () => undefined,
-    serve: (_name: string | null, process: AnyProcess) => {
-      held.push(process);
-    },
   };
-  return { node, sent, held };
+  return { node, sent, addressed };
 }
 
 /** The address a proxy is built with: a registered name, which is what a caller has before anything was said. */
@@ -49,12 +49,12 @@ afterEach(async () => {
 });
 
 describe("proxyOf", () => {
-  it("is held by the node, so what is sent to its address is handed to it", async () => {
-    const { node, held } = fakeNode();
+  it("asks the node for an address in its own setup, so what is sent to it is handed to it", async () => {
+    const { node, addressed } = fakeNode();
     const proxy = await proxyOf(node, relay(node)).spawn(undefined, {});
     opened.push(proxy);
-    expect(held).toHaveLength(1);
-    expect(held[0]?.pname).toBe(proxy.pname);
+    expect(addressed).toHaveLength(1);
+    expect(addressed[0]?.pname).toBe(proxy.pname);
   });
 
   it("sends what arrives to the address it was built with, and says who sent it", async () => {

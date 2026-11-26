@@ -3,10 +3,10 @@
 // The walk, in both directions: what an actor puts in a term, and what it is handed back. Nothing here talks to a
 // node — the point is that a process is never an address a caller has to spell out.
 
-import { describe, expect, it } from "vitest";
-import { defineActor, defineMessages } from "posipaki";
+import { beforeAll, describe, expect, it } from "vitest";
+import { defineActor, defineMessages, type AnyProcess } from "posipaki";
 
-import { nodeRef, type ProcessHandle } from "./cluster.js";
+import { nodeRef } from "./cluster.js";
 import {
   forHere,
   forWire,
@@ -21,12 +21,24 @@ import {
 } from "./processes.js";
 import { atom, binary, list, map, pid, tuple } from "./terms.js";
 
-const CLI: ProcessHandle = { pname: "root:cli", id: Symbol("cli") };
+/** A process of this side, so a term can carry one and a case can say who is sending. */
+const Sender = defineActor({
+  name: "sender",
+  inMessages: defineMessages<never>(),
+  outMessages: defineMessages<never>(),
+  handlers: {},
+});
+
+/** The caller: a real process, because a term carries nothing else. Spawned before the cases, not at import. */
+let CLI: AnyProcess;
+beforeAll(async () => {
+  CLI = await Sender.spawn(undefined);
+});
 const OURS_PID: PidTerm = pid("probe@192.168.88.27", 1, 0, 7);
 const PEER_PID: PidTerm = pid("robot@192.168.88.20", 91, 0, 5);
 
-/** A pid for a handle, which is all a walk needs to be visible. */
-const pidOf = (handle: ProcessHandle): PidTerm => ({ ...OURS_PID, id: handle.id === CLI.id ? 1 : 2 });
+/** A pid for a process, which is all a walk needs to be visible. */
+const pidOf = (process: AnyProcess): PidTerm => ({ ...OURS_PID, id: process.id === CLI.id ? 1 : 2 });
 
 /** A process on the node, as a caller would be handed one. */
 const peer = (address: PidTerm): ErlangProcess => ({
@@ -53,7 +65,7 @@ describe("forWire", () => {
 
 describe("forHere", () => {
   const readers = {
-    here: (address: PidTerm): ProcessHandle | null => (address.node === OURS_PID.node ? CLI : null),
+    here: (address: PidTerm): AnyProcess | null => (address.node === OURS_PID.node ? CLI : null),
     there: peer,
   };
 
@@ -73,17 +85,9 @@ describe("forHere", () => {
 
 describe("show", () => {
   it("names a process as what it is rather than as an address", () => {
-    expect(show(tuple(processTerm(CLI), atom("hi")))).toBe("{#process<root:cli>, hi}");
+    expect(show(tuple(processTerm(CLI), atom("hi")))).toBe("{#process<sender>, hi}");
     expect(show(tuple(remoteTerm(peer(PEER_PID))))).toBe("{#remote<robot@192.168.88.20.91>}");
   });
-});
-
-/** A process of this side, so a case can say who is sending. */
-const Sender = defineActor({
-  name: "sender",
-  inMessages: defineMessages<never>(),
-  outMessages: defineMessages<never>(),
-  handlers: {},
 });
 
 describe("a process of another node", () => {
@@ -107,7 +111,6 @@ describe("a process of another node", () => {
       link: async () => {
         called.push("link");
       },
-      serve: () => undefined,
     };
     return { reach, called };
   }

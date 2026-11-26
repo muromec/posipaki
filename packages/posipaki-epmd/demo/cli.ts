@@ -32,7 +32,7 @@ export const Cli = defineActor({
   async setup(args: CliArgs) {
     const node = nodeNamed(args.node.cluster);
     // An address for this actor: the answer is addressed to the pid the term carries, and the node routes it here.
-    node.serve(null, this.self);
+    node.pidOf(this.self);
     const proxy = await this.fork(proxyOf(node, processNamed(args.node, args.processName, node)), undefined, {
       name: args.processName,
     });

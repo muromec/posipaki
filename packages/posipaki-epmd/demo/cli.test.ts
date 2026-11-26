@@ -28,9 +28,11 @@ afterEach(async () => {
 function fakeNode() {
   const pids = new Map<symbol, PidTerm>();
   const sent: Array<{ name: string; body: Term }> = [];
+  /** Every process the node was asked for an address for: asking is what serves it. */
   const held: AnyProcess[] = [];
   const node: Reach = {
-    pidOf: (process: ProcessHandle): PidTerm => {
+    pidOf: (process: AnyProcess): PidTerm => {
+      held.push(process);
       const known = pids.get(process.id);
       if (known !== undefined) return known;
       const minted: PidTerm = { ...OUR_PID, id: pids.size + 1 };
@@ -47,9 +49,6 @@ function fakeNode() {
     watchName: () => new Promise(() => undefined),
     kill: async () => undefined,
     link: async () => undefined,
-    serve: (_name: string | null, process: AnyProcess) => {
-      held.push(process);
-    },
   };
   installNode(node, CLUSTER);
   return { sent, held, pids };

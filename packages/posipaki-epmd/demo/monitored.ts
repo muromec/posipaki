@@ -71,8 +71,8 @@ async function main(argv: string[]): Promise<void> {
   });
   const node = await startNode(cluster, { port: 0 });
   const watched = await Monitored.spawn(undefined);
-  node.serve(served, watched);
-  const pid = node.pidOf({ pname: watched.pname, id: watched.id });
+  node.registerProcess(served, watched);
+  const pid = node.pidOf(watched);
   console.log(`${self} listening on ${node.port}, serving ${served}`);
 
   try {

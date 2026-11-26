@@ -45,10 +45,10 @@ const proxy = await proxyOf(node, ref).spawn(undefined);
 await proxy.send({ type: "SEND", body: tuple(node.pidOf(aProcessOfOurs), binary(text)) });
 ```
 
-A process of this side that a peer answers by pid is served at its address alone (`node.serve(null, process)`), which is
-what gives it a pid and routes what arrives to it; `node.pidOf(process)` answers the same address however often it is
-asked, and `node.processOf(pid)` names the process a pid belongs to in the incarnation this node is running now. A
-`proxyOf` ends when the process it stands for does.
+`node.pidOf(process)` answers the pid this node writes for it, minted once, and minting is what serves it: a pid nothing
+could route a term to would promise more than it keeps. A name is a separate table — `node.registerProcess(name, process)`
+is what a `{6}` resolves against — and `node.processOf(pid)` names the process a pid belongs to in the incarnation this
+node is running now. A `proxyOf` ends when the process it stands for does.
 
 ## Being watched
 
@@ -116,13 +116,12 @@ bun demo/node.ts --name probe@192.168.88.27 --port 46001 \
 ```
 
 The node is a handle, not a process: `startNode(cluster)` listens and registers with the mapper at the node's own host,
-and `node.serve(name, process)` gives it an ordinary actor to answer with. Its port is the OS's to pick: a mapper is what
-makes a node findable, and a node whose port must be known is one nobody can look up.
+and `node.registerProcess(name, process)` gives it an ordinary actor to answer with. Its port is the OS's to pick: a
+mapper is what makes a node findable, and a node whose port must be known is one nobody can look up.
 
 ```
 const node = await startNode(makeCluster({ self, cookie, creation }), { port: 46002 });
-node.serve("posipaki", answerer);
-node.serve("posipaki", answerer);
+node.registerProcess("posipaki", answerer);
 ```
 
 A host that already runs a mapper — a real epmd, or `posipaki-epmd-mapper` — is the default: a node registers with it and
@@ -185,7 +184,7 @@ the connections, and a real node on a port of its own for what a node serves.
   actors of this side cannot link to each other — the runtime has parent and child, not peers.
 - The reason a watch answers is `normal` for an end the process was asked for, and `{error, Message}` for one it died of.
   The stack is not carried.
-- A name is only a name where this side serves one: `node.serve` decides what it means, and a name nothing serves is
+- A name is only a name where this side registers one: `node.registerProcess` decides what it means, and a name nothing holds is
   complained about once and dropped, as erts drops one.
 - A spawn request is answered by a node that runs BEAM code, and a node of this side does not answer one: `node.spawn`
   starts an Erlang function, and starting a definition of this side at a peer waits on a registry. A peer that reports an

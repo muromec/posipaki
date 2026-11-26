@@ -86,7 +86,7 @@ async function serving(): Promise<Serving> {
     { host: "127.0.0.1", port: 0 },
   );
   const answerer = await Answerer.spawn(undefined);
-  node.serve("answer", answerer);
+  node.registerProcess("answer", answerer);
   const opened = await open(node.port, { host: "127.0.0.1", node: "probe", cookie: COOKIE, self: PEER, creation: 9 });
   const frames: WireMessage[] = [];
   opened.messages.onFrame((said) => frames.push(said));
@@ -141,7 +141,7 @@ describe("a node", () => {
 
   it("reaches the same process by the pid the cluster minted for it, and that send carries no sender", async () => {
     const { node, answerer, peer, frames } = await serving();
-    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
+    const address = node.pidOf(answerer);
     await peer.send({
       kind: "message",
       control: { kind: "send", to: address },
@@ -191,7 +191,7 @@ describe("a node", () => {
     const { node } = await serving();
     const other = await Answerer.spawn(undefined);
     running.push(async () => other.stop());
-    expect(() => node.serve("answer", other)).toThrow(/already serves answer/);
+    expect(() => node.registerProcess("answer", other)).toThrow(/already serves answer/);
   });
 
   it("announces itself under the name it answers to, and lets the registration go on close", async () => {
@@ -249,7 +249,7 @@ describe("a node", () => {
 
   it("reports a watched process's end to the pid that asked, with the ref it minted", async () => {
     const { node, answerer, peer, frames } = await serving();
-    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
+    const address = node.pidOf(answerer);
     const ref = reference(PEER, 9);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     // Frames on one connection are read in the order they arrive, so an answer proves the watch was recorded.
@@ -307,7 +307,7 @@ describe("a node", () => {
 
   it("forgets a watch the peer cancelled: the process ends and nothing is said about it", async () => {
     const { node, answerer, peer, frames } = await serving();
-    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
+    const address = node.pidOf(answerer);
     const ref = reference(PEER, 12);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     await beat(peer);
@@ -323,7 +323,7 @@ describe("a node", () => {
 
   it("lets the ending it reported finish before the connection it goes over is let go", async () => {
     const { node, answerer, peer, frames } = await serving();
-    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
+    const address = node.pidOf(answerer);
     const ref = reference(PEER, 13);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     await beat(peer);
@@ -338,9 +338,9 @@ describe("a node", () => {
   it("answers a watch with the failure a process died of, not with normal", async () => {
     const { node, peer, frames } = await serving();
     const crasher = await Crasher.spawn(undefined);
-    node.serve("crash", crasher);
+    node.registerProcess("crash", crasher);
     running.push(async () => crasher.stop());
-    const address = node.pidOf({ pname: crasher.pname, id: crasher.id });
+    const address = node.pidOf(crasher);
     const ref = reference(PEER, 14);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     await beat(peer);
@@ -361,7 +361,7 @@ describe("a node", () => {
 
   it("ends a process here when the other end of a link says it ended", async () => {
     const { node, answerer, peer } = await serving();
-    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
+    const address = node.pidOf(answerer);
     await peer.send({ kind: "message", control: { kind: "link", from: PEER_PID, to: address }, payload: null });
     await peer.send({
       kind: "message",
@@ -375,7 +375,7 @@ describe("a node", () => {
 
   it("leaves a process alone when the other end of a link ended normally", async () => {
     const { node, answerer, peer, frames } = await serving();
-    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
+    const address = node.pidOf(answerer);
     await peer.send({ kind: "message", control: { kind: "link", from: PEER_PID, to: address }, payload: null });
     await peer.send({
       kind: "message",
@@ -390,7 +390,7 @@ describe("a node", () => {
 
   it("tells the other end of a link when a process here ends", async () => {
     const { node, answerer, frames } = await serving();
-    const address = node.pidOf({ pname: answerer.pname, id: answerer.id });
+    const address = node.pidOf(answerer);
     await node.link(address, PEER_PID);
 
     await answerer.stop();

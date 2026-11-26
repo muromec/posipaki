@@ -51,7 +51,7 @@ async function main(): Promise<void> {
   const node = await startNode(cluster, { host, port });
   // One process, served under this node's name and reachable by its pid: what a peer addresses arrives there.
   const answerer = await Answerer.spawn(undefined);
-  node.serve(localPart(self), answerer);
+  node.registerProcess(localPart(self), answerer);
   console.log(`${self} listening on ${host}:${node.port}`);
 
   if (say !== null) {
