@@ -150,10 +150,9 @@ export class AsyncProcess<
     pname: string,
     toParent?: MessageCallback<OutMessage>,
   ) {
-    // The one cast in this file. `fn` is this process's own generator, whose args are `Args`; the field says a handle
-    // knows no args, because a running process is never given any. Nothing crosses the assertion: the only caller is
-    // `pvtWatchExit` below, and it hands over the very `ctx` and `arg0` this constructor was given. `any` on the field
-    // would say the same thing and keep the reason out of sight.
+    // The argument of the stored function pointer is erased on purpose.
+    // Nothing ever reassigns the pointer.
+    // This is what lets a process whose args are wider than `Args` be assigned to `AsyncProcess<Args>`.
     this.pgenerator = fn as unknown as AsyncProcessFn<unknown, State, InMessage, OutMessage>;
     this.pname = pname;
     if (toParent) this.messageSubscribers.push(toParent);
