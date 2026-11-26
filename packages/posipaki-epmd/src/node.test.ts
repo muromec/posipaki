@@ -386,7 +386,7 @@ describe("a node", () => {
   it("tells the other end of a link when a process here ends", async () => {
     const { cluster, node, answerer, frames } = await serving();
     const address = cluster.pidOf({ pname: answerer.pname, id: answerer.id });
-    await node.link(answerer, PEER_PID);
+    await node.link(address, PEER_PID);
 
     await answerer.stop();
     // The peer hears the link was made, and then that this end is over: a link ends both.

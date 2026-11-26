@@ -35,28 +35,25 @@ export interface EtfAnswered {
   body: VisibleTerm;
 }
 
+
 /**
- * A process this node serves, by the handle its own framework gave it.
+ * What this node needs of a process it serves.
  *
- * `send` is where a term from a node arrives. The process's own out-messages leave through `subscribe("message")`,
- * together with its EXIT, which travels on the same channel and is told apart by type.
+ * posipaki's `Served` would be the type, and cannot be used: an actor that declares
+ * `outMessages: defineMessages<never>()` — which every actor that only answers does — is not assignable to it, because
+ * its subscriber list is `MessageCallback<never>[]` and `any` is not assignable to `never`. The core casts around that;
+ * here the shape is written out, and it is the whole of what a served process is asked to do.
  */
-export interface ServedProcess {
+export interface Served {
   readonly pname: string;
   readonly id: symbol;
   send(message: Message): unknown;
   subscribe(channel: "message", cb: (message: Message, from: SenderInfo) => void): () => void;
-  /**
-   * Settles when the process is over, and rejects with the error when it died of one.
-   *
-   * The EXIT on the message channel says a process ended and not why: a reason is only what one asked for, and a
-   * crash is a rejection here. A watch has to answer with the failure, so the node reads both.
-   */
+  /** Settles when the process is over, and rejects with the error when it died of one. */
   wait(): Promise<unknown>;
   /** Ends it, the way a link ends the process at its other end. */
   stop(): Promise<unknown>;
 }
-
 /** A watch a peer set on a process of this node, until the process ends or the peer cancels it. */
 interface Watch {
   /** The address the peer used: a pid, or a name. The answer carries this, not the pid it resolved to. */
@@ -65,7 +62,7 @@ interface Watch {
   readonly watcher: Term;
   /** The reference the peer minted for this watch, echoed back unchanged. */
   readonly ref: Term;
-  readonly process: ServedProcess;
+  readonly process: Served;
   /** The connection the watch came in on: the answer goes back the way it was asked for. */
   readonly messages: Channel<WireMessage>;
 }
@@ -100,12 +97,12 @@ export interface ErlangNode {
   /** The name it answers to on the wire, `name@host`. */
   readonly name: string;
   /** Links a process this node serves to one on another node: whichever ends first takes the other with it. */
-  link(process: ServedProcess, pid: PidTerm): Promise<void>;
+  link(from: PidTerm, to: PidTerm): Promise<void>;
   /** Ends a link this side set. The peer is told, and neither end is owed anything after it. */
-  unlink(process: ServedProcess, pid: PidTerm): Promise<void>;
+  unlink(from: PidTerm, to: PidTerm): Promise<void>;
   readonly port: number;
   /** Serves a process under a name: what another node addresses it by. A name already served is refused. */
-  serve(name: string, process: ServedProcess): void;
+  serve(name: string, process: Served): void;
   /** Serves the processes on a connection whose frames nobody else reads — one this side opened. */
   attach(messages: Channel<WireMessage>): void;
   close(): Promise<void>;
@@ -114,8 +111,8 @@ export interface ErlangNode {
 /** Starts a node: listens, announces itself where it is told, and serves what `serve` is given. */
 export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Promise<ErlangNode> {
   const cluster = facts.cluster;
-  const byName = new Map<string, ServedProcess>();
-  const byId = new Map<symbol, ServedProcess>();
+  const byName = new Map<string, Served>();
+  const byId = new Map<symbol, Served>();
   /** How to stop watching each served process's out-messages, by the process's own id. */
   const leaving = new Map<symbol, () => void>();
   /** How to stop reading each connection's frames. */
@@ -124,14 +121,14 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
   /** The peers each of this node's processes is linked to, by the process's own id. */
   const linked = new Map<symbol, Set<PidTerm>>();
   /** Records a link a peer made to a process here, or one this side made to a peer.'s. */
-  const linkTo = (process: ServedProcess, peer: PidTerm): void => {
+  const linkTo = (process: Served, peer: PidTerm): void => {
     const known = linked.get(process.id) ?? new Set<PidTerm>();
     known.add(peer);
     linked.set(process.id, known);
   };
 
   /** Forgets one link. Both ends are told when one of them ends, so a link ends once. */
-  const unlinkFrom = (process: ServedProcess, peer: PidTerm): void => {
+  const unlinkFrom = (process: Served, peer: PidTerm): void => {
     linked.get(process.id)?.delete(peer);
   };
 
@@ -142,7 +139,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
   };
 
   /** The pid this node answers at for a process it serves. */
-  const pidFor = (process: ServedProcess): PidTerm => facts.cluster.pidOf({ pname: process.pname, id: process.id });
+  const pidFor = (process: Served): PidTerm => facts.cluster.pidOf({ pname: process.pname, id: process.id });
 
   /** Watches a peer set, by the octets of the ref it minted: one table, walked when a process ends. */
   const watches = new Map<string, Watch>();
@@ -150,7 +147,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
   const sending = new Set<Promise<void>>();
 
   /** The process a pid names, when this node serves it. A pid of a process it does not serve names nobody here. */
-  const byPid = (address: Term): ServedProcess | null => {
+  const byPid = (address: Term): Served | null => {
     if (address.kind !== "pid") return null;
     const holder = cluster.processOf(address);
     return holder === null ? null : (byId.get(holder.id) ?? null);
@@ -197,7 +194,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
   };
 
   /** Tells every peer watching `process`, in the words the wire uses for it, that the process is over. */
-  const answerEnded = (process: ServedProcess, reason: Term): void => {
+  const answerEnded = (process: Served, reason: Term): void => {
     for (const [key, watch] of watches) {
       if (watch.process !== process) continue;
       watches.delete(key);
@@ -205,7 +202,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     }
   };
   /** Says why a process of this node is over: to every watch it had, and down every link it was part of. */
-  const ended = (process: ServedProcess, reason: Term): void => {
+  const ended = (process: Served, reason: Term): void => {
     answerEnded(process, reason);
     for (const peer of linked.get(process.id) ?? []) {
       void controlTo(peer, { kind: "exit", from: pidFor(process), to: peer, reason }).catch(() => undefined);
@@ -279,7 +276,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     });
   };
 
-  const forget = (process: ServedProcess): void => {
+  const forget = (process: Served): void => {
     for (const [name, served] of byName) {
       if (served.id === process.id) byName.delete(name);
     }
@@ -288,7 +285,7 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     leaving.delete(process.id);
   };
 
-  const serve = (name: string, process: ServedProcess): void => {
+  const serve = (name: string, process: Served): void => {
     const known = byName.get(name);
     if (known !== undefined && known.id !== process.id) {
       throw new Error(`${facts.self} already serves ${name} with ${known.pname}`);
@@ -355,13 +352,17 @@ export async function startNode(facts: NodeFacts, options: NodeOptions = {}): Pr
     port: listener.port,
     serve,
     attach,
-    async link(process: ServedProcess, pid: PidTerm): Promise<void> {
-      linkTo(process, pid);
-      await controlTo(pid, { kind: "link", from: pidFor(process), to: pid });
+    async link(from: PidTerm, to: PidTerm): Promise<void> {
+      const process = byPid(from);
+      if (process === null) throw new Error(`${facts.self} serves no ${render(from)}, so nothing here can be linked`);
+      linkTo(process, to);
+      await controlTo(to, { kind: "link", from: pidFor(process), to });
     },
-    async unlink(process: ServedProcess, pid: PidTerm): Promise<void> {
-      unlinkFrom(process, pid);
-      await controlTo(pid, { kind: "unlink", from: pidFor(process), to: pid });
+    async unlink(from: PidTerm, to: PidTerm): Promise<void> {
+      const process = byPid(from);
+      if (process === null) return;
+      unlinkFrom(process, to);
+      await controlTo(to, { kind: "unlink", from: pidFor(process), to });
     },
     async close(): Promise<void> {
       await registration?.close();

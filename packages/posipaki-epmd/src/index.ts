@@ -97,7 +97,6 @@ export {
   type EtfAsked,
   type NodeFacts,
   type NodeOptions,
-  type ServedProcess,
 } from "./node.js";
 
 export { withTimeout } from "./timeout.js";
