@@ -12,7 +12,7 @@ import { makeCluster, nodeRef } from "./cluster.js";
 import { open } from "./connection.js";
 import { listen } from "./listen.js";
 import type { WireMessage } from "./messages.js";
-import { forgetNode, startNode, type ErlangNode, type EtfAnswered, type EtfAsked } from "./node.js";
+import { forgetNode, startNode, type ErlangNode, type EtfTerm } from "./node.js";
 import { processTerm, show, type ErlangProcess, type VisibleTerm } from "./processes.js";
 import { atom, binary, pid, reference, tuple } from "./terms.js";
 
@@ -23,7 +23,7 @@ const PEER = "robot@127.0.0.1";
 const PEER_PID = pid(PEER, 42, 0, 9);
 
 /** What the served process heard, in the order it heard it. */
-const heard: EtfAsked[] = [];
+const heard: EtfTerm[] = [];
 
 /** The process a term names, if it names one: `{Pid, …}` is how a peer says who to answer. */
 function namedIn(body: VisibleTerm): ErlangProcess | undefined {
@@ -35,15 +35,16 @@ function namedIn(body: VisibleTerm): ErlangProcess | undefined {
 /** The process the term names, if it names one: the first item of `{Pid, …}`. */
 const Answerer = defineActor({
   name: "answerer",
-  inMessages: defineMessages<EtfAsked>(),
-  outMessages: defineMessages<EtfAnswered>(),
+  inMessages: defineMessages<EtfTerm>(),
+  outMessages: defineMessages<never>(),
   handlers: {
-    ETF_RAW(asked: EtfAsked) {
+    async ETF_RAW(asked: EtfTerm) {
       heard.push(asked);
       const to = namedIn(asked.body);
       if (to === undefined) return;
       const words = process.env.POSIPAKI_WORDS ?? "done";
-      this.emit({ type: "ETF_RAW", to, body: tuple(processTerm(this.self), binary(Buffer.from(words, "utf8"))) });
+      // An answer is a send of the actor's own, to the process the term names: nothing emits.
+      await to.send(tuple(processTerm(this.self), binary(Buffer.from(words, "utf8"))));
     },
   },
 });
@@ -51,7 +52,7 @@ const Answerer = defineActor({
 /** Throws on every term it is given: what a peer sees when a served process dies of an error. */
 const Crasher = defineActor({
   name: "crasher",
-  inMessages: defineMessages<EtfAsked>(),
+  inMessages: defineMessages<EtfTerm>(),
   outMessages: defineMessages<never>(),
   handlers: {
     ETF_RAW() {

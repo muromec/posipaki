@@ -46,7 +46,6 @@ import {
   processAt,
   senderPidOf,
   type ErlangProcess,
-  type Reach,
   type Start,
   type TermSender,
   type VisibleTerm,
@@ -54,16 +53,14 @@ import {
 import { atom, binary, integer, list, reference, render, tuple, type Term } from "./terms.js";
 import { withTimeout } from "./timeout.js";
 
-/** A term from another node. What a term says about where its answer goes is in the term. */
-export interface EtfAsked {
+/**
+ * A term, either direction.
+ *
+ * It carries no address and no sender: what a term says about where its answer goes is in the term, and a process that
+ * wants to answer holds a handle to the one it answers.
+ */
+export interface EtfTerm {
   type: "ETF_RAW";
-  body: VisibleTerm;
-}
-
-/** A term to a process, as a served process answers. */
-export interface EtfAnswered {
-  type: "ETF_RAW";
-  to: ErlangProcess;
   body: VisibleTerm;
 }
 
@@ -147,8 +144,6 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
 
   const byName = new Map<string, AnyProcess>();
   const byId = new Map<symbol, AnyProcess>();
-  /** How to stop watching each served process's out-messages, by the process's own id. */
-  const leaving = new Map<symbol, () => void>();
   /** How to stop reading each connection's frames. */
   const reading = new Map<Channel<WireMessage>, () => void>();
 
@@ -294,11 +289,11 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       return;
     }
 
-    const asked: EtfAsked = {
+    const asked: EtfTerm = {
       type: "ETF_RAW",
       body: forHere(said.payload ?? atom(""), {
-        here: (pid) => reach.processOf(pid),
-        there: (pid) => processAt(pid, reach),
+        here: (pid) => servedBy(pid),
+        there: (pid) => processAt(pid, made),
       }),
     };
     void process.send(asked);
@@ -316,39 +311,32 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     });
   };
 
+  /** Drops the names and the address a process held: it is gone, so nothing may resolve it to it. */
   const forget = (process: AnyProcess): void => {
     for (const [name, served] of byName) {
       if (served.id === process.id) byName.delete(name);
     }
     byId.delete(process.id);
-    leaving.get(process.id)?.();
-    leaving.delete(process.id);
   };
 
-  /** Serves a process at its pid: the table a `{2}` resolves against. Idempotent. */
+  /** Puts a process in the pid table: what a `{2}` to its address resolves against. Idempotent. */
   const serve = (process: AnyProcess): void => {
     if (byId.has(process.id)) return;
     byId.set(process.id, process);
-    leaving.set(
-      process.id,
-      process.subscribe("message", (message) => {
-        if (message.type === "EXIT") {
-          forget(process);
-          return;
-        }
-        if (!isAnswer(message)) return;
-        void message.to.send(message.body);
-      }),
-    );
-    // A process ends twice: the EXIT lets go of its name, and the promise says why. A crash leaves its error on that
-    // promise and nowhere else, so the watch is answered from there — after the name is gone, which the answer does not
-    // need: it carries the address the peer asked with.
+    // A process ends twice: the tables let go of it, and the promise says why. A crash leaves its error on that promise
+    // and nowhere else, so the watch is answered from there — after the name is gone, which the answer does not need: it
+    // carries the address the peer asked with.
     void process.wait().then(
-      () => ended(process, atom("normal")),
-      (failure: unknown) => ended(process, failureTerm(failure)),
+      () => {
+        forget(process);
+        ended(process, atom("normal"));
+      },
+      (failure: unknown) => {
+        forget(process);
+        ended(process, failureTerm(failure));
+      },
     );
   };
-
   /** Registers a process under a name: what a `{6}` resolves against. A name already held by another is refused. */
   const registerProcess = (name: string, process: AnyProcess): void => {
     const known = byName.get(name);
@@ -594,8 +582,8 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
         said.kind === "tuple" && said.items.length === 2 && said.items[0]?.kind === "atom" && said.items[0].name === "rex";
       if (!replied) throw new Error(`${ref.node}@${ref.host} answered ${render(said)}, and an RPC answers {rex, Reply}`);
       return forHere(said.items[1] ?? atom(""), {
-        here: (pid) => reach.processOf(pid),
-        there: (pid) => processAt(pid, reach),
+        here: (pid) => servedBy(pid),
+        there: (pid) => processAt(pid, made),
       });
     } finally {
       asking.delete(asked.id);
@@ -657,7 +645,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       },
       payload: forWire(list(...call.args), pidOf),
     });
-    return processAt(await started, reach);
+    return processAt(await started, made);
   };
 
   /** The reader a connection of this side needs: an answer is read on the wire the question went out over. */
@@ -702,19 +690,6 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     await controlTo(to, { kind: "link", from: pidFor(process), to });
   };
 
-  /** This side as the translators read it: a pid becomes its process here, and one over there keeps its address. */
-  const reach: Reach = {
-    pidOf,
-    processOf: servedBy,
-    send: sendTo,
-    sendReg,
-    watch: (pid: PidTerm) => watchOver(pid, refOf(pid, cluster.name)),
-    watchName: (ref: NodeRef, name: string) => watchOver(atom(name), ref),
-    kill: killOn,
-    link: linkFrom,
-    spawn: startOn,
-    rpc,
-  };
 
   /** Says a connection a peer opened is how a pid on that node is answered, so this side sends over it, not a second. */
   const adopt = (peer: Peer, messages: Channel<WireMessage>): void => {
@@ -781,14 +756,14 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     channel,
     send: sendTo,
     sendReg,
-    watch: reach.watch,
-    watchName: reach.watchName,
+    watch: (pid: PidTerm) => watchOver(pid, refOf(pid, cluster.name)),
+    watchName: (ref: NodeRef, name: string) => watchOver(atom(name), ref),
     spawn: startOn,
     rpc,
     pidOf,
     processOf: servedBy,
-    kill: reach.kill,
-    link: reach.link,
+    kill: killOn,
+    link: linkFrom,
     async unlink(from: PidTerm, to: PidTerm): Promise<void> {
       const process = byPid(from);
       if (process === null) return;
@@ -801,8 +776,6 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       await registration?.close();
       for (const stop of reading.values()) stop();
       reading.clear();
-      for (const stop of leaving.values()) stop();
-      leaving.clear();
       byName.clear();
       byId.clear();
       watches.clear();
@@ -820,7 +793,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
 }
 
 /** Whether an out-message of a served process is a term to send. Its EXIT arrives on the same channel. */
-function isAnswer(message: Message): message is EtfAnswered {
+function isAnswer(message: Message): message is EtfTerm {
   return message.type === "ETF_RAW";
 }
 
@@ -841,19 +814,18 @@ function failureTerm(failure: unknown): Term {
   return tuple(atom("error"), binary(Buffer.from(failure instanceof Error ? failure.message : String(failure), "utf8")));
 }
 
-/** The verbs an actor uses of a running node: what `installNode` is given and `nodeNamed` answers. */
-export type { Reach };
+
 
 /** The nodes this runtime runs, by the cluster name their configuration carries: what an actor resolves by name. */
-const running = new Map<string, Reach>();
+const running = new Map<string, ErlangNode>();
 
 /** Says a node is running, so an actor that was given its name can reach it. */
-export function installNode(node: Reach, cluster: string = DEFAULT_CLUSTER): void {
+export function installNode(node: ErlangNode, cluster: string = DEFAULT_CLUSTER): void {
   running.set(cluster, node);
 }
 
 /** The node running under a cluster name, or a sentence saying which ones there are. */
-export function nodeNamed(cluster: string = DEFAULT_CLUSTER): Reach {
+export function nodeNamed(cluster: string = DEFAULT_CLUSTER): ErlangNode {
   const found = running.get(cluster);
   if (found !== undefined) return found;
   const known = [...running.keys()].join(", ");

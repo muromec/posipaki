@@ -13,12 +13,11 @@
 import { defineActor, defineMessages, type ActorDefinition } from "posipaki";
 
 import type { NodeRef, Watch } from "./cluster.js";
-import { nodeNamed, type EtfAsked } from "./node.js";
+import { nodeNamed, type ErlangNode, type EtfTerm } from "./node.js";
 import {
   processNamed,
   type ErlangNamedProcess,
   type ErlangProcess,
-  type Reach,
   type Start,
   type VisibleTerm,
 } from "./processes.js";
@@ -38,7 +37,7 @@ export interface ErlangFactory {
 
 /** A process on another node, and the node that reaches it. */
 export interface ErlangFound {
-  readonly reach: Reach;
+  readonly reach: ErlangNode;
   readonly far: ErlangProcess | ErlangNamedProcess;
 }
 
@@ -64,10 +63,10 @@ type ErlangState = { public: ErlangPublic; private: { far: ErlangProcess | Erlan
  */
 export function erlangActor<Args>(
   spec: ErlangSpec<Args>,
-): ActorDefinition<Args, ErlangState, EtfAsked, never, {}> {
+): ActorDefinition<Args, ErlangState, EtfTerm, never, {}> {
   return defineActor({
     name: spec.name,
-    inMessages: defineMessages<EtfAsked>(),
+    inMessages: defineMessages<EtfTerm>(),
     outMessages: defineMessages<never>(),
 
     async setup(args: Args): Promise<ErlangState> {
@@ -84,7 +83,7 @@ export function erlangActor<Args>(
     },
 
     handlers: {
-      async ETF_RAW(asked: EtfAsked) {
+      async ETF_RAW(asked: EtfTerm) {
         const far = this.state.private.far;
         // `{6}` names its sender and `{2}` has no slot for one: which verb goes out depends on what this stands for.
         if ("pid" in far) await far.send(asked.body);
@@ -95,19 +94,19 @@ export function erlangActor<Args>(
 }
 
 /** A process another node knows by name, with the address written where the definition is. */
-export function makeErlangRef(address: ErlangAddress): ActorDefinition<undefined, ErlangState, EtfAsked, never, {}> {
+export function makeErlangRef(address: ErlangAddress): ActorDefinition<undefined, ErlangState, EtfTerm, never, {}> {
   return erlangActor({ name: address.process, find: () => named(address) });
 }
 
 /** The same actor, with the address in the args it is forked with. */
-export function makeErlangConnect(): ActorDefinition<ErlangAddress, ErlangState, EtfAsked, never, {}> {
+export function makeErlangConnect(): ActorDefinition<ErlangAddress, ErlangState, EtfTerm, never, {}> {
   return erlangActor<ErlangAddress>({ name: "erlang", find: named });
 }
 
 /** A function started on another node, with the args it is forked with as that function's parameters. */
 export function makeErlangFactory(
   facts: ErlangFactory,
-): ActorDefinition<readonly VisibleTerm[], ErlangState, EtfAsked, never, {}> {
+): ActorDefinition<readonly VisibleTerm[], ErlangState, EtfTerm, never, {}> {
   return erlangActor({
     name: facts.fname,
     find: async (params: readonly VisibleTerm[]) => {

@@ -11,6 +11,7 @@
 import type { AnyProcess } from "posipaki";
 
 import type { NodeRef, ProcessHandle, Watch } from "./cluster.js";
+import type { ErlangNode } from "./node.js";
 import { render, type Term } from "./terms.js";
 
 /** A pid, as the wire writes it. */
@@ -130,32 +131,6 @@ export interface Start {
 }
 
 /**
- * What an actor beside a node uses of it: the verbs for a process over there, and the one that gives it an address here.
- * Written out rather than as the node's type, so a handle carries no process and a double answers nine methods.
- */
-export interface Reach {
-  /** The pid this side answers at for a process, and what serves it at that address. */
-  pidOf(process: AnyProcess): PidTerm;
-  processOf(pid: PidTerm): AnyProcess | null;
-  send(pid: PidTerm, body: Term): Promise<void>;
-  /**
-   * One term to a registered name, with the sender the `{6}` control carries.
-   *
-   * The sender is a process of this side, which is minted and served, or a pid this side relays for — a node answering on
-   * another node's behalf. An address with no pid has nothing to write there.
-   */
-  sendReg(name: string, ref: NodeRef, body: Term, from: TermSender): Promise<void>;
-  watch(pid: PidTerm): Promise<Watch>;
-  watchName(ref: NodeRef, name: string): Promise<Watch>;
-  kill(pid: PidTerm): Promise<void>;
-  link(from: PidTerm, to: PidTerm): Promise<void>;
-  /** Asks the node to start `module:function(args)` and answers a handle to the process it started. */
-  spawn(ref: NodeRef, call: Start): Promise<ErlangProcess>;
-  /** Asks a node to run `module:function(args)` and answers what it answered: an RPC over the node's own server. */
-  rpc(ref: NodeRef, call: Start): Promise<VisibleTerm>;
-}
-
-/**
  * A process on another node, by the pid it has.
  *
  * A pid is what a term carries and what an exit or a link names, so every verb here writes one.
@@ -199,7 +174,7 @@ export function senderPidOf(from: TermSender, pidOf: (process: AnyProcess) => Pi
 }
 
 /** A process of another node, by the pid it has. */
-export function processAt(pid: PidTerm, reach: Reach): ErlangProcess {
+export function processAt(pid: PidTerm, reach: ErlangNode): ErlangProcess {
   const watch = (): Promise<Watch> => reach.watch(pid);
   return {
     pid,
@@ -223,7 +198,7 @@ export function processAt(pid: PidTerm, reach: Reach): ErlangProcess {
 }
 
 /** A process of another node, by the name its node registered. */
-export function processNamed(ref: NodeRef, name: string, reach: Reach): ErlangNamedProcess {
+export function processNamed(ref: NodeRef, name: string, reach: ErlangNode): ErlangNamedProcess {
   return {
     ref,
     name,

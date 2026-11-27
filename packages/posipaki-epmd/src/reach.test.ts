@@ -17,7 +17,7 @@ import { epmdPort, mapperAnswers, serveEpmd } from "./epmd.js";
 import type { Peer } from "./handshake.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
-import { startNode, type ErlangNode, type EtfAsked } from "./node.js";
+import { startNode, type ErlangNode, type EtfTerm } from "./node.js";
 import { atom, integer, list, pid as pidTerm, tuple, type Term } from "./terms.js";
 
 const COOKIE = "pocookie";
@@ -84,10 +84,10 @@ const pidOf = (node: string, creation: number) => ({ kind: "pid" as const, node,
 /** Ends when it is told to, so a watch has an end to be answered for and other terms prove the order. */
 const Stand = defineActor({
   name: "stand",
-  inMessages: defineMessages<EtfAsked>(),
+  inMessages: defineMessages<EtfTerm>(),
   outMessages: defineMessages<never>(),
   handlers: {
-    ETF_RAW(asked: EtfAsked) {
+    ETF_RAW(asked: EtfTerm) {
       if (asked.body.kind === "atom" && asked.body.name === "end") this.exit("done");
     },
   },

@@ -8,7 +8,7 @@
 
 import { defineActor, defineMessages } from "posipaki";
 
-import type { EtfAnswered, EtfAsked } from "../src/node.js";
+import type { EtfTerm } from "../src/node.js";
 import { processTerm, show, type ErlangProcess, type VisibleTerm } from "../src/processes.js";
 import { atom, binary, tuple } from "../src/terms.js";
 
@@ -29,10 +29,10 @@ function namedIn(body: VisibleTerm): ErlangProcess | null {
 /** Says what it was asked, and answers the process the term names when the word is `hi`. */
 export const Answerer = defineActor({
   name: "answerer",
-  inMessages: defineMessages<EtfAsked>(),
-  outMessages: defineMessages<EtfAnswered>(),
+  inMessages: defineMessages<EtfTerm>(),
+  outMessages: defineMessages<never>(),
   handlers: {
-    ETF_RAW(asked: EtfAsked) {
+    async ETF_RAW(asked: EtfTerm) {
       console.log(`  asked: ${show(asked.body)}`);
       const to = namedIn(asked.body);
       if (to === null) {
@@ -44,11 +44,8 @@ export const Answerer = defineActor({
         return;
       }
       const words = process.env.POSIPAKI_WORDS ?? "answering";
-      this.emit({
-        type: "ETF_RAW",
-        to,
-        body: tuple(processTerm(this.self), binary(Buffer.from(words, "utf8")), atom("done")),
-      });
+      // The address is the term's, and answering is a send of this actor's own: nothing here emits.
+      await to.send(tuple(processTerm(this.self), binary(Buffer.from(words, "utf8")), atom("done")));
     },
   },
 });

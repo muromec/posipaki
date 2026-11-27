@@ -10,7 +10,7 @@ import { defineActor, defineMessages } from "posipaki";
 
 import { makeErlangRef } from "../src/actor.js";
 import type { NodeRef } from "../src/cluster.js";
-import { nodeNamed, type EtfAsked } from "../src/node.js";
+import { nodeNamed, type EtfTerm } from "../src/node.js";
 import { processTerm, show } from "../src/processes.js";
 import { binary, tuple } from "../src/terms.js";
 
@@ -26,7 +26,7 @@ export interface CliArgs {
 /** Asks one name on one node, and ends with the answer printed. */
 export const Cli = defineActor({
   name: "cli",
-  inMessages: defineMessages<EtfAsked>(),
+  inMessages: defineMessages<EtfTerm>(),
   outMessages: defineMessages<never>(),
 
   async setup(args: CliArgs) {
@@ -42,7 +42,7 @@ export const Cli = defineActor({
   },
 
   handlers: {
-    ETF_RAW(asked: EtfAsked) {
+    ETF_RAW(asked: EtfTerm) {
       console.log(show(asked.body));
       this.exit("the answer is printed");
     },

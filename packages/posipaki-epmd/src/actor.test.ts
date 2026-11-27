@@ -1,72 +1,70 @@
 // ── a process on another node, as an actor ─────────────────────────────────
 //
-// The node is a double: it records what was sent and what it was asked to start, and mints an address per process. The
-// three makers are the same body with the address arriving in three places, so the cases differ only in where it is.
+// A real node, with the verbs an actor asks it for spied on: what a case measures is the call the actor made and the
+// address it stands for. The three makers are one body with the address arriving in three places.
 
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { makeErlangConnect, makeErlangFactory, makeErlangRef } from "./actor.js";
-import { nodeRef, type NodeRef, type PidTerm } from "./cluster.js";
-import { forgetNode, installNode, type Reach } from "./node.js";
-import { processAt, type ErlangProcess, type Start } from "./processes.js";
+import { makeCluster, nodeRef, type NodeRef, type PidTerm } from "./cluster.js";
+import { startNode, type ErlangNode } from "./node.js";
+import { processAt, type Start } from "./processes.js";
 import { atom, binary, type Term } from "./terms.js";
 
-const REF: NodeRef = nodeRef("robot", "192.168.88.20");
-const OUR_PID: PidTerm = { kind: "pid", node: "posipaki@127.0.0.1", id: 1, serial: 0, creation: 7 };
+const REF: NodeRef = nodeRef("robot", "192.168.88.20", "actor-test");
 const THEIR_PID: PidTerm = { kind: "pid", node: "robot@192.168.88.20", id: 77, serial: 0, creation: 5 };
 
-/** A node that records what was sent to a name, what it was asked to start, and the addresses it was asked for. */
-function fakeNode(ending: Promise<Term> = new Promise(() => undefined)) {
-  const sent: Array<{ name: string; body: Term }> = [];
-  const spawned: Start[] = [];
-  /** Every process this node was asked for an address for: asking is what serves it. */
-  const held: PidTerm[] = [];
-  const pids = new Map<symbol, PidTerm>();
-  const reach: Reach = {
-    pidOf: (process) => {
-      const known = pids.get(process.id);
-      if (known !== undefined) return known;
-      const minted: PidTerm = { ...OUR_PID, id: pids.size + 10 };
-      pids.set(process.id, minted);
-      held.push(minted);
-      return minted;
-    },
-    processOf: () => null,
-    send: async () => undefined,
-    sendReg: async (name: string, _ref: NodeRef, body: Term) => {
-      sent.push({ name, body });
-    },
-    watch: () => new Promise(() => undefined),
-    watchName: () => Promise.resolve({ ended: ending, cancel: () => undefined }),
-    kill: async () => undefined,
-    link: async () => undefined,
-    spawn: async (_ref: NodeRef, call) => {
-      spawned.push(call);
-      return processAt(THEIR_PID, reach);
-    },
-    rpc: async () => {
-      throw new Error("this double asks no node");
-    },
-  };
-  installNode(reach, REF.cluster);
-  return { sent, spawned, held };
-}
-
-const opened: ErlangProcess["wait"] extends never ? never : Array<{ stop(): Promise<unknown> }> = [];
+const nodes: ErlangNode[] = [];
+const actors: Array<{ stop(): Promise<unknown> }> = [];
 
 afterEach(async () => {
-  for (const actor of opened.splice(0)) await actor.stop().catch(() => undefined);
-  forgetNode(REF.cluster);
+  // The spies stay in place until the actors have stopped: a restored verb is a real connection, and a closing actor
+  // may ask for one.
+  for (const actor of actors.splice(0)) await actor.stop().catch(() => undefined);
+  for (const erlang of nodes.splice(0)) await erlang.close().catch(() => undefined);
+  vi.restoreAllMocks();
 });
+
+/** A node of this side, with the calls an actor makes recorded, and a promise that settles on the first of them. */
+async function serving(ending: Promise<Term> = new Promise(() => undefined)) {
+  const sent: Array<{ name: string; body: Term }> = [];
+  const spawned: Start[] = [];
+  let seenSend: () => void = () => undefined;
+  let seenSpawn: () => void = () => undefined;
+  const wrote = new Promise<void>((resolve) => {
+    seenSend = resolve;
+  });
+  const started = new Promise<void>((resolve) => {
+    seenSpawn = resolve;
+  });
+  const erlang = await startNode(
+    makeCluster({ name: REF.cluster, self: "probe@192.168.88.27", cookie: "probe", creation: 7, announce: false }),
+    { host: "127.0.0.1", port: 0 },
+  );
+  vi.spyOn(erlang, "sendReg").mockImplementation(async (name: string, _ref: NodeRef, body: Term) => {
+    sent.push({ name, body });
+    seenSend();
+  });
+  vi.spyOn(erlang, "spawn").mockImplementation(async (_ref: NodeRef, call: Start) => {
+    spawned.push(call);
+    seenSpawn();
+    return processAt(THEIR_PID, erlang);
+  });
+  vi.spyOn(erlang, "watchName").mockImplementation(() => Promise.resolve({ ended: ending, cancel: () => undefined }));
+  // A process over there is watched by pid, so the same stub answers both.
+  vi.spyOn(erlang, "watch").mockImplementation(() => Promise.resolve({ ended: ending, cancel: () => undefined }));
+  nodes.push(erlang);
+  return { erlang, sent, spawned, wrote, started };
+}
 
 describe("a process on another node, as an actor", () => {
   it("writes what it is given to the name it was built for", async () => {
-    const { sent } = fakeNode();
+    const { sent, wrote } = await serving();
     const peer = await makeErlangRef({ node: REF, process: "relay" }).spawn(undefined);
-    opened.push(peer);
+    actors.push(peer);
 
     await peer.send({ type: "ETF_RAW", body: atom("hi") });
-    await tick();
+    await wrote;
 
     expect(sent).toHaveLength(1);
     expect(sent[0]?.name).toBe("relay");
@@ -74,46 +72,42 @@ describe("a process on another node, as an actor", () => {
   });
 
   it("takes the address from its args when it is made as a connect actor", async () => {
-    const { sent } = fakeNode();
+    const { sent, wrote } = await serving();
     const peer = await makeErlangConnect().spawn({ node: REF, process: "watcher" });
-    opened.push(peer);
+    actors.push(peer);
 
     await peer.send({ type: "ETF_RAW", body: binary(Buffer.from("ping", "utf8")) });
-    await tick();
+    await wrote;
 
     expect(sent.map((one) => one.name)).toEqual(["watcher"]);
   });
 
-  it("is served at an address of this side, so a term carrying it comes back here", async () => {
-    const { held } = fakeNode();
+  it("stands for the name it was built for", async () => {
+    await serving();
     const peer = await makeErlangRef({ node: REF, process: "relay" }).spawn(undefined);
-    opened.push(peer);
+    actors.push(peer);
 
-    expect(held).toHaveLength(1);
     const far = peer.state?.far;
     expect(far !== undefined && "name" in far ? far.name : null).toBe("relay");
   });
 
   it("ends when the process it stands for ends", async () => {
-    fakeNode(Promise.resolve(atom("normal")));
+    await serving(Promise.resolve(atom("normal")));
     const peer = await makeErlangRef({ node: REF, process: "relay" }).spawn(undefined);
-    opened.push(peer);
+    actors.push(peer);
 
-    let over = false;
-    void peer.wait().then(() => {
-      over = true;
-    });
-    await tick();
-    expect(over).toBe(true);
+    // `wait()` settles when the actor ends, which is the trigger: no clock is read.
+    await peer.wait();
   });
 
   it("starts a function on that node, with its fork args as the function's parameters", async () => {
-    const { spawned } = fakeNode();
+    const { spawned, started } = await serving();
     const peer = await makeErlangFactory({ node: REF, module: "there", fname: "there-spawner/2" }).spawn([
       atom("one"),
       atom("two"),
     ]);
-    opened.push(peer);
+    actors.push(peer);
+    await started;
 
     expect(spawned).toEqual([{ module: "there", function: "there-spawner", args: [atom("one"), atom("two")] }]);
     const far = peer.state?.far;
@@ -121,13 +115,9 @@ describe("a process on another node, as an actor", () => {
   });
 
   it("refuses a factory whose parameters are not the arity its name states", async () => {
-    fakeNode();
+    await serving();
     await expect(
       makeErlangFactory({ node: REF, module: "there", fname: "there-spawner/2" }).spawn([atom("one")]),
     ).rejects.toThrow("takes 2 parameters, and 1 were given");
   });
 });
-
-function tick(): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, 20));
-}

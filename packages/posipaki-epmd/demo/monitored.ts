@@ -18,7 +18,7 @@ import { randomBytes } from "node:crypto";
 import { defineActor, defineMessages } from "posipaki";
 
 import { makeCluster, nodeRef } from "../src/cluster.js";
-import { startNode, type EtfAsked } from "../src/node.js";
+import { startNode, type EtfTerm } from "../src/node.js";
 import { makeErlangConnect } from "../src/actor.js";
 import { show, type VisibleTerm } from "../src/processes.js";
 import { atom, binary, tuple } from "../src/terms.js";
@@ -90,10 +90,10 @@ async function main(argv: string[]): Promise<void> {
 /** Says what it heard, and stops when it is told to exit — which is what the watcher on the other side is watching. */
 const Monitored = defineActor({
   name: "monitored",
-  inMessages: defineMessages<EtfAsked>(),
+  inMessages: defineMessages<EtfTerm>(),
   outMessages: defineMessages<never>(),
   handlers: {
-    ETF_RAW(asked: EtfAsked) {
+    ETF_RAW(asked: EtfTerm) {
       console.log(`  heard ${show(asked.body)}`);
       if (wordIn(asked.body) !== "exit") return;
       console.log("exit requested");

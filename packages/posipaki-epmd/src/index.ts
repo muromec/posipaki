@@ -83,7 +83,6 @@ export {
   type RemoteInTerm,
   type ErlangProcess,
   type ErlangNamedProcess,
-  type Reach,
   type VisibleTerm,
 } from "./processes.js";
 
@@ -102,8 +101,7 @@ export {
 export {
   startNode,
   type ErlangNode,
-  type EtfAnswered,
-  type EtfAsked,
+  type EtfTerm,
   type NodeOptions,
 } from "./node.js";
 
