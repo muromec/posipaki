@@ -556,7 +556,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   /**
    * Asks a node to run `module:function(args)` and answers what it answered.
    *
-   * The door is `rex`, the RPC server the `rpc` application registers on every node: `{6, From, '', rex}` carrying
+   * It is `rex`, the RPC server the `rpc` application registers on every node: `{6, From, '', rex}` carrying
    * `{From, {call, Module, Function, Args}}`, answered to `From` as `{rex, From, Reply}`. An application asks for what it
    * needs through this — `erlang:whereis` among other things — rather than the node knowing any one of those questions.
    *
