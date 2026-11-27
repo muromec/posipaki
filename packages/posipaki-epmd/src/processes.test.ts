@@ -115,6 +115,9 @@ describe("a process of another node", () => {
       spawn: async () => {
         throw new Error("this double starts nothing");
       },
+      resolveName: async () => {
+        throw new Error("this double asks no node");
+      },
     };
     return { reach, called };
   }
@@ -142,7 +145,7 @@ describe("a process of another node", () => {
     // `{3, …}` and `{1, …}` carry pids, so a name has no pid to be exited or linked by: there is nothing to refuse at
     // runtime, and no such method on the type.
     const named = processNamed(nodeRef("robot", "192.168.88.20"), "relay", reach);
-    expect(Object.keys(named).sort()).toEqual(["monitor", "name", "ref", "send"]);
+    expect(Object.keys(named).sort()).toEqual(["monitor", "name", "ref", "resolve", "send"]);
   });
 
   it("writes a sender as a pid: one over there as it stands, a process of this side minted", async () => {
@@ -151,5 +154,19 @@ describe("a process of another node", () => {
 
     const sender = await Sender.spawn(undefined);
     expect(senderPidOf(sender, pidOf)).toEqual({ ...OURS_PID, id: 2 });
+  });
+
+  it("resolves a name to a process, and refuses one nobody holds", async () => {
+    const { reach } = recording();
+    // Nothing on the other node holds the name: `whereis` answered `undefined`.
+    const empty = processNamed(nodeRef("robot", "192.168.88.20"), "relay", { ...reach, resolveName: async () => null });
+    await expect(empty.resolve()).rejects.toThrow("nothing on robot@192.168.88.20 holds relay");
+
+    // A pid came back: the handle is the one that has one.
+    const held = processNamed(nodeRef("robot", "192.168.88.20"), "relay", {
+      ...reach,
+      resolveName: async () => processAt(PEER_PID, reach),
+    });
+    expect((await held.resolve()).pid).toEqual(PEER_PID);
   });
 });

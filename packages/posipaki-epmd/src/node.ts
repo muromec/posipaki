@@ -116,7 +116,7 @@ export interface ErlangNode {
   /** One term to a process of another node. `{2, '', To}` carries no sender. */
   send(pid: PidTerm, body: Term): Promise<void>;
   /** One term to a registered name. `{6, From, '', Name}` carries the sender, so one is needed. */
-  sendReg(name: string, ref: NodeRef, body: Term, from: AnyProcess): Promise<void>;
+  sendReg(name: string, ref: NodeRef, body: Term, from: TermSender): Promise<void>;
   /** Watches a process of another node: what settles with the reason it ended. */
   watch(pid: PidTerm): Promise<Watch>;
   /** The same watch, where the other node knows the process by a registered name. */
@@ -125,6 +125,8 @@ export interface ErlangNode {
   kill(pid: PidTerm): Promise<void>;
   /** Asks a node to start `module:function(args)` and answers a handle to the process. */
   spawn(ref: NodeRef, call: Start): Promise<ErlangProcess>;
+  /** What a node's registered name leads to now: `erlang:whereis` asked over its RPC server, null when nobody holds it. */
+  resolveName(name: string, ref: NodeRef): Promise<ErlangProcess | null>;
   /**
    * The pid this node answers at for a process: minted once for its lifetime, and served by the same call.
    *
@@ -278,6 +280,13 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
 
     const process = control.kind === "regSend" ? (byName.get(control.to) ?? null) : byPid(control.to);
     if (process === null) {
+      // A pid minted for a question is served by nothing: the RPC answer is read here, not delivered to a process.
+      const waiter = control.kind === "send" && control.to.kind === "pid" ? resolving.get(control.to.id) : undefined;
+      if (waiter !== undefined && control.kind === "send" && control.to.kind === "pid") {
+        resolving.delete(control.to.id);
+        waiter.settle(said.payload ?? atom(""));
+        return;
+      }
       // erts drops a message for a name nobody answers without a word. This side says it once and keeps the
       // connection: another node's bookkeeping is not a reason to fail a wire.
       console.error(`erlang-node: ${cluster.self} was addressed ${described(control)}, which serves nobody here`);
@@ -484,12 +493,21 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   const watching = new Map<string, { resolve: (reason: Term) => void; messages: Channel<WireMessage> }>();
   let nextRef = 1;
 
+  /** The answers awaited from a node's RPC server, by the pid minted for the question and the connection it went over. */
+  const resolving = new Map<number, { settle: (answer: Term | null) => void; messages: Channel<WireMessage> }>();
+
   /** Settles every watch that went over a connection: a peer that is gone answers nothing. */
   const settleOver = (messages: Channel<WireMessage>, reason: Term): void => {
     for (const [key, held] of watching) {
       if (held.messages !== messages) continue;
       watching.delete(key);
       held.resolve(reason);
+    }
+    // A question a gone node never answered: the caller is told, rather than left waiting on a connection that is over.
+    for (const [id, held] of resolving) {
+      if (held.messages !== messages) continue;
+      resolving.delete(id);
+      held.settle(null);
     }
   };
 
@@ -531,6 +549,28 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     if (held === undefined) return;
     watching.delete(key);
     held.resolve(reason);
+  };
+
+
+  /**
+   * Asks a node what its registered name leads to: `erlang:whereis` sent to the RPC server every node runs.
+   *
+   * `{6, From, '', rex}` carrying `{From, {call, erlang, whereis, [Name]}}` is answered to `From` as
+   * `{rex, From, undefined | Pid}`. That address is served by nothing, so its answer is read off this table.
+   */
+  const resolveName = async (name: string, ref: NodeRef): Promise<ErlangProcess | null> => {
+    const where = await connection(ref);
+    const asked = addressFor({ pname: `whereis:${name}`, id: Symbol("whereis") });
+    const answer = new Promise<Term | null>((settle) => resolving.set(asked.id, { settle, messages: where.messages }));
+    await where.messages.send({
+      kind: "message",
+      control: { kind: "regSend", from: asked, to: "rex" },
+      payload: tuple(asked, tuple(atom("call"), atom("erlang"), atom("whereis"), list(atom(name)))),
+    });
+    const said = await answer;
+    if (said === null) throw new Error(`the connection to ${ref.node}@${ref.host} went before it answered for ${name}`);
+    const found = said.kind === "tuple" ? said.items[2] : undefined;
+    return found !== undefined && found.kind === "pid" ? processAt(found, reach) : null;
   };
 
   /** The starts this side asked for, by the octets of the ref it minted: the answer carries that ref back. */
@@ -644,6 +684,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     kill: killOn,
     link: linkFrom,
     spawn: startOn,
+    resolveName,
   };
 
   /** Says a connection a peer opened is how a pid on that node is answered, so this side sends over it, not a second. */
@@ -714,6 +755,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     watch: reach.watch,
     watchName: reach.watchName,
     spawn: startOn,
+    resolveName,
     pidOf,
     processOf: servedBy,
     kill: reach.kill,

@@ -52,6 +52,9 @@ function fakeNode() {
       spawn: async () => {
         throw new Error("this double starts nothing");
       },
+      resolveName: async () => {
+        throw new Error("this double asks no node");
+      },
   };
   installNode(node, CLUSTER);
   return { sent, held, pids };

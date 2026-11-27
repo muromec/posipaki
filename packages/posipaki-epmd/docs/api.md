@@ -78,10 +78,16 @@ Two handles, split where the wire is:
 | | has | verbs |
 | --- | --- | --- |
 | `ErlangProcess` | a pid | `send(body)` (`{2}`, no sender), `monitor`, `kill`, `link(process)`, `wait` |
-| `ErlangNamedProcess` | a name its node registered | `send(body, from)` (`{6}` names its sender), `monitor` (`{19}` takes a name) |
+| `ErlangNamedProcess` | a name its node registered | `send(body, from)` (`{6}` names its sender), `monitor` (`{19}` takes a name), `resolve()` |
 
-A name has no pid, so it is not exited and not linked: `{3}` and `{1}` carry pids. Killing by name needs the pid first, and
-nothing on this side asks a node where a name leads — `whereis` is a round trip this wire does not have.
+A name has no pid, so it is not exited and not linked: `{3}` and `{1}` carry pids. `resolve()` asks the node — `whereis`
+over its RPC server — so it costs a round trip and answers the handle that has a pid; nobody holding the name is refused
+with a sentence.
+
+```ts
+const robot = await processNamed(ref, "robot", reach).resolve();
+await robot.send(tuple(atom("hello")));
+```
 
 ## What this deletes
 

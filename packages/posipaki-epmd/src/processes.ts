@@ -151,6 +151,8 @@ export interface Reach {
   link(from: PidTerm, to: PidTerm): Promise<void>;
   /** Asks the node to start `module:function(args)` and answers a handle to the process it started. */
   spawn(ref: NodeRef, call: Start): Promise<ErlangProcess>;
+  /** What a node's registered name leads to now, or null when nobody holds it. */
+  resolveName(name: string, ref: NodeRef): Promise<ErlangProcess | null>;
 }
 
 /**
@@ -186,6 +188,13 @@ export interface ErlangNamedProcess {
   send(body: VisibleTerm, from: TermSender): Promise<void>;
   /** A watch on the name. `{19}` may carry a name, and the answer names the pid it resolved to. */
   monitor(): Promise<Watch>;
+  /**
+   * The process holding the name now.
+   *
+   * The node is asked (`erlang:whereis` over its RPC server), so this costs a round trip and answers the pid-bearing
+   * handle. Refused with a sentence when nobody holds the name.
+   */
+  resolve(): Promise<ErlangProcess>;
 }
 
 /** A sender a term may name: a process of this side, or one over there. */
@@ -229,6 +238,11 @@ export function processNamed(ref: NodeRef, name: string, reach: Reach): ErlangNa
       await reach.sendReg(name, ref, forWire(body, (handle) => reach.pidOf(handle)), from);
     },
     monitor: () => reach.watchName(ref, name),
+    async resolve() {
+      const found = await reach.resolveName(name, ref);
+      if (found === null) throw new Error(`nothing on ${ref.node}@${ref.host} holds ${name}`);
+      return found;
+    },
   };
 }
 
