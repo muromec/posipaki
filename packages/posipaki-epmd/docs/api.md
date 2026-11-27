@@ -78,15 +78,17 @@ Two handles, split where the wire is:
 | | has | verbs |
 | --- | --- | --- |
 | `ErlangProcess` | a pid | `send(body)` (`{2}`, no sender), `monitor`, `kill`, `link(process)`, `wait` |
-| `ErlangNamedProcess` | a name its node registered | `send(body, from)` (`{6}` names its sender), `monitor` (`{19}` takes a name), `resolve()` |
+| `ErlangNamedProcess` | a name its node registered | `send(body, from)` (`{6}` names its sender), `monitor` (`{19}` takes a name) |
 
-A name has no pid, so it is not exited and not linked: `{3}` and `{1}` carry pids. `resolve()` asks the node — `whereis`
-over its RPC server — so it costs a round trip and answers the handle that has a pid; nobody holding the name is refused
-with a sentence.
+A name has no pid, so it is not exited and not linked: `{3}` and `{1}` carry pids.
+
+`rpc(ref, {module, function, args})` runs one function on a node and answers what it answered: `{6, From, '', rex}`
+carrying `{From, {call, M, F, A}}`, answered `{rex, From, Reply}`. Everything an application wants *asked* of a node goes
+through it — `whereis` included — because the distribution protocol has no lookup of its own and the node knows no
+question but the ones it is asked:
 
 ```ts
-const robot = await processNamed(ref, "robot", reach).resolve();
-await robot.send(tuple(atom("hello")));
+const pid = await node.rpc(ref, { module: "erlang", function: "whereis", args: [atom("robot")] });
 ```
 
 ## What this deletes

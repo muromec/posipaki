@@ -44,7 +44,7 @@ function fakeNode(ending: Promise<Term> = new Promise(() => undefined)) {
       spawned.push(call);
       return processAt(THEIR_PID, reach);
     },
-    resolveName: async () => {
+    rpc: async () => {
       throw new Error("this double asks no node");
     },
   };

@@ -52,7 +52,7 @@ function fakeNode() {
       spawn: async () => {
         throw new Error("this double starts nothing");
       },
-      resolveName: async () => {
+      rpc: async () => {
         throw new Error("this double asks no node");
       },
   };
