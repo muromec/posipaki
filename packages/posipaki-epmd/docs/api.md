@@ -1,22 +1,24 @@
 # The surfaces, and the two levels
 
-Status: built. The cluster holds configuration only, the node is the surface, both directions of the protocol live in it,
-and the actor level above it is three makers over one body. `ServedProcess`, the runtime `Cluster` interface,
-`installCluster`, `clusterNamed`, `makeCluster`'s connection table, `ErlangProxy`, `RemoteProcess`, `proxyOf` and its
-`SEND` are gone. Nothing here is invented — every rule below is the wire's own, written down after measuring it against a
-live node.
+Status: built. A cluster is where nodes are found, a node is what it is and the surface, both directions of the protocol
+live in the node, and the actor level above it is three makers over one body. `ServedProcess`, the `ErlangProxy`,
+`RemoteProcess`, `proxyOf` and its `SEND` are gone. Nothing here is invented: every rule below is the wire's own,
+written down after measuring it against a live node.
 
 ## The division
 
-- **cluster** — configuration for a node, and the grammar of a name: `self`, `cookie`, `creation`, `flags`, `timeoutMs`,
-  `locate`, `announce`, `epmd`. It holds no connection and no table.
-- **node** — the surface: the listener, the connections to other nodes, the registration with the mapper at its host,
-  pid translation, the monitors in both directions, the links, the names it serves, and the starts it asks for.
-- **wire** — `frame`, `terms`, `control`, `messages`, `handshake`, `connection`, `listen`, `epmd`: grammar and
-  transport. The node uses them, and nothing above the node knows a cookie or a length prefix.
+- **cluster** — where its nodes are found, under the name a node is bound to it by: `name`, `locate`, `epmd`. It holds no
+  connection and no table.
+- **node** — the surface: what it is (`self`, `cookie`, `creation`, `flags`, `register`, `connectMs`), then the listener,
+  the connections to other nodes, the registration with the mapper at its host, pid translation, the monitors in both
+  directions, the links, the names it serves, and the starts it asks for.
 
-A cluster without a node is configuration nobody runs: no node, no pids, no addresses. A client that does not want to
-be found starts a node with `announce: false` and a port the OS picks.
+A cluster without a node is configuration nobody runs: no node, no pids, no addresses. A client that does not want to be
+found starts a node with `register: false` and a port the OS picks.
+
+A node is bound to a cluster by name: `startNode({ clusterName: "default", self, cookie, … })`. `makeCluster` is for the
+runtime that needs one — it installs the cluster under its name, and every node started with that name uses its `locate`
+and its mapper policy. A name nothing was installed under is the defaults: the mapper at each node's own host.
 
 ## Two levels, one vocabulary
 
@@ -82,10 +84,10 @@ Two handles, split where the wire is:
 
 A name has no pid, so it is not exited and not linked: `{3}` and `{1}` carry pids.
 
-`rpc(ref, {module, function, args})` runs one function on a node and answers what it answered: `{6, From, '', rex}`
-carrying `{From, {call, M, F, A}}`, answered `{rex, From, Reply}`. Everything an application wants *asked* of a node goes
-through it — `whereis` included — because the distribution protocol has no lookup of its own and the node knows no
-question but the ones it is asked:
+`rpc(ref, {module, function, args}, {timeoutMs})` runs one function on a node and answers what it answered: `{6, From,
+'', rex}` carrying `{From, {call, M, F, A}}`, answered `{rex, From, Reply}`. Everything an application wants *asked* of a
+node goes through it — `whereis` included — because the distribution protocol has no lookup of its own and the node
+knows no question but the ones it is asked:
 
 ```ts
 const pid = await node.rpc(ref, { module: "erlang", function: "whereis", args: [atom("robot")] });
@@ -93,8 +95,9 @@ const pid = await node.rpc(ref, { module: "erlang", function: "whereis", args: [
 
 ## What this deletes
 
-`ServedProcess` (a hand-written mirror of posipaki's `AnyProcess`), the runtime `Cluster` interface, `installCluster`,
-`clusterNamed`, `makeCluster`'s connection table, `ErlangProxy`, `RemoteProcess`, `proxyOf` and its `SEND` — all gone.
+`ServedProcess` (a hand-written mirror of posipaki's `AnyProcess`), `ErlangProxy`, `RemoteProcess`, `proxyOf` and its
+`SEND`, and the cluster's copy of a node's identity: `self`, `cookie`, `creation`, `flags` and `announce`. `announce` is
+`register` on the node, and `creation` is drawn by `startNode` and answered on the handle.
 
 ## Open
 

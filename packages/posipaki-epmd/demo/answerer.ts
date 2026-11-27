@@ -13,8 +13,9 @@ import type { EtfTerm } from "../src/node.js";
 import { processTerm, show, type ErlangProcess, type VisibleTerm } from "../src/processes.js";
 import { atom, binary, tuple } from "../src/terms.js";
 
-/** The word the term carries, when it carries one: `{Pid, Text}` is how a peer asks. */
+/** The word a term carries: a binary is its own word, and `{Pid, Text}` is how a peer asks for an answer. */
 function wordIn(body: VisibleTerm): string | null {
+  if (body.kind === "binary") return body.bytes.toString("utf8");
   if (body.kind !== "tuple") return null;
   const last = body.items[body.items.length - 1];
   return last?.kind === "binary" ? last.bytes.toString("utf8") : null;
@@ -44,20 +45,20 @@ export const Answerer = defineActor({
   handlers: {
     async ETF_RAW(asked: EtfTerm) {
       console.log(`  asked: ${show(asked.body)}`);
-      const to = namedIn(asked.body);
       const word = wordIn(asked.body);
-      if (to === null || word === null) {
-        console.log("  and nothing to answer: the term names no process, or carries no word");
-        return;
-      }
-      const known = dispatch[word];
-      if (known === undefined) {
-        console.log(`  and nothing to answer: ${word} is not a word this process knows`);
+      const known = word === null ? undefined : dispatch[word];
+      if (word === null || known === undefined) {
+        console.log("  and nothing here answers it");
         return;
       }
       if ("ends" in known) {
         console.log(`  ${word}: this process ends, and a peer watching it is told why`);
         this.exit(known.ends);
+        return;
+      }
+      const to = namedIn(asked.body);
+      if (to === null) {
+        console.log("  and nothing to answer: the term names no process");
         return;
       }
       // The address is the term's, and answering is a send of this actor's own: nothing here emits.

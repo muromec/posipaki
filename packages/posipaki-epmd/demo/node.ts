@@ -5,14 +5,18 @@
  * names, `exit` ends the process, so a peer watching it reads a DOWN. An answer is a send of the actor's own: a served
  * process is never given a wire to write to.
  *
- *   bun demo/node.ts                                   # posipaki@<this host>, cookie from ~/.erlang.cookie
+ *   bun demo/node.ts                                            # posipaki@<this host>, cookie from ~/.erlang.cookie
  *   bun demo/node.ts --name probe@10.0.0.2 --cookie s3cret
+ *   bun demo/node.ts --say relay --node robot@192.168.88.20     # and say hi to that name on that node
+ *   bun demo/node.ts --watch watcher --node robot@192.168.88.20  # and ask it to watch this process
  *
  * It serves until stopped: ^C is how it ends.
  */
 
-import { makeCluster } from "../src/cluster.js";
+import { makeCluster, refFromName } from "../src/cluster.js";
 import { startNode } from "../src/node.js";
+import { show } from "../src/processes.js";
+import { atom, binary, tuple } from "../src/terms.js";
 import { Answerer } from "./answerer.js";
 import { cookieOf, nameOf } from "./settings.js";
 
@@ -39,6 +43,13 @@ async function main(): Promise<void> {
   const host = flag(argv, "host") ?? "0.0.0.0";
   const port = Number(flag(argv, "port") ?? "0");
   const served = localPart(self);
+  /** What this run also asks of a peer, and the node that peer is registered on. */
+  const net = flag(argv, "node");
+  const say = flag(argv, "say");
+  const watch = flag(argv, "watch");
+  if (net === undefined && (say !== undefined || watch !== undefined)) {
+    throw new Error("--say and --watch need --node <node@host>");
+  }
 
   // Nobody has to set a mapper up first: this node answers on its own host when none does.
   makeCluster({ epmd: { start: "auto" } });
@@ -48,6 +59,19 @@ async function main(): Promise<void> {
   node.registerProcess(served, answerer);
   console.log(`${self} listening on ${host}:${node.port}`);
   console.error(`${self} serves ${served} and stays up; ^C stops it`);
+
+  const remote = net === undefined ? undefined : refFromName(net);
+  // Asked to say hi: the term names the pid of this process, so the answer comes back to it.
+  if (say !== undefined && remote !== undefined) {
+    await node.sendReg(say, remote, tuple(node.pidOf(answerer), binary(Buffer.from("hi", "utf8"))), answerer);
+    console.log(`said hi to ${say} on ${net}`);
+  }
+  // Asked to be watched: the term names the pid and the name this node serves, and the peer watches both.
+  if (watch !== undefined && remote !== undefined) {
+    const pid = node.pidOf(answerer);
+    await node.sendReg(watch, remote, tuple(pid, atom(served), binary(Buffer.from("ping", "utf8"))), answerer);
+    console.log(`asked ${watch} on ${net} to watch ${show(pid)} and ${served}`);
+  }
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {
