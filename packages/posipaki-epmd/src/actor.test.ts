@@ -37,10 +37,14 @@ async function serving(ending: Promise<Term> = new Promise(() => undefined)) {
   const started = new Promise<void>((resolve) => {
     seenSpawn = resolve;
   });
-  const erlang = await startNode(
-    makeCluster({ name: REF.cluster, self: "probe@192.168.88.27", cookie: "probe", creation: 7, announce: false }),
-    { host: "127.0.0.1", port: 0 },
-  );
+  const erlang = await startNode({
+    clusterName: REF.cluster,
+    self: "probe@192.168.88.27",
+    cookie: "probe",
+    register: false,
+    host: "127.0.0.1",
+    port: 0,
+  });
   vi.spyOn(erlang, "sendReg").mockImplementation(async (name: string, _ref: NodeRef, body: Term) => {
     sent.push({ name, body });
     seenSend();

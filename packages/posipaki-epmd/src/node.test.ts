@@ -12,7 +12,7 @@ import { makeCluster, nodeRef } from "./cluster.js";
 import { open } from "./connection.js";
 import { listen } from "./listen.js";
 import type { WireMessage } from "./messages.js";
-import { forgetNode, startNode, type ErlangNode, type EtfTerm } from "./node.js";
+import { forgetNode, nodeNamed, startNode, type ErlangNode, type EtfTerm } from "./node.js";
 import { processTerm, show, type ErlangProcess, type VisibleTerm } from "./processes.js";
 import { atom, binary, pid, reference, tuple } from "./terms.js";
 
@@ -83,12 +83,21 @@ afterEach(async () => {
   forgetNode(CLUSTER);
 });
 
+/** A node on loopback: told where it answers and where it listens, and registered nowhere. */
+function starting(): Promise<ErlangNode> {
+  return startNode({
+    clusterName: CLUSTER,
+    self: SELF,
+    cookie: COOKIE,
+    register: false,
+    host: "127.0.0.1",
+    port: 0,
+  });
+}
+
 async function serving(): Promise<Serving> {
   // The node is only asked where to listen: a test names the port itself and leaves the box's mapper out of it.
-  const node = await startNode(
-    makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7, announce: false }),
-    { host: "127.0.0.1", port: 0 },
-  );
+  const node = await starting();
   const answerer = await Answerer.spawn(undefined);
   node.registerProcess("answer", answerer);
   const opened = await open(node.port, { host: "127.0.0.1", node: "probe", cookie: COOKIE, self: PEER, creation: 9 });
@@ -218,51 +227,34 @@ describe("a node", () => {
     expect(() => node.registerProcess("answer", other)).toThrow(/already serves answer/);
   });
 
-  it("announces itself under the name it answers to, and lets the registration go on close", async () => {
-    const told: Array<{ node: string; host: string; port: number }> = [];
-    const closed: string[] = [];
-    const node = await startNode(
-      makeCluster({
-        name: CLUSTER,
-        self: SELF,
-        cookie: COOKIE,
-        creation: 7,
-        announce: async (ref, port) => {
-          told.push({ node: ref.node, host: ref.host, port });
-          return {
-            close: async () => {
-              closed.push("registration");
-            },
-          };
-        },
-      }),
-      { host: "127.0.0.1", port: 0 },
-    );
-    // The host is the one its own name carries: what a peer's lookup asks, answered by the same mapper.
-    expect(told).toEqual([{ node: "probe", host: "127.0.0.1", port: node.port }]);
-    await node.close();
-    expect(closed).toEqual(["registration"]);
-  });
-
   it("runs one node per cluster name: two would mint the same pids", async () => {
     await serving();
-    await expect(
-      startNode(makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7, announce: false }), {
-        host: "127.0.0.1",
-        port: 0,
-      }),
-    ).rejects.toThrow(/already runs a node/);
+    await expect(starting()).rejects.toThrow(/already runs a node/);
+  });
+
+  it("binds a node to a cluster nobody configured, and is found there by that name", async () => {
+    // No `makeCluster`: a name nothing was installed under is the defaults, and the node is its slot.
+    const node = await startNode({
+      clusterName: "unheard-of",
+      self: SELF,
+      cookie: COOKIE,
+      register: false,
+      host: "127.0.0.1",
+      port: 0,
+    });
+    running.push(async () => node.close());
+    expect(nodeNamed("unheard-of")).toBe(node);
+    await node.close();
+    expect(() => nodeNamed("unheard-of")).toThrow(/no node running as unheard-of/);
   });
 
   it("stops listening when it is closed", async () => {
-    const node = await startNode(
-      makeCluster({ name: CLUSTER, self: SELF, cookie: COOKIE, creation: 7, announce: false }),
-      { host: "127.0.0.1", port: 0 },
-    );
+    const node = await starting();
     const port = node.port;
     await node.close();
     await expect(open(port, { host: "127.0.0.1", node: "probe", cookie: COOKIE, self: PEER, creation: 9 })).rejects.toThrow();
   });
+
   /** A term the served process answers, so a frame that came before it is known to have been read. */
   const beat = (peer: Channel<WireMessage>): Promise<void> =>
     peer.send({

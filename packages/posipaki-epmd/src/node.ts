@@ -16,11 +16,11 @@ import type { Channel } from "posipaki/port";
 import { socketChannel } from "posipaki/port/node";
 
 import {
+  clusterNamed,
   DEFAULT_CLUSTER,
   nodeName,
   refFromName,
   refOf,
-  type Cluster,
   type NodeRef,
   type PidTerm,
   type ProcessHandle,
@@ -77,8 +77,6 @@ interface PeerWatch {
   readonly messages: Channel<WireMessage>;
 }
 
-/** How a node tells a mapper where it listens, or `false` for a node nobody can look up. */
-export type Announce = ((port: number) => Promise<Registration>) | false;
 
 /** A connection as this file needs it: the way to a node, and which incarnation answered. */
 interface Reached {
@@ -90,16 +88,53 @@ interface Reached {
 const EPMD_PORT = 4369;
 
 export interface NodeOptions {
+  /** The name this node answers to on the wire, `name@host`: what every pid it mints carries. */
+  /**
+   * The cluster this node is bound to, by name. Default `default`, which needs nothing configured.
+   *
+   * A cluster is a way of finding nodes — where a peer is looked up, what is done about the mapper on this host — and
+   * `makeCluster` installs one under its name for the nodes bound to it.
+   */
+  readonly clusterName?: string;
+  readonly self: string;
+  /** The cookie a handshake proves, both ways. */
+  readonly cookie: string;
+  /** The incarnation every pid this node mints carries, so two runs of one name are told apart. Default: 32 bits drawn. */
+  readonly creation?: number;
+  /** The flags this node offers in a handshake. Default: the mandatory set. */
+  readonly flags?: readonly [high: number, low: number];
+  /**
+   * Whether this node's name is put in the mapper. Default true.
+   *
+   * `false` runs a node nobody can look up, for a caller that names its port itself. Erlang's `-hidden` still registers
+   * the node: it keeps it out of the mesh, which is a different fact.
+   */
+  readonly register?: boolean;
   /** The port to listen on. Default 0: the OS picks one, and the handle answers it. */
   readonly port?: number;
-  /** The interface to bind. Default `0.0.0.0` — a node bound to loopback is reachable from this host only. */
+  /** The interface to bind. Default `0.0.0.0`: a node bound to loopback is reachable from this host only. */
   readonly host?: string;
+  /** How long a handshake may take on a connection this node opens. Default 10 s. */
+  readonly connectMs?: number;
+}
+
+/** How an RPC to another node is answered, and how long it may take. */
+export interface RpcOptions {
+  /** Default 10 s: a node without the `rpc` application holds no `rex`, and erts drops what is sent to it. */
+  readonly timeoutMs?: number;
+}
+
+/** The incarnation a node draws when nobody dictates one: 32 bits, so two runs of the same name disagree. */
+function drawCreation(): number {
+  return Math.floor(Math.random() * 0x1_0000_0000);
 }
 
 /** A node this side runs: what it answers to, where it listens, and the processes it serves. */
 export interface ErlangNode {
   /** The name it answers to on the wire, `name@host`. */
   readonly name: string;
+  /** The incarnation every pid this node mints carries: a pid from another one names nobody here. */
+  readonly creation: number;
   /** Links a process this node serves to one on another node: whichever ends first takes the other with it. */
   link(from: PidTerm, to: PidTerm): Promise<void>;
   /** Ends a link this side set. The peer is told, and neither end is owed anything after it. */
@@ -124,7 +159,7 @@ export interface ErlangNode {
   /** Asks a node to start `module:function(args)` and answers a handle to the process. */
   spawn(ref: NodeRef, call: Start): Promise<ErlangProcess>;
   /** Asks a node to run `module:function(args)` and answers what it answered: an RPC over the node's own server. */
-  rpc(ref: NodeRef, call: Start): Promise<VisibleTerm>;
+  rpc(ref: NodeRef, call: Start, options?: RpcOptions): Promise<VisibleTerm>;
   /**
    * The pid this node answers at for a process: minted once for its lifetime, and served by the same call.
    *
@@ -137,10 +172,18 @@ export interface ErlangNode {
   close(): Promise<void>;
 }
 
-/** Starts a node: listens, announces itself where it is told, serves what `serve` is given, and reaches the rest. */
-export async function startNode(cluster: Cluster, options: NodeOptions = {}): Promise<ErlangNode> {
+/** Starts a node: it listens, registers its name where it is told, serves what it is given, and reaches the rest. */
+export async function startNode(options: NodeOptions): Promise<ErlangNode> {
+  const cluster = clusterNamed(options.clusterName);
   // One node per name: two of them would mint the same pids and answer for each other's processes.
   if (running.has(cluster.name)) throw new Error(`the cluster ${cluster.name} already runs a node`);
+
+  const self = options.self;
+  const cookie = options.cookie;
+  const creation = options.creation ?? drawCreation();
+  const flags = options.flags;
+  const connectMs = options.connectMs;
+  const register = options.register ?? true;
 
   const byName = new Map<string, AnyProcess>();
   const byId = new Map<symbol, AnyProcess>();
@@ -193,7 +236,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       .catch((error: unknown) => {
         // The wire went first: the peer is not there to be told, and a second complaint about it is noise.
         console.error(
-          `erlang-node: ${cluster.self} could not say why a process ended: ${
+          `erlang-node: ${self} could not say why a process ended: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
@@ -205,7 +248,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   /** Records a watch a peer set, or answers `noproc` when the address names nobody here. */
   const startWatch = (messages: Channel<WireMessage>, from: Term, to: Term, ref: Term): void => {
     if (ref.kind !== "ref" || from.kind !== "pid") {
-      console.error(`erlang-node: ${cluster.self} was asked to watch without a ref to answer by: ${render(ref)}`);
+      console.error(`erlang-node: ${self} was asked to watch without a ref to answer by: ${render(ref)}`);
       return;
     }
     const process = to.kind === "atom" ? (byName.get(to.name) ?? null) : byPid(to);
@@ -266,7 +309,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       if (control.reason.kind === "atom" && control.reason.name === "normal") return;
       const process = byPid(control.to);
       if (process === null) {
-        console.error(`erlang-node: ${cluster.self} was told a linked process ended, and serves no ${render(control.to)}`);
+        console.error(`erlang-node: ${self} was told a linked process ended, and serves no ${render(control.to)}`);
         return;
       }
       void process.stop();
@@ -285,7 +328,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       }
       // erts drops a message for a name nobody answers without a word. This side says it once and keeps the
       // connection: another node's bookkeeping is not a reason to fail a wire.
-      console.error(`erlang-node: ${cluster.self} was addressed ${described(control)}, which serves nobody here`);
+      console.error(`erlang-node: ${self} was addressed ${described(control)}, which serves nobody here`);
       return;
     }
 
@@ -341,7 +384,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   const registerProcess = (name: string, process: AnyProcess): void => {
     const known = byName.get(name);
     if (known !== undefined && known.id !== process.id) {
-      throw new Error(`${cluster.self} already serves ${name} with ${known.pname}`);
+      throw new Error(`${self} already serves ${name} with ${known.pname}`);
     }
     byName.set(name, process);
     pidOf(process);
@@ -382,12 +425,6 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     return epmdRegister({ host: ref.host, name: ref.node, port, mapperPort });
   };
 
-  /** How this node tells a mapper where it listens, or `false` for a node nobody can look up. */
-  const tell: ((ref: NodeRef, port: number) => Promise<Registration>) | null =
-    cluster.announce === false ? null : (cluster.announce ?? joinMapper);
-  const announce: Announce =
-    tell === null ? false : async (port: number) => tell(refFromName(cluster.self, cluster.name), port);
-
   /** The connections to other nodes, by the name the wire knows a node by: opened on first use, then shared. */
   const reached = new Map<string, Promise<Reached>>();
   const dialled = new Set<Channel<WireMessage>>();
@@ -398,7 +435,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     const key = nodeName(ref);
     const known = reached.get(key);
     if (known !== undefined) return known;
-    if (key === cluster.self) {
+    if (key === self) {
       return Promise.reject(new Error(`${key} is this side's own name: a pid on it is not sent over a wire`));
     }
     const made = (async () => {
@@ -406,11 +443,11 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       const opened = await open(port, {
         host: ref.host,
         node: ref.node,
-        cookie: cluster.cookie,
-        self: cluster.self,
-        creation: cluster.creation,
-        ...(cluster.flags === undefined ? {} : { flags: cluster.flags }),
-        ...(cluster.timeoutMs === undefined ? {} : { timeoutMs: cluster.timeoutMs }),
+        cookie,
+        self,
+        creation,
+        ...(flags === undefined ? {} : { flags }),
+        ...(connectMs === undefined ? {} : { timeoutMs: connectMs }),
       });
       opened.messages.onFrame(readsAnswers);
       opened.messages.onClose(() => {
@@ -455,7 +492,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   const addressFor = (handle: ProcessHandle): PidTerm => {
     const known = pids.get(handle.id);
     if (known !== undefined) return known;
-    const minted: PidTerm = { kind: "pid", node: cluster.self, id: nextId++, serial: 0, creation: cluster.creation };
+    const minted: PidTerm = { kind: "pid", node: self, id: nextId++, serial: 0, creation: creation };
     pids.set(handle.id, minted);
     owners.set(minted.id, handle);
     return minted;
@@ -474,7 +511,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
 
   /** The process a pid of this node names, or null for a pid of another node or another incarnation. */
   const holderOf = (pid: PidTerm): ProcessHandle | null => {
-    if (pid.node !== cluster.self || pid.creation !== cluster.creation) return null;
+    if (pid.node !== self || pid.creation !== creation) return null;
     return owners.get(pid.id) ?? null;
   };
 
@@ -509,7 +546,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   const watchOver = async (to: Term, ref: NodeRef): Promise<Watch> => {
     const where = await connection(ref);
     const watcher = addressFor({ pname: `watch:${nextRef}`, id: Symbol("watch") });
-    const minted = reference(cluster.self, cluster.creation, [nextRef, 0, 0, 0]);
+    const minted = reference(self, creation, [nextRef, 0, 0, 0]);
     nextRef += 1;
     const key = minted.bytes.toString("hex");
     const ended = new Promise<Term>((resolve) => watching.set(key, { resolve, messages: where.messages }));
@@ -550,7 +587,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
    *
    * The address is served by nothing, so the answer is read off this table rather than delivered to a process.
    */
-  const rpc = async (ref: NodeRef, call: Start): Promise<VisibleTerm> => {
+  const rpc = async (ref: NodeRef, call: Start, bounds: RpcOptions = {}): Promise<VisibleTerm> => {
     const where = await connection(ref);
     const asked = addressFor({ pname: `call:${nextRef}`, id: Symbol("call") });
     nextRef += 1;
@@ -574,7 +611,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       // without a word: without a bound, the caller would wait on an answer that is never coming.
       const said = await withTimeout(
         answer,
-        cluster.timeoutMs ?? DEFAULT_TIMEOUT_MS,
+        bounds.timeoutMs ?? DEFAULT_TIMEOUT_MS,
         `${ref.node}@${ref.host} did not answer an RPC: a node serves one only with the rpc application running`,
       );
       if (said === null) throw new Error(`the connection to ${ref.node}@${ref.host} went before it answered`);
@@ -628,7 +665,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   const startOn = async (ref: NodeRef, call: Start): Promise<ErlangProcess> => {
     const where = await connection(ref);
     const from = addressFor({ pname: `spawn:${nextRef}`, id: Symbol("spawn") });
-    const minted = reference(cluster.self, cluster.creation, [nextRef, 0, 0, 0]);
+    const minted = reference(self, creation, [nextRef, 0, 0, 0]);
     nextRef += 1;
     const started = new Promise<PidTerm>((resolve, reject) => {
       starting.set(minted.bytes.toString("hex"), { resolve, reject, messages: where.messages });
@@ -685,7 +722,7 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   /** Links a process this node serves to one over there: whichever ends first takes the other with it. */
   const linkFrom = async (from: PidTerm, to: PidTerm): Promise<void> => {
     const process = byPid(from);
-    if (process === null) throw new Error(`${cluster.self} serves no ${render(from)}, so nothing here can be linked`);
+    if (process === null) throw new Error(`${self} serves no ${render(from)}, so nothing here can be linked`);
     linkTo(process, to);
     await controlTo(to, { kind: "link", from: pidFor(process), to });
   };
@@ -719,13 +756,12 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
   };
   const listener: Listener = await listen(
     {
-      self: cluster.self,
-      cookie: cluster.cookie,
-      creation: cluster.creation,
+      self,
+      cookie,
+      creation,
       ...(options.host === undefined ? {} : { host: options.host }),
       ...(options.port === undefined ? {} : { port: options.port }),
-      ...(cluster.flags === undefined ? {} : { flags: cluster.flags }),
-      ...(cluster.timeoutMs === undefined ? {} : { timeoutMs: cluster.timeoutMs }),
+      ...(flags === undefined ? {} : { flags }),
     },
     {
       onConnection(peer, messages) {
@@ -735,21 +771,22 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
         attach(messages);
       },
       onRefused(error) {
-        console.error(`erlang-node: ${cluster.self} refused a connection: ${error.message}`);
+        console.error(`erlang-node: ${self} refused a connection: ${error.message}`);
       },
     },
   );
 
   let registration: Registration | null = null;
   try {
-    registration = announce === false ? null : await announce(listener.port);
+    registration = register ? await joinMapper(refFromName(self, cluster.name), listener.port) : null;
   } catch (error) {
     await listener.close();
     throw error;
   }
 
   const made: ErlangNode = {
-    name: cluster.self,
+    name: self,
+    creation,
     port: listener.port,
     registerProcess,
     attach,

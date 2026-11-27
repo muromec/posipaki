@@ -1,6 +1,6 @@
 // ── reaching another node: connections, pids, watches and starts ─────────────
 //
-// One side is a real node that nobody can look up (`announce: false`); the other is a socket that answers by hand. What
+// One side is a real node that nobody can look up (`register: false`); the other is a socket that answers by hand. What
 // the test measures is the rule: a reference names a node, a node not yet reached is reached once, and only if its
 // incarnation agrees.
 
@@ -12,8 +12,8 @@ import { createServer } from "node:net";
 import type { Channel } from "posipaki/port";
 import { socketChannel } from "posipaki/port/node";
 
-import { makeCluster, nodeRef, refOf, type Cluster } from "./cluster.js";
-import { epmdPort, mapperAnswers, serveEpmd } from "./epmd.js";
+import { makeCluster, nodeRef, refOf } from "./cluster.js";
+import { epmdPort, mapperAnswers, serveEpmd, type Mapper } from "./epmd.js";
 import type { Peer } from "./handshake.js";
 import { listen, type Listener } from "./listen.js";
 import type { WireMessage } from "./messages.js";
@@ -63,18 +63,16 @@ async function answer(): Promise<{ port: number; peers: Peer[]; said: string[]; 
 
 /** A node of this side whose only node it reaches is the given port. */
 async function reachAt(port: number): Promise<ErlangNode> {
-  const node = await startNode(
-    makeCluster({
-      name: "test",
-      self: "me@127.0.0.1",
-      cookie: COOKIE,
-      creation: 7,
-      locate: async () => port,
-      announce: false,
-      timeoutMs: 2_000,
-    }),
-    { host: "127.0.0.1", port: 0 },
-  );
+  makeCluster({ name: "test", locate: async () => port });
+  const node = await startNode({
+    clusterName: "test",
+    self: "me@127.0.0.1",
+    cookie: COOKIE,
+    register: false,
+    connectMs: 2_000,
+    host: "127.0.0.1",
+    port: 0,
+  });
   nodes.push(node);
   return node;
 }
@@ -95,10 +93,15 @@ const Stand = defineActor({
 
 /** A node serving one process under a name: what a pid is minted for, and what a watch has to end. */
 async function served(name: string) {
-  const node = await startNode(
-    makeCluster({ name: "serve", self: "probe@127.0.0.1", cookie: COOKIE, creation: 7, announce: false, timeoutMs: 2_000 }),
-    { host: "127.0.0.1", port: 0 },
-  );
+  const node = await startNode({
+    clusterName: "serve",
+    self: "probe@127.0.0.1",
+    cookie: COOKIE,
+    register: false,
+    connectMs: 2_000,
+    host: "127.0.0.1",
+    port: 0,
+  });
   nodes.push(node);
   const proc = await Stand.spawn(undefined);
   node.registerProcess(name, proc);
@@ -145,7 +148,7 @@ describe("reaching a node", () => {
   });
   it("gives a process one pid, minted once, and answers its process by that pid", async () => {
     const { node, proc, pid } = await served("answer");
-    expect(pid).toEqual({ kind: "pid", node: "probe@127.0.0.1", id: 1, serial: 0, creation: 7 });
+    expect(pid).toEqual({ kind: "pid", node: "probe@127.0.0.1", id: 1, serial: 0, creation: node.creation });
     expect(node.pidOf(proc)).toBe(pid);
 
     expect(node.processOf(pid)).toBe(proc);
@@ -156,7 +159,7 @@ describe("reaching a node", () => {
 
   it("answers nobody for a pid of another incarnation, another node, or a process it does not serve", async () => {
     const { node, pid } = await served("answer");
-    expect(node.processOf({ ...pid, creation: 999 })).toBeNull();
+    expect(node.processOf({ ...pid, creation: node.creation + 1 })).toBeNull();
     expect(node.processOf({ ...pid, node: "somebody@127.0.0.1" })).toBeNull();
     expect(node.processOf({ ...pid, id: 404 })).toBeNull();
   });
@@ -176,15 +179,33 @@ async function freePort(): Promise<number> {
   return port;
 }
 
-/** The configuration of a node whose only way to announce itself is the policy: no `announce`, a mapper port named. */
-function configuredWith(epmd: { port: number; start?: "auto" | "never" }): Cluster {
-  return makeCluster({ name: "epmd", self: "me@127.0.0.1", cookie: COOKIE, creation: 7, epmd, timeoutMs: 2_000 });
+/** A node whose name is put in the mapper at `epmd`: what a case varies is the policy, not the identity. */
+async function joinedTo(epmd: { port: number; start?: "auto" | "never" }): Promise<ErlangNode> {
+  makeCluster({ name: "epmd", epmd });
+  const node = await startNode({
+    clusterName: "epmd",
+    self: "me@127.0.0.1",
+    cookie: COOKIE,
+    host: "127.0.0.1",
+    port: 0,
+  });
+  nodes.push(node);
+  return node;
+}
+
+/** The mapper's answer once the registration's socket has ended: asked for a bounded number of turns, never slept on. */
+async function forgotten(mapper: Mapper, name: string): Promise<boolean> {
+  for (let turn = 0; turn < 50; turn += 1) {
+    if (mapper.find(name) === null) return true;
+    await new Promise<void>((resolve) => setImmediate(resolve));
+  }
+  return mapper.find(name) === null;
 }
 
 describe("the mapper a node joins", () => {
   it("serves one when the policy says auto and none answers, and closes it with the node", async () => {
     const mapperPort = await freePort();
-    const node = await startNode(configuredWith({ port: mapperPort, start: "auto" }), { host: "127.0.0.1", port: 0 });
+    const node = await joinedTo({ port: mapperPort, start: "auto" });
 
     const asked = await epmdPort(await socketChannel({ host: "127.0.0.1", port: mapperPort }), {
       host: "127.0.0.1",
@@ -199,24 +220,36 @@ describe("the mapper a node joins", () => {
 
   it("fails a node's start when none answers and the policy does not start one", async () => {
     const mapperPort = await freePort();
-    await expect(
-      startNode(configuredWith({ port: mapperPort }), { host: "127.0.0.1", port: 0 }),
-    ).rejects.toThrow(`no mapper answered at 127.0.0.1:${mapperPort}`);
+    await expect(joinedTo({ port: mapperPort })).rejects.toThrow(
+      `no mapper answered at 127.0.0.1:${mapperPort}`,
+    );
   });
 
   it("joins a mapper that is already answering, and leaves it running", async () => {
     const mapperPort = await freePort();
     const mapper = await serveEpmd(mapperPort);
     try {
-      const node = await startNode(configuredWith({ port: mapperPort, start: "auto" }), {
-        host: "127.0.0.1",
-        port: 0,
-      });
+      const node = await joinedTo({ port: mapperPort, start: "auto" });
       expect(mapper.find("me")).toBe(node.port);
 
       await node.close();
       // Not this runtime's to close: another process may have started it, and the nodes of that host share it.
       expect(await mapperAnswers("127.0.0.1", mapperPort)).toBe(true);
+    } finally {
+      await mapper.close();
+    }
+  });
+
+  it("forgets the name a node registered when that node goes", async () => {
+    const mapperPort = await freePort();
+    const mapper = await serveEpmd(mapperPort);
+    try {
+      const node = await joinedTo({ port: mapperPort, start: "auto" });
+      expect(mapper.find("me")).toBe(node.port);
+
+      await node.close();
+      // A registration carries no acknowledgement: the mapper learns of its end from a socket, a turn after the close.
+      expect(await forgotten(mapper, "me")).toBe(true);
     } finally {
       await mapper.close();
     }

@@ -10,8 +10,6 @@
  * It serves until stopped: ^C is how it ends.
  */
 
-import { randomBytes } from "node:crypto";
-
 import { makeCluster } from "../src/cluster.js";
 import { startNode } from "../src/node.js";
 import { Answerer } from "./answerer.js";
@@ -41,15 +39,9 @@ async function main(): Promise<void> {
   const port = Number(flag(argv, "port") ?? "0");
   const served = localPart(self);
 
-  const cluster = makeCluster({
-    name: "demo",
-    self,
-    cookie,
-    creation: randomBytes(4).readUInt32BE(0) || 1,
-    // Nobody has to set a mapper up first: this node answers on its own host when none does.
-    epmd: { start: "auto" },
-  });
-  const node = await startNode(cluster, { host, port });
+  // Nobody has to set a mapper up first: this node answers on its own host when none does.
+  makeCluster({ epmd: { start: "auto" } });
+  const node = await startNode({ self, cookie, host, port });
   // One process, served under this node's name and reachable by its pid: what a peer addresses arrives there.
   const answerer = await Answerer.spawn(undefined);
   node.registerProcess(served, answerer);

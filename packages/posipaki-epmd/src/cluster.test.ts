@@ -1,4 +1,4 @@
-// ── a cluster: the configuration a node runs from, and the grammar of a name ─
+// ── a cluster: the name a node is reached in, and the grammar of a name ─────
 //
 // Nothing here has a runtime: what a reference is, how a joined name is spelled, and the one default a cluster carries
 // are the whole of the file.
@@ -21,9 +21,8 @@ describe("a node's name", () => {
 });
 
 describe("a cluster's configuration", () => {
-  it("is called default until a caller names it, and is otherwise what it was given", () => {
-    const made = makeCluster({ self: "me@127.0.0.1", cookie: "pocookie", creation: 7 });
-    expect(made.name).toBe(DEFAULT_CLUSTER);
-    expect(made).toMatchObject({ self: "me@127.0.0.1", cookie: "pocookie", creation: 7 });
+  it("is called default until a caller names it, and is what it was given otherwise", () => {
+    expect(makeCluster({}).name).toBe(DEFAULT_CLUSTER);
+    expect(makeCluster({ name: "test" }).name).toBe("test");
   });
 });

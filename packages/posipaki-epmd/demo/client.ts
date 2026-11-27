@@ -10,11 +10,9 @@
  * The cookie is what `erl` would use: `~/.erlang.cookie`, written on the first run when there is none, and `--cookie`
  * when the run wants another one.
  *
- * The cluster is the only thing this file sets up; everything after it is the `Cli` actor, which forks the proxy as
+ * The node is the only thing this file sets up; everything after it is the `Cli` actor, which forks the proxy as
  * its child and ends when the answer arrives.
  */
-
-import { randomBytes } from "node:crypto";
 
 import { makeCluster, nodeRef } from "../src/cluster.js";
 import { startNode } from "../src/node.js";
@@ -27,17 +25,14 @@ const TIMEOUT_MS = 10_000;
 
 async function main(argv: string[]): Promise<void> {
   const options = parseArgs(argv);
-  const cluster = makeCluster({
-    // The incarnation this side claims: the pid the CLI puts in its message carries it, and the node's answer
-    // comes back to the same one. Nobody looks this node up: it opens the connection and the answer rides back on it.
+  // A node is started even though nobody reaches this one: the connection and the pids are the node's, not a cluster's.
+  const node = await startNode({
     self: options.self,
     cookie: options.cookie,
-    creation: randomBytes(4).readUInt32BE(0) || 1,
-    timeoutMs: TIMEOUT_MS,
-    announce: false,
+    register: false,
+    connectMs: TIMEOUT_MS,
+    port: 0,
   });
-  // A node is started even though nobody reaches this one: the connection and the pids are the node's, not a cluster's.
-  const node = await startNode(cluster, { port: 0 });
 
   const cli = await Cli.spawn({
     node: nodeRef(options.node, options.host),

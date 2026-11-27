@@ -102,10 +102,14 @@ describe("a process of another node", () => {
   /** A real node, with the verbs a handle asks it for spied on: what is measured is what the handle chose to call. */
   async function recording() {
     const called: string[] = [];
-    const erlang = await startNode(
-      makeCluster({ self: "probe@192.168.88.27", cookie: "probe", creation: 7, announce: false }),
-      { host: "127.0.0.1", port: 0 },
-    );
+    const erlang = await startNode({
+      clusterName: "test",
+      self: "probe@192.168.88.27",
+      cookie: "probe",
+      register: false,
+      host: "127.0.0.1",
+      port: 0,
+    });
     for (const verb of ["send", "sendReg", "kill", "link"] as const) {
       vi.spyOn(erlang, verb).mockImplementation(async () => {
         called.push(verb);

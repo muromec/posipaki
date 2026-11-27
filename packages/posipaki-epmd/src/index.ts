@@ -60,6 +60,7 @@ export { listen, type Listener, type ListenerHandlers, type ListenOptions } from
 
 export {
   DEFAULT_CLUSTER,
+  clusterNamed,
   makeCluster,
   nodeName,
   nodeRef,
