@@ -567,7 +567,15 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
     const asked = addressFor({ pname: `call:${nextRef}`, id: Symbol("call") });
     nextRef += 1;
     const answer = new Promise<Term | null>((settle) => asking.set(asked.id, { settle, messages: where.messages }));
-    const request = tuple(atom("call"), atom(call.module), atom(call.function), forWire(list(...call.args), pidOf));
+    // `{call, Module, Function, Args, GroupLeader}`: the caller is the group leader, as `rpc:call` has it, so a call
+    // that prints sends its io to this side, where an address with no process drops it.
+    const request = tuple(
+      atom("call"),
+      atom(call.module),
+      atom(call.function),
+      forWire(list(...call.args), pidOf),
+      asked,
+    );
     try {
       await where.messages.send({
         kind: "message",
@@ -583,9 +591,9 @@ export async function startNode(cluster: Cluster, options: NodeOptions = {}): Pr
       );
       if (said === null) throw new Error(`the connection to ${ref.node}@${ref.host} went before it answered`);
       const replied =
-        said.kind === "tuple" && said.items.length === 3 && said.items[0]?.kind === "atom" && said.items[0].name === "rex";
-      if (!replied) throw new Error(`${ref.node}@${ref.host} answered ${render(said)}, and an RPC answers {rex, From, Reply}`);
-      return forHere(said.items[2] ?? atom(""), {
+        said.kind === "tuple" && said.items.length === 2 && said.items[0]?.kind === "atom" && said.items[0].name === "rex";
+      if (!replied) throw new Error(`${ref.node}@${ref.host} answered ${render(said)}, and an RPC answers {rex, Reply}`);
+      return forHere(said.items[1] ?? atom(""), {
         here: (pid) => reach.processOf(pid),
         there: (pid) => processAt(pid, reach),
       });
