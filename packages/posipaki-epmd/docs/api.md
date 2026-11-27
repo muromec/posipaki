@@ -73,9 +73,15 @@ const peer = await this.fork(makeErlangRef({ node: where, process: "watcher" }))
 await peer.send({ type: "ETF_RAW", body: tuple(processTerm(this.self), binary(Buffer.from("hi"))) });
 ```
 
-`ErlangProcess` is the one shallow ref: an address — a pid, or a name its node registered — and `send`, `monitor`, `kill`
-and `link(process)`. `wait()` is `monitor().ended`. A name carries no sender, so `send` takes the process sending, and a
-name cannot be exited or linked: those controls carry pids.
+Two handles, split where the wire is:
+
+| | has | verbs |
+| --- | --- | --- |
+| `ErlangProcess` | a pid | `send(body)` (`{2}`, no sender), `monitor`, `kill`, `link(process)`, `wait` |
+| `ErlangNamedProcess` | a name its node registered | `send(body, from)` (`{6}` names its sender), `monitor` (`{19}` takes a name) |
+
+A name has no pid, so it is not exited and not linked: `{3}` and `{1}` carry pids. Killing by name needs the pid first, and
+nothing on this side asks a node where a name leads — `whereis` is a round trip this wire does not have.
 
 ## What this deletes
 

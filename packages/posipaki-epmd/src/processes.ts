@@ -52,7 +52,7 @@ function isRemote(term: VisibleTerm): term is RemoteInTerm {
 /** The same term with every process replaced by the address `pidOf` gives it. */
 export function forWire(term: VisibleTerm, pidOf: (process: AnyProcess) => PidTerm): Term {
   if (isProcess(term)) return pidOf(term.handle);
-  if (isRemote(term)) return wirePidOf(term.process.address);
+  if (isRemote(term)) return term.process.pid;
   switch (term.kind) {
     case "tuple":
       return { kind: "tuple", items: term.items.map((item) => forWire(item, pidOf)) };
@@ -108,7 +108,7 @@ export function forHere(term: Term, readers: Readers): VisibleTerm {
 /** A term as one line, with a process named as what it is rather than as an address. */
 export function show(term: VisibleTerm): string {
   if (term.kind === "process") return `#process<${term.handle.pname}>`;
-  if (term.kind === "remote") return `#remote<${describe(term.process.address)}>`;
+  if (term.kind === "remote") return `#remote<${describe(term.process)}>`;
   switch (term.kind) {
     case "tuple":
       return `{${term.items.map(show).join(", ")}}`;
@@ -154,19 +154,14 @@ export interface Reach {
 }
 
 /**
- * A process on another node: an address and the verbs the wire has for it.
+ * A process on another node, by the pid it has.
  *
- * A pid is what a term carries and what an exit names. A registered name is how a node is asked for a process nobody
- * handed out an address for, and it carries no sender — a message to one says who sent it, so `send` takes the process.
+ * A pid is what a term carries and what an exit or a link names, so every verb here writes one.
  */
 export interface ErlangProcess {
-  readonly address: Address;
-  /**
-   * Who a term says sent it: a process of this side, or one over there whose pid this side writes as the sender.
-   *
-   * A name is not a sender — the `{6}` control carries a pid — so an address without one is refused where it is written.
-   */
-  send(body: VisibleTerm, from?: TermSender): Promise<void>;
+  readonly pid: PidTerm;
+  /** One term to it: `{2, '', To}` carries no sender. */
+  send(body: VisibleTerm): Promise<void>;
   /** A watch on it: settles with the reason it ended and never rejects. Nothing is owed the other way. */
   monitor(): Promise<Watch>;
   /** Ends it with `kill`. The wire wants a sender, and this side mints one. */
@@ -177,85 +172,67 @@ export interface ErlangProcess {
   wait(): Promise<VisibleTerm>;
 }
 
-/** Where a process over there is: the pid a term carries, or the name a node registered it under. */
-export type Address =
-  | { readonly kind: "pid"; readonly pid: PidTerm }
-  | { readonly kind: "name"; readonly ref: NodeRef; readonly name: string };
+/**
+ * A process on another node, by the name its node registered.
+ *
+ * A name is written into `{6}` and `{19}` as it stands, and the node holding it resolves it when the message lands. It has
+ * no pid, so nothing here exits it, links it, or writes it as a sender.
+ */
+export interface ErlangNamedProcess {
+  /** The node that holds the name. */
+  readonly ref: NodeRef;
+  readonly name: string;
+  /** One term to the name: `{6, From, '', Name}` carries the process sending it. */
+  send(body: VisibleTerm, from: TermSender): Promise<void>;
+  /** A watch on the name. `{19}` may carry a name, and the answer names the pid it resolved to. */
+  monitor(): Promise<Watch>;
+}
 
 /** A sender a term may name: a process of this side, or one over there. */
 export type TermSender = AnyProcess | ErlangProcess;
 
-/** The pid an address names, or null for a name: only a pid fits in a term, and only a pid is exited or linked. */
-function pidOfAddress(address: Address): PidTerm | null {
-  return address.kind === "pid" ? address.pid : null;
-}
-
-/**
- * The pid a `{6}` writes as its sender.
- *
- * An address over there supplies its own pid, which is how a node relays a term on another node's behalf. A name has no
- * pid to write, and a process of this side is minted and served by `pidOf`.
- */
+/** The pid a `{6}` writes as its sender: one over there is relayed as it stands, a process of this side is minted. */
 export function senderPidOf(from: TermSender, pidOf: (process: AnyProcess) => PidTerm): PidTerm {
-  if (!("address" in from)) return pidOf(from);
-  if (from.address.kind === "pid") return from.address.pid;
-  throw new Error(`${from.address.name} is a registered name, and a sender is a pid: \`{6, From, '', Name}\` carries one`);
+  return "pname" in from ? pidOf(from) : from.pid;
 }
 
-/** The pid a walk writes, or a refusal: a name has no place in a term. */
-function wirePidOf(address: Address): PidTerm {
-  if (address.kind === "pid") return address.pid;
-  throw new Error(`${address.name} is a registered name, and a term carries addresses: a pid has one`);
-}
-
-/** A process on another node, by the address it was found at. */
-export function erlangProcess(address: Address, reach: Reach): ErlangProcess {
-  const watch = (): Promise<Watch> =>
-    address.kind === "pid" ? reach.watch(address.pid) : reach.watchName(address.ref, address.name);
+/** A process of another node, by the pid it has. */
+export function processAt(pid: PidTerm, reach: Reach): ErlangProcess {
+  const watch = (): Promise<Watch> => reach.watch(pid);
   return {
-    address,
-    async send(body, from) {
-      if (address.kind === "pid") {
-        await reach.send(address.pid, forWire(body, (handle) => reach.pidOf(handle)));
-        return;
-      }
-      // `{6, From, '', Name}` names its sender, unlike `{2, '', To}`: a name-addressed send is one a process makes.
-      if (from === undefined) {
-        throw new Error(`a message to ${address.name} must say who sent it: \`{6, From, '', Name}\` carries a sender`);
-      }
-      await reach.sendReg(address.name, address.ref, forWire(body, (handle) => reach.pidOf(handle)), from);
+    pid,
+    async send(body) {
+      await reach.send(pid, forWire(body, (handle) => reach.pidOf(handle)));
     },
     monitor: watch,
     async kill() {
-      const pid = pidOfAddress(address);
-      if (pid === null) throw new Error(`a name cannot be exited: \`{3, From, To, Reason}\` carries a pid`);
       await reach.kill(pid);
     },
     async link(process) {
-      const pid = pidOfAddress(address);
-      if (pid === null) throw new Error(`a name cannot be linked: \`{1, From, To}\` carries a pid`);
       await reach.link(reach.pidOf(process), pid);
     },
     async wait() {
       return forHere(await (await watch()).ended, {
         here: (found) => reach.processOf(found),
-        there: (found) => erlangProcess({ kind: "pid", pid: found }, reach),
+        there: (found) => processAt(found, reach),
       });
     },
   };
 }
 
-/** A process of another node named by its pid. */
-export function processAt(pid: PidTerm, reach: Reach): ErlangProcess {
-  return erlangProcess({ kind: "pid", pid }, reach);
-}
-
-/** A process of another node named by the name its node registered. */
-export function processNamed(ref: NodeRef, name: string, reach: Reach): ErlangProcess {
-  return erlangProcess({ kind: "name", ref, name }, reach);
+/** A process of another node, by the name its node registered. */
+export function processNamed(ref: NodeRef, name: string, reach: Reach): ErlangNamedProcess {
+  return {
+    ref,
+    name,
+    async send(body, from) {
+      await reach.sendReg(name, ref, forWire(body, (handle) => reach.pidOf(handle)), from);
+    },
+    monitor: () => reach.watchName(ref, name),
+  };
 }
 
 /** An address as one line, for a message that names one. */
-function describe(address: Address): string {
-  return address.kind === "pid" ? `${address.pid.node}.${address.pid.id}` : `${address.name}@${address.ref.host}`;
+function describe(where: ErlangProcess | ErlangNamedProcess): string {
+  return "pid" in where ? `${where.pid.node}.${where.pid.id}` : `${where.name}@${where.ref.host}`;
 }

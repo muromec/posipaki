@@ -117,7 +117,7 @@ describe("a node", () => {
     const asked = heard[0];
     expect(asked?.type).toBe("ETF_RAW");
     // And the pid the term carried is a reference, not an address the process has to spell out.
-    expect(namedIn(asked?.body ?? atom(""))?.address).toEqual({ kind: "pid", pid: PEER_PID });
+    expect(namedIn(asked?.body ?? atom(""))?.pid).toEqual(PEER_PID);
   });
 
   it("sends an answer back over the connection it arrived on, to the pid the term named", async () => {

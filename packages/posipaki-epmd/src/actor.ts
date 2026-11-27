@@ -12,9 +12,16 @@
 
 import { defineActor, defineMessages, type ActorDefinition } from "posipaki";
 
-import type { NodeRef } from "./cluster.js";
+import type { NodeRef, Watch } from "./cluster.js";
 import { nodeNamed, type EtfAsked } from "./node.js";
-import { processNamed, type ErlangProcess, type Reach, type Start, type VisibleTerm } from "./processes.js";
+import {
+  processNamed,
+  type ErlangNamedProcess,
+  type ErlangProcess,
+  type Reach,
+  type Start,
+  type VisibleTerm,
+} from "./processes.js";
 
 /** Where a process on another node is: the node, and the name that node registered it under. */
 export interface ErlangAddress {
@@ -32,7 +39,7 @@ export interface ErlangFactory {
 /** A process on another node, and the node that reaches it. */
 export interface ErlangFound {
   readonly reach: Reach;
-  readonly far: ErlangProcess;
+  readonly far: ErlangProcess | ErlangNamedProcess;
 }
 
 /** What one of these actors is built from: a name for the tree, and how to find the process it stands for. */
@@ -42,12 +49,12 @@ export interface ErlangSpec<Args> {
   find(args: Args): ErlangFound | Promise<ErlangFound>;
 }
 
-/** What a parent reads of one: where the process it stands for is. */
+/** What a parent reads of one: the process or the name it stands for. */
 export interface ErlangPublic {
-  readonly far: ErlangProcess["address"];
+  readonly far: ErlangProcess | ErlangNamedProcess;
 }
 
-type ErlangState = { public: ErlangPublic; private: { far: ErlangProcess } };
+type ErlangState = { public: ErlangPublic; private: { far: ErlangProcess | ErlangNamedProcess } };
 
 /**
  * An actor over one process on another node.
@@ -67,14 +74,21 @@ export function erlangActor<Args>(
       const { reach, far } = await spec.find(args);
       // An address of this side: a send to a registered name says who sent it, and this is the pid that says it.
       reach.pidOf(this.self);
-      // It stands for a process: when that process ends, so does this one, with the same reason.
-      void far.wait().then((reason) => this.exit(reason));
-      return { public: { far: far.address }, private: { far } };
+      // It stands for a process: when that process ends, so does this one, with the same reason. A name ends with the
+      // process holding it, and the watch on a name answers the same way.
+      void far
+        .monitor()
+        .then((watch: Watch) => watch.ended)
+        .then((reason: VisibleTerm) => this.exit(reason));
+      return { public: { far }, private: { far } };
     },
 
     handlers: {
       async ETF_RAW(asked: EtfAsked) {
-        await this.state.private.far.send(asked.body, this.self);
+        const far = this.state.private.far;
+        // `{6}` names its sender and `{2}` has no slot for one: which verb goes out depends on what this stands for.
+        if ("pid" in far) await far.send(asked.body);
+        else await far.send(asked.body, this.self);
       },
     },
   });

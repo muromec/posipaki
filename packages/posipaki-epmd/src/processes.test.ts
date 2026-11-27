@@ -43,7 +43,7 @@ const pidOf = (process: AnyProcess): PidTerm => ({ ...OURS_PID, id: process.id =
 
 /** A process on the node, as a caller would be handed one. */
 const peer = (address: PidTerm): ErlangProcess => ({
-  address: { kind: "pid", pid: address },
+  pid: address,
   send: async () => undefined,
   monitor: () => new Promise(() => undefined),
   kill: async () => undefined,
@@ -119,47 +119,37 @@ describe("a process of another node", () => {
     return { reach, called };
   }
 
-  it("sends to a pid with no sender, and to a name only when one is given", async () => {
+  it("sends to a pid with no sender, and to a name with one", async () => {
     const { reach, called } = recording();
-    // A process of this side that sends: `send` and `link` take one, and a bare handle is not a process.
-    const sender = await Sender.spawn(undefined);
+    // `{2, '', To}` has no sender field, so a process is written to without one.
     await processAt(PEER_PID, reach).send(atom("hi"));
     expect(called).toEqual(["send"]);
 
-    // `{6, From, '', Name}` carries a sender, and a reference carries no process: the caller says who is sending.
+    // `{6, From, '', Name}` carries a sender, and the caller says who is sending.
+    const sender = await Sender.spawn(undefined);
     const named = processNamed(nodeRef("robot", "192.168.88.20"), "relay", reach);
-    await expect(named.send(atom("hi"))).rejects.toThrow("must say who sent it");
     await named.send(atom("hi"), sender);
     expect(called).toEqual(["send", "sendReg"]);
   });
 
-  it("exits and links a pid, and refuses to do either to a name", async () => {
+  it("exits and links a pid, and a name has neither verb", async () => {
     const { reach, called } = recording();
     await processAt(PEER_PID, reach).kill();
     const sender = await Sender.spawn(undefined);
     await processAt(PEER_PID, reach).link(sender);
     expect(called).toEqual(["kill", "link"]);
 
-    // `{3, …}` and `{1, …}` carry addresses, and a name is not one.
+    // `{3, …}` and `{1, …}` carry pids, so a name has no pid to be exited or linked by: there is nothing to refuse at
+    // runtime, and no such method on the type.
     const named = processNamed(nodeRef("robot", "192.168.88.20"), "relay", reach);
-    await expect(named.kill()).rejects.toThrow("a name cannot be exited");
-    await expect(named.link(sender)).rejects.toThrow("a name cannot be linked");
+    expect(Object.keys(named).sort()).toEqual(["monitor", "name", "ref", "send"]);
   });
 
-  it("is a name when it was found by one, and a name has no place in a term", () => {
-    const { reach } = recording();
-    const named = processNamed(nodeRef("robot", "192.168.88.20"), "relay", reach);
-    expect(() => forWire(tuple(remoteTerm(named)), pidOf)).toThrow("a term carries addresses");
-  });
-
-  it("writes a sender as a pid: one over there as it stands, a name refused, a process of this side minted", async () => {
+  it("writes a sender as a pid: one over there as it stands, a process of this side minted", async () => {
     const { reach } = recording();
     expect(senderPidOf(processAt(PEER_PID, reach), pidOf)).toEqual(PEER_PID);
 
     const sender = await Sender.spawn(undefined);
     expect(senderPidOf(sender, pidOf)).toEqual({ ...OURS_PID, id: 2 });
-
-    const named = processNamed(nodeRef("robot", "192.168.88.20"), "relay", reach);
-    expect(() => senderPidOf(named, pidOf)).toThrow("a sender is a pid");
   });
 });

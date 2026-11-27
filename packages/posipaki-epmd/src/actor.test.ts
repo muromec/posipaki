@@ -87,7 +87,8 @@ describe("a process on another node, as an actor", () => {
     opened.push(peer);
 
     expect(held).toHaveLength(1);
-    expect(peer.state).toEqual({ far: { kind: "name", ref: REF, name: "relay" } });
+    const far = peer.state?.far;
+    expect(far !== undefined && "name" in far ? far.name : null).toBe("relay");
   });
 
   it("ends when the process it stands for ends", async () => {
@@ -112,7 +113,8 @@ describe("a process on another node, as an actor", () => {
     opened.push(peer);
 
     expect(spawned).toEqual([{ module: "there", function: "there-spawner", args: [atom("one"), atom("two")] }]);
-    expect(peer.state).toEqual({ far: { kind: "pid", pid: THEIR_PID } });
+    const far = peer.state?.far;
+    expect(far !== undefined && "pid" in far ? far.pid : null).toEqual(THEIR_PID);
   });
 
   it("refuses a factory whose parameters are not the arity its name states", async () => {

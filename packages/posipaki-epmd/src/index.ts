@@ -82,7 +82,7 @@ export {
   type LocalProcess,
   type RemoteInTerm,
   type ErlangProcess,
-  type Address,
+  type ErlangNamedProcess,
   type Reach,
   type VisibleTerm,
 } from "./processes.js";
