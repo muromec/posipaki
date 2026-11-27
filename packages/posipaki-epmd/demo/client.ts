@@ -5,7 +5,10 @@
  *   erlc robot.erl
  *   erl -name robot@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:start().'
  *
- *   bun demo/client.ts 192.168.88.20 pocookie --to echo --message hi
+ *   bun demo/client.ts 192.168.88.20 --to echo --message hi
+ *
+ * The cookie is what `erl` would use: `~/.erlang.cookie`, written on the first run when there is none, and `--cookie`
+ * when the run wants another one.
  *
  * The cluster is the only thing this file sets up; everything after it is the `Cli` actor, which forks the proxy as
  * its child and ends when the answer arrives.

@@ -6,7 +6,7 @@
  *   erlc robot.erl
  *   erl -name robot@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:start().'
  *
- *   bun demo/monitored.ts 192.168.88.20 pocookie --self posipaki@192.168.88.27 --to watcher
+ *   bun demo/monitored.ts 192.168.88.20 --self posipaki@192.168.88.27 --to watcher
  *
  * The term carries this side's pid and the name it is served under. The other side watches both, says <<"exit">>, and
  * prints the two answers. This side prints what it heard and stops; its answers go out before the node closes, which is
@@ -18,6 +18,7 @@ import { randomBytes } from "node:crypto";
 import { defineActor, defineMessages } from "posipaki";
 
 import { makeCluster, nodeRef } from "../src/cluster.js";
+import { cookieOf } from "./settings.js";
 import { startNode, type EtfTerm } from "../src/node.js";
 import { makeErlangConnect } from "../src/actor.js";
 import { show, type VisibleTerm } from "../src/processes.js";
@@ -49,13 +50,14 @@ function wordIn(body: VisibleTerm): string | null {
 }
 
 async function main(argv: string[]): Promise<void> {
+  // The positional after the host is not a cookie: what `erl` reads is the default, and --cookie is the knob.
   const host = argv[0];
-  const cookie = argv[1];
-  if (host === undefined || cookie === undefined) {
+  if (host === undefined) {
     throw new Error(
-      "usage: bun demo/monitored.ts <host> <cookie> [--self posipaki@<host>] [--node robot] [--to watcher]",
+      "usage: bun demo/monitored.ts <host> [--cookie <cookie>] [--self posipaki@<host>] [--node robot] [--to watcher]",
     );
   }
+  const cookie = cookieOf(flag(argv, "cookie", undefined));
   const nodeName = flag(argv, "node", "robot");
   const to = flag(argv, "to", "watcher");
   const self = flag(argv, "self", `posipaki@${host}`);

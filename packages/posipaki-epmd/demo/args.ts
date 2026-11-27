@@ -1,8 +1,10 @@
 // ── the command line ────────────────────────────────────────────────────────
 //
-// Two positionals and four flags, and nothing else. A flag this program does not have is refused by name, and so is
-// a third positional: a typo that is ignored is a run that did something other than what was asked, which is the
-// expensive way to find out.
+// One positional and five flags, and nothing else. A flag this program does not have is refused by name, and so is a
+// second positional: a typo that is ignored is a run that did something other than what was asked, which is the expensive
+// way to find out.
+
+import { cookieOf } from "./settings.js";
 
 export interface Options {
   readonly host: string;
@@ -19,10 +21,10 @@ export interface Options {
 
 /** What a command line that cannot be read is told. */
 export const USAGE =
-  "usage: posipaki-epmd <host> <cookie> [--node robot] [--to robot] [--self posipaki@<host>] [--message robot]";
+  "usage: posipaki-epmd <host> [--cookie <cookie>] [--node robot] [--to robot] [--self posipaki@<host>] [--message robot]";
 
 /** The flags this program has. */
-const FLAGS: readonly string[] = ["node", "to", "self", "message"];
+const FLAGS: readonly string[] = ["cookie", "node", "to", "self", "message"];
 
 /** A command line as the facts a run needs, or a sentence saying what is wrong with it. */
 export function parseArgs(argv: string[]): Options {
@@ -44,14 +46,16 @@ export function parseArgs(argv: string[]): Options {
     index += 1;
   }
 
-  const [host, cookie, ...rest] = positional;
-  if (host === undefined || cookie === undefined) throw new Error(USAGE);
-  if (rest.length > 0) throw new Error(`unexpected after the cookie: ${rest.join(" ")}\n${USAGE}`);
+  const [host, ...rest] = positional;
+  if (host === undefined) throw new Error(USAGE);
+  if (rest.length > 0) throw new Error(`unexpected after the host: ${rest.join(" ")}\n${USAGE}`);
 
   const node = flags.node ?? "robot";
   return {
     host,
-    cookie,
+    // The cookie is not an argument unless a run insists: `erl` reads the same file, and a value on a command line is a
+    // value in `ps`.
+    cookie: cookieOf(flags.cookie),
     node,
     to: flags.to ?? node,
     // A short node name carries no dot, so the default takes the peer's host: a node started with -sname refuses a
