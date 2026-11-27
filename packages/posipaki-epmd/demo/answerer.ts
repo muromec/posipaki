@@ -3,8 +3,9 @@
 // process the term itself names — not the one that asked — which is what makes an answer from one node reach a second
 // one. It never sees an address.
 //
-// It answers one word. Two of these facing each other would otherwise answer each other for ever, each term naming the
-// other side: the same rule `robot.erl` keeps, and for the same reason.
+// The words it knows are a table: `hi` is answered, and `exit` ends the process, so a peer watching it reads a DOWN.
+// Two of these facing each other would otherwise answer each other for ever, each term naming the other side: the same
+// rule `robot.erl` keeps, and for the same reason.
 
 import { defineActor, defineMessages } from "posipaki";
 
@@ -26,7 +27,16 @@ function namedIn(body: VisibleTerm): ErlangProcess | null {
   return first?.kind === "remote" ? first.process : null;
 }
 
-/** Says what it was asked, and answers the process the term names when the word is `hi`. */
+/** A word this process knows: the answer it sends, or the reason it ends with. */
+type Word = { readonly answer: string } | { readonly ends: string };
+
+/** The words it knows, by what a term carries. A word not here is printed and left alone. */
+const dispatch: Record<string, Word> = {
+  hi: { answer: process.env.POSIPAKI_WORDS ?? "answering" },
+  exit: { ends: "asked to" },
+};
+
+/** Says what it was asked, and does what the word asks: answers the process the term names, or ends. */
 export const Answerer = defineActor({
   name: "answerer",
   inMessages: defineMessages<EtfTerm>(),
@@ -35,17 +45,23 @@ export const Answerer = defineActor({
     async ETF_RAW(asked: EtfTerm) {
       console.log(`  asked: ${show(asked.body)}`);
       const to = namedIn(asked.body);
-      if (to === null) {
-        console.log("  and nothing to answer: the term names no process");
+      const word = wordIn(asked.body);
+      if (to === null || word === null) {
+        console.log("  and nothing to answer: the term names no process, or carries no word");
         return;
       }
-      if (wordIn(asked.body) !== "hi") {
-        console.log("  and nothing to answer: only a hi is answered");
+      const known = dispatch[word];
+      if (known === undefined) {
+        console.log(`  and nothing to answer: ${word} is not a word this process knows`);
         return;
       }
-      const words = process.env.POSIPAKI_WORDS ?? "answering";
+      if ("ends" in known) {
+        console.log(`  ${word}: this process ends, and a peer watching it is told why`);
+        this.exit(known.ends);
+        return;
+      }
       // The address is the term's, and answering is a send of this actor's own: nothing here emits.
-      await to.send(tuple(processTerm(this.self), binary(Buffer.from(words, "utf8")), atom("done")));
+      await to.send(tuple(processTerm(this.self), binary(Buffer.from(known.answer, "utf8")), atom("done")));
     },
   },
 });

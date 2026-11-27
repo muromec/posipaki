@@ -1,8 +1,9 @@
 #!/usr/bin/env bun
 /**
- * A node of this host that answers: it starts a mapper when none answers, serves one process under its own name, prints
- * every term that process is handed, and answers the process the term names. The answer is a send of the actor's own —
- * a process this node holds is never given a wire to write to.
+ * A node of this host that answers: it starts a mapper when none answers, serves one process under its own name, and
+ * prints every term that process is handed. The word in a term decides what it does: `hi` answers the process the term
+ * names, `exit` ends the process, so a peer watching it reads a DOWN. An answer is a send of the actor's own: a served
+ * process is never given a wire to write to.
  *
  *   bun demo/node.ts                                   # posipaki@<this host>, cookie from ~/.erlang.cookie
  *   bun demo/node.ts --name probe@10.0.0.2 --cookie s3cret
