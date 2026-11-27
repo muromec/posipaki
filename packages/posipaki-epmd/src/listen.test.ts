@@ -23,12 +23,17 @@ afterEach(async () => {
 /** The default for a callback nobody has given yet: a test's promise, and a run that never answers it. */
 const nothing = (): void => undefined;
 
-async function node(): Promise<{ listener: Listener; peers: Peer[]; refused: string[]; said: Promise<string> }> {
+async function node(): Promise<{ listener: Listener; peers: Peer[]; refused: string[]; said: Promise<string>; refusedOnce: Promise<string> }> {
   const peers: Peer[] = [];
   const refused: string[] = [];
   let heard: (text: string) => void = nothing;
+  let turnedAway: (text: string) => void = nothing;
   const said = new Promise<string>((resolve) => {
     heard = resolve;
+  });
+  // The refusal is the trigger: a case waits for this side to say why, not for a clock.
+  const refusedOnce = new Promise<string>((resolve) => {
+    turnedAway = resolve;
   });
   const listener = await listen(
     { self: "posipaki@127.0.0.1", cookie: COOKIE, creation: 99, timeoutMs: 2_000 },
@@ -42,11 +47,12 @@ async function node(): Promise<{ listener: Listener; peers: Peer[]; refused: str
       },
       onRefused(error: Error) {
         refused.push(error.message);
+        turnedAway(error.message);
       },
     },
   );
   listeners.push(listener);
-  return { listener, peers, refused, said };
+  return { listener, peers, refused, said, refusedOnce };
 }
 
 describe("listen", () => {
@@ -73,7 +79,7 @@ describe("listen", () => {
   });
 
   it("refuses a connection that does not know the cookie, and says so", async () => {
-    const { listener, refused } = await node();
+    const { listener, refusedOnce } = await node();
     await expect(
       open(listener.port, {
         host: "127.0.0.1",
@@ -84,8 +90,7 @@ describe("listen", () => {
         timeoutMs: 400,
       }),
     ).rejects.toThrow(/does not know this cookie/);
-    // The accepting side names the same fact from its end.
-    await new Promise((resolve) => setTimeout(resolve, 200));
-    expect(refused.join(" ")).toContain("does not know the cookie");
+    // The accepting side names the same fact from its end, and that refusal is the trigger.
+    expect(await refusedOnce).toContain("does not know the cookie");
   });
 });

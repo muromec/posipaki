@@ -24,6 +24,7 @@ const PEER_PID = pid(PEER, 42, 0, 9);
 
 /** What the served process heard, in the order it heard it. */
 const heard: EtfTerm[] = [];
+const heardArrived = arriving(heard);
 
 /** The process a term names, if it names one: `{Pid, …}` is how a peer says who to answer. */
 function namedIn(body: VisibleTerm): ErlangProcess | undefined {
@@ -40,6 +41,7 @@ const Answerer = defineActor({
   handlers: {
     async ETF_RAW(asked: EtfTerm) {
       heard.push(asked);
+      heardArrived.wake();
       const to = namedIn(asked.body);
       if (to === undefined) return;
       const words = process.env.POSIPAKI_WORDS ?? "done";
@@ -67,6 +69,7 @@ interface Serving {
   readonly answerer: Awaited<ReturnType<typeof Answerer.spawn>>;
   readonly peer: Channel<WireMessage>;
   readonly frames: WireMessage[];
+  readonly arrived: { wake(): void; reach(count: number): Promise<void>; when(found: () => boolean): Promise<void> };
 }
 
 const running: Array<() => Promise<unknown>> = [];
@@ -90,19 +93,31 @@ async function serving(): Promise<Serving> {
   node.registerProcess("answer", answerer);
   const opened = await open(node.port, { host: "127.0.0.1", node: "probe", cookie: COOKIE, self: PEER, creation: 9 });
   const frames: WireMessage[] = [];
-  opened.messages.onFrame((said) => frames.push(said));
+  const arrived = arriving(frames);
+  opened.messages.onFrame((said) => {
+    frames.push(said);
+    arrived.wake();
+  });
   running.push(async () => node.close());
   running.push(async () => answerer.stop());
-  return { node, answerer, peer: opened.messages, frames };
+  return { node, answerer, peer: opened.messages, frames, arrived };
 }
 
-/** Waits for a fact the test can see, and says what it waited for when it does not come. */
-async function until(fact: () => boolean, what: string, bound = 3000): Promise<void> {
-  const started = Date.now();
-  while (!fact()) {
-    if (Date.now() - started > bound) throw new Error(`waited ${bound}ms for ${what}`);
-    await new Promise((resolve) => setTimeout(resolve, 5));
-  }
+/** Waits until a list has what the case expects, without reading a clock. */
+function arriving<T>(items: T[]) {
+  let woken: Array<() => void> = [];
+  return {
+    wake(): void {
+      for (const call of woken.splice(0)) call();
+    },
+    async reach(count: number): Promise<void> {
+      while (items.length < count) await new Promise<void>((call) => woken.push(call));
+    },
+    /** Waits until one of the items satisfies `found`, re-checked on every arrival. */
+    async when(found: () => boolean): Promise<void> {
+      while (!found()) await new Promise<void>((call) => woken.push(call));
+    },
+  };
 }
 
 describe("a node", () => {
@@ -113,7 +128,7 @@ describe("a node", () => {
       control: { kind: "regSend", from: PEER_PID, to: "answer" },
       payload: tuple(PEER_PID, binary(Buffer.from("hi", "utf8"))),
     });
-    await until(() => heard.length === 1, "the term to reach the process");
+    await heardArrived.reach(1);
 
     const asked = heard[0];
     expect(asked?.type).toBe("ETF_RAW");
@@ -122,13 +137,13 @@ describe("a node", () => {
   });
 
   it("sends an answer back over the connection it arrived on, to the pid the term named", async () => {
-    const { peer, frames } = await serving();
+    const { peer, frames, arrived } = await serving();
     await peer.send({
       kind: "message",
       control: { kind: "regSend", from: PEER_PID, to: "answer" },
       payload: tuple(PEER_PID, binary(Buffer.from("hi", "utf8"))),
     });
-    await until(() => frames.length === 1, "the answer to come back");
+    await arrived.reach(1);
 
     const answer = frames[0];
     expect(answer?.kind).toBe("message");
@@ -140,28 +155,32 @@ describe("a node", () => {
   });
 
   it("reaches the same process by the pid the cluster minted for it, and that send carries no sender", async () => {
-    const { node, answerer, peer, frames } = await serving();
+    const { node, answerer, peer, frames, arrived } = await serving();
     const address = node.pidOf(answerer);
     await peer.send({
       kind: "message",
       control: { kind: "send", to: address },
       payload: tuple(PEER_PID, binary(Buffer.from("hi", "utf8"))),
     });
-    await until(() => frames.length === 1, "the answer to come back");
+    await arrived.reach(1);
 
     // A send control has no sender field: the term is the only way back, and the process is told none was given.
     expect(heard[0]?.body.kind).toBe("tuple");
   });
 
   it("says an address serves nobody here, and keeps the connection", async () => {
-    const { peer, frames } = await serving();
-    const complained = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const { peer, frames, arrived } = await serving();
+    let said: () => void = () => undefined;
+    const complainedOnce = new Promise<void>((resolve) => {
+      said = resolve;
+    });
+    const complained = vi.spyOn(console, "error").mockImplementation(() => said());
     await peer.send({
       kind: "message",
       control: { kind: "regSend", from: PEER_PID, to: "nobody" },
       payload: atom("hi"),
     });
-    await until(() => complained.mock.calls.length === 1, "the complaint");
+    await complainedOnce;
     expect(String(complained.mock.calls[0]?.[0])).toContain("which serves nobody here");
 
     // The same connection still answers.
@@ -170,19 +189,25 @@ describe("a node", () => {
       control: { kind: "regSend", from: PEER_PID, to: "answer" },
       payload: tuple(PEER_PID, atom("hi")),
     });
-    await until(() => frames.length === 1, "the answer after the complaint");
+    await arrived.reach(1);
   });
 
   it("stops serving a process that ends", async () => {
     const { answerer, peer } = await serving();
-    const complained = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    let said: () => void = () => undefined;
+    const complainedOnce = new Promise<void>((resolve) => {
+      said = resolve;
+    });
+    const complained = vi.spyOn(console, "error").mockImplementation((...written: unknown[]) => {
+      if (String(written[0]).includes("serves nobody here")) said();
+    });
     await answerer.stop();
     await peer.send({
       kind: "message",
       control: { kind: "regSend", from: PEER_PID, to: "answer" },
       payload: atom("hi"),
     });
-    await until(() => complained.mock.calls.some((call) => String(call[0]).includes("serves nobody here")), "the name to be free");
+    await complainedOnce;
     expect(heard).toHaveLength(0);
   });
 
@@ -247,15 +272,15 @@ describe("a node", () => {
     });
 
   it("reports a watched process's end to the pid that asked, with the ref it minted", async () => {
-    const { node, answerer, peer, frames } = await serving();
+    const { node, answerer, peer, frames, arrived } = await serving();
     const address = node.pidOf(answerer);
     const ref = reference(PEER, 9);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     // Frames on one connection are read in the order they arrive, so an answer proves the watch was recorded.
     await beat(peer);
-    await until(() => frames.length === 1, "the watch to be read");
+    await arrived.reach(1);
     await answerer.stop();
-    await until(() => frames.length === 2, "the ending to be reported");
+    await arrived.reach(2);
 
     expect(frames[1]?.kind === "message" && frames[1].control).toEqual({
       kind: "monitorExit",
@@ -267,13 +292,13 @@ describe("a node", () => {
   });
 
   it("answers a watch set on a name with that name, not the pid it resolved to", async () => {
-    const { answerer, peer, frames } = await serving();
+    const { answerer, peer, frames, arrived } = await serving();
     const ref = reference(PEER, 10);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: atom("answer"), ref }, payload: null });
     await beat(peer);
-    await until(() => frames.length === 1, "the watch to be read");
+    await arrived.reach(1);
     await answerer.stop();
-    await until(() => frames.length === 2, "the ending to be reported");
+    await arrived.reach(2);
 
     // A name is what the peer matched this answer against, so a name is what comes back.
     expect(frames[1]?.kind === "message" && frames[1].control).toEqual({
@@ -286,10 +311,10 @@ describe("a node", () => {
   });
 
   it("answers noproc at once for an address that serves nobody, and keeps the connection", async () => {
-    const { peer, frames } = await serving();
+    const { peer, frames, arrived } = await serving();
     const ref = reference(PEER, 11);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: atom("nobody"), ref }, payload: null });
-    await until(() => frames.length === 1, "the answer to a watch on nobody");
+    await arrived.reach(1);
 
     expect(frames[0]?.kind === "message" && frames[0].control).toEqual({
       kind: "monitorExit",
@@ -301,32 +326,44 @@ describe("a node", () => {
 
     // The connection is still the peer's: an address nobody answers says nothing about the wire.
     await beat(peer);
-    await until(() => heard.length === 1, "the term that came after");
+    await heardArrived.reach(1);
   });
 
   it("forgets a watch the peer cancelled: the process ends and nothing is said about it", async () => {
-    const { node, answerer, peer, frames } = await serving();
+    const { node, answerer, peer, frames, arrived } = await serving();
     const address = node.pidOf(answerer);
     const ref = reference(PEER, 12);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     await beat(peer);
-    await until(() => frames.length === 1, "the watch to be read");
+    await arrived.reach(1);
     await peer.send({ kind: "message", control: { kind: "demonitor", from: PEER_PID, to: address, ref }, payload: null });
     await beat(peer);
-    await until(() => frames.length === 2, "the cancel to be read");
+    await arrived.reach(2);
     await answerer.stop();
-    await new Promise((resolve) => setTimeout(resolve, 50));
-
-    expect(frames).toHaveLength(2);
+    // A watch set on the same address now is answered `noproc` at once: that frame proves the node has worked through
+    // what came before it, so a monitor-exit for the cancelled ref would already have been written.
+    const later = reference(PEER, 13);
+    await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref: later }, payload: null });
+    await arrived.reach(3);
+    // The only thing said afterwards is that answer, and it names the new ref: the cancelled one heard nothing.
+    expect(frames).toHaveLength(3);
+    const answered = frames[2];
+    expect(answered?.kind === "message" && answered.control).toEqual({
+      kind: "monitorExit",
+      from: address,
+      to: PEER_PID,
+      ref: later,
+      reason: atom("noproc"),
+    });
   });
 
   it("lets the ending it reported finish before the connection it goes over is let go", async () => {
-    const { node, answerer, peer, frames } = await serving();
+    const { node, answerer, peer, frames, arrived } = await serving();
     const address = node.pidOf(answerer);
     const ref = reference(PEER, 13);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     await beat(peer);
-    await until(() => frames.length === 1, "the watch to be read");
+    await arrived.reach(1);
     // The end and the close happen in one turn: the peer that watched the process reads why it ended, and
     // `noconnection` would be a different fact.
     await answerer.stop();
@@ -335,7 +372,7 @@ describe("a node", () => {
   });
 
   it("answers a watch with the failure a process died of, not with normal", async () => {
-    const { node, peer, frames } = await serving();
+    const { node, peer, frames, arrived } = await serving();
     const crasher = await Crasher.spawn(undefined);
     node.registerProcess("crash", crasher);
     running.push(async () => crasher.stop());
@@ -343,11 +380,11 @@ describe("a node", () => {
     const ref = reference(PEER, 14);
     await peer.send({ kind: "message", control: { kind: "monitor", from: PEER_PID, to: address, ref }, payload: null });
     await beat(peer);
-    await until(() => frames.length === 1, "the watch to be read");
+    await arrived.reach(1);
 
     // A send carries no sender, and that is all this needs: the term is what makes the handler throw.
     await peer.send({ kind: "message", control: { kind: "send", to: address }, payload: atom("boom") });
-    await until(() => frames.length === 2, "the ending to be reported");
+    await arrived.reach(2);
 
     expect(frames[1]?.kind === "message" && frames[1].control).toEqual({
       kind: "monitorExit",
@@ -373,7 +410,7 @@ describe("a node", () => {
   });
 
   it("leaves a process alone when the other end of a link ended normally", async () => {
-    const { node, answerer, peer, frames } = await serving();
+    const { node, answerer, peer, frames, arrived } = await serving();
     const address = node.pidOf(answerer);
     await peer.send({ kind: "message", control: { kind: "link", from: PEER_PID, to: address }, payload: null });
     await peer.send({
@@ -384,20 +421,17 @@ describe("a node", () => {
 
     // The process still answers, which is what a normal end at the other end of a link owes: nothing.
     await beat(peer);
-    await until(() => frames.length === 1, "the answer that proves the process is up");
+    await arrived.reach(1);
   });
 
   it("tells the other end of a link when a process here ends", async () => {
-    const { node, answerer, frames } = await serving();
+    const { node, answerer, frames, arrived } = await serving();
     const address = node.pidOf(answerer);
     await node.link(address, PEER_PID);
 
     await answerer.stop();
     // The peer hears the link was made, and then that this end is over: a link ends both.
-    await until(
-      () => frames.some((said) => said.kind === "message" && said.control.kind === "exit"),
-      "the exit to reach the peer",
-    );
+    await arrived.when(() => frames.some((said) => said.kind === "message" && said.control.kind === "exit"));
 
     const ended = frames.find((said) => said.kind === "message" && said.control.kind === "exit");
     expect(ended?.kind === "message" && ended.control).toEqual({
@@ -409,12 +443,12 @@ describe("a node", () => {
   });
 
   it("sends a term to a pid, and to a name with the sender the wire wants for that shape", async () => {
-    const { node, answerer, frames } = await serving();
+    const { node, answerer, frames, arrived } = await serving();
     const address = pid(PEER, 77, 0, 9);
     await node.send(address, atom("one"));
     await node.sendReg("answer", nodeRef("robot", "127.0.0.1", CLUSTER), atom("two"), answerer);
 
-    await until(() => frames.length === 2, "both terms to reach the node");
+    await arrived.reach(2);
     expect(frames[0]?.kind === "message" && frames[0].control).toEqual({ kind: "send", to: address });
     const toName = frames[1];
     expect(toName?.kind === "message" && toName.control.kind === "regSend" && toName.control.to).toBe("answer");

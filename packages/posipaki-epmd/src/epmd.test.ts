@@ -85,10 +85,18 @@ describe("serveEpmd", () => {
     expect(served.find("probe")).toBe(45_999);
 
     await registration.close();
-    await new Promise((resolve) => setTimeout(resolve, 100));
-    expect(served.find("probe")).toBeNull();
-    await expect(
-      epmdPort(await socketChannel({ host: "127.0.0.1", port: served.port }), { host: "127.0.0.1", name: "probe" }),
-    ).rejects.toThrow("does not know a node named probe");
+    // EPMD has no acknowledgement for an unregistration, so the only trigger is the mapper's own answer: this asks it
+    // again until it refuses, and a mapper that never forgot the name fails the case by the bound rather than passing.
+    const forgot = async (): Promise<string> => {
+      for (let attempt = 0; attempt < 50; attempt += 1) {
+        try {
+          await epmdPort(await socketChannel({ host: "127.0.0.1", port: served.port }), { host: "127.0.0.1", name: "probe" });
+        } catch (error) {
+          return error instanceof Error ? error.message : String(error);
+        }
+      }
+      return "the mapper still knows probe";
+    };
+    expect(await forgot()).toContain("does not know a node named probe");
   });
 });

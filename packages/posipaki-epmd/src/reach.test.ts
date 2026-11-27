@@ -250,7 +250,7 @@ describe("a watch this side sets", () => {
   });
 
   it("stops waiting when the watch is cancelled, and the process may end after that", async () => {
-    const { node, pid } = await served("answer");
+    const { node, proc, pid } = await served("answer");
     const mine = await reachAt(node.port);
     const watch = await mine.watch(pid);
     let settled = false;
@@ -260,7 +260,8 @@ describe("a watch this side sets", () => {
 
     watch.cancel();
     await mine.send(pid, atom("end"));
-    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The process ending is the trigger: after it, a watch that was cancelled still owes nothing.
+    await proc.wait();
 
     expect(settled).toBe(false);
   });
