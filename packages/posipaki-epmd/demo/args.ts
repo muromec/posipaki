@@ -21,7 +21,7 @@ export interface Options {
 
 /** What a command line that cannot be read is told. */
 export const USAGE =
-  "usage: posipaki-epmd <host> [--cookie <cookie>] [--node robot] [--to robot] [--self posipaki@<host>] [--message robot]";
+  "usage: posipaki-epmd <host> [--cookie <cookie>] [--node robot] [--to hello_echo] [--self posipaki@<host>] [--message robot]";
 
 /** The flags this program has. */
 const FLAGS: readonly string[] = ["cookie", "node", "to", "self", "message"];
@@ -57,7 +57,7 @@ export function parseArgs(argv: string[]): Options {
     // value in `ps`.
     cookie: cookieOf(flags.cookie),
     node,
-    to: flags.to ?? node,
+    to: flags.to ?? "hello_echo",
     // A short node name carries no dot, so the default takes the peer's host: a node started with -sname refuses a
     // name that looks like a long one.
     self: flags.self ?? `posipaki@${host}`,

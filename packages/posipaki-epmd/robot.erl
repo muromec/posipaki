@@ -3,7 +3,7 @@
 %%   erlc robot.erl
 %%   erl -name robot@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:start().'
 %%
-%% `robot` answers <<"hello ", Text/binary>>, `echo` answers <<"echo: ", Text/binary>>.
+%% `hello_echo` answers <<"hello ", Text/binary>>.
 %%
 %%   POSIPAKI_NODE=posipaki@192.168.88.27 \
 %%     erl -name watcher@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:watch(), halt().'
@@ -14,17 +14,20 @@
 -export([start/0, watch/0]).
 
 start() ->
-    register(robot, spawn(fun() -> loop(fun(Text) -> <<"hello ", Text/binary>> end) end)),
-    register(echo, spawn(fun() -> loop(fun(Text) -> <<"echo: ", Text/binary>> end) end)),
-    io:format("robot and echo registered on ~p~n", [node()]),
+    register(hello_echo, spawn(fun loop/0)),
+    io:format("hello_echo registered on ~p~n", [node()]),
     receive stop -> ok end.
 
-%% Answers text with the answer this name was started with.
-loop(Answer) ->
+%% Answers text with hello and the text back, and anything else with what it is not.
+loop() ->
     receive
-        {From, Text} when is_binary(Text) -> From ! Answer(Text), loop(Answer);
-        {From, _Other} -> From ! <<"not a binary">>, loop(Answer)
+        {From, Text} when is_binary(Text) -> From ! hello_echo(Text), loop();
+        {From, _Other} -> From ! <<"not a binary">>, loop()
     end.
+
+%% The answer to a text: hello, and the same text after it.
+hello_echo(Text) ->
+    <<"hello ", Text/binary>>.
 
 %% Watches the name POSIPAKI_NAME (default `posipaki`) at the node POSIPAKI_NODE names, asks the process itself `whois`
 %% for the pid it answers at, monitors that pid too, and tells it to exit. That node resolves the watch when it arrives.

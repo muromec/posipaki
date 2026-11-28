@@ -15,19 +15,19 @@ erlc robot.erl
 erl -name robot@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:start().'
 ```
 
-`robot.erl` hosts two names: `robot` answers `<<"hello ", Text>>` and `echo` answers `<<"echo: ", Text>>`. `robot:watch()`
-is the other direction, run from a node of its own — see Being watched. The node runs with `-name` rather than `-sname`: a
-short-name node refuses to connect to a name whose host is an address, and this side is addressed by one.
+`robot.erl` registers `hello_echo`, which answers `<<"hello ", Text>>`. `robot:watch()` is the other direction, run from a node of its
+own — see Being watched. The node runs with `-name` rather than `-sname`: a short-name node refuses to connect to a name whose host
+is an address, and this side is addressed by one.
 
 Then, from here:
 
 ```
-$ bun demo/client.ts 192.168.88.20 --cookie pocookie --to echo --message "through the proxy"
-echo: through the proxy
+$ bun demo/client.ts 192.168.88.20 --cookie pocookie --to hello_echo --message "through the proxy"
+hello through the proxy
 ```
 
 Options: the host is the one positional; `--cookie` (`~/.erlang.cookie` unless given), `--node` (the node's name in epmd,
-`robot`), `--to` (the name to send to on it, the node's own name unless another is given), `--self` (the node name this
+`robot`), `--to` (the name to send to on it, `hello_echo` unless another is given), `--self` (the node name this
 side claims, `posipaki@<host>`), `--message` (what to send, `robot`).
 
 ## An actor that stands for a process over there
@@ -38,7 +38,7 @@ fname })` starts a function there, with the fork's args as its parameters.
 
 ```
 const node = await startNode({ self: "probe@192.168.88.27", cookie, register: false });
-const peer = await makeErlangRef({ node: nodeRef("robot", "192.168.88.20"), process: "echo" }).spawn(undefined);
+const peer = await makeErlangRef({ node: nodeRef("robot", "192.168.88.20"), process: "hello_echo" }).spawn(undefined);
 await peer.send({ type: "ETF_RAW", body: tuple(processTerm(aProcessOfOurs), binary(text)) });
 ```
 

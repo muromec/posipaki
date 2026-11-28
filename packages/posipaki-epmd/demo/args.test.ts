@@ -13,7 +13,7 @@ describe("parseArgs", () => {
       host: "192.168.88.20",
       cookie: "pocookie",
       node: "robot",
-      to: "robot",
+      to: "hello_echo",
       self: "posipaki@192.168.88.20",
       message: "robot",
     });
@@ -24,14 +24,14 @@ describe("parseArgs", () => {
       host: "10.0.0.2",
       cookie: "pw",
       node: "probe",
-      to: "probe",
+      to: "hello_echo",
       self: "me@there",
       message: "ping",
     });
   });
 
-  it("sends to the node's own name unless another is named", () => {
-    expect(parseArgs(["10.0.0.2", "--cookie", "pw", "--node", "robot", "--to", "echo"]).to).toBe("echo");
+  it("sends to the name a run names, and to hello_echo when it names none", () => {
+    expect(parseArgs(["10.0.0.2", "--cookie", "pw", "--node", "robot", "--to", "probe"]).to).toBe("probe");
   });
 
   it("asks for what it cannot work with", () => {
