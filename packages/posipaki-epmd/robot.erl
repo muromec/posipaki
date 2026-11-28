@@ -1,18 +1,15 @@
-%% The other half of the proof: a node that hosts names, and answers what is sent to them.
+%% The Erlang side of the demo: a node that answers by name, and a watch of a posipaki node's process.
 %%
 %%   erlc robot.erl
 %%   erl -name robot@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:start().'
 %%
-%% `robot` answers <<"hello ", Text/binary>> and `echo` answers <<"echo: ", Text/binary>>.
-%%
-%% `watch/0` is the other way round, and needs nothing of the posipaki side but a node name and a cookie: it monitors the
-%% name that node serves, asks the process itself `whois` for the pid, monitors that too, and tells it to exit.
+%% `robot` answers <<"hello ", Text/binary>>, `echo` answers <<"echo: ", Text/binary>>.
 %%
 %%   POSIPAKI_NODE=posipaki@192.168.88.27 \
 %%     erl -name watcher@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:watch(), halt().'
 %%
-%% The node runs with -name rather than -sname: a short-name node refuses to connect to a name whose host is an
-%% address, and the posipaki side of this demo is addressed by one.
+%% -name rather than -sname: a short-name node refuses to connect to a name whose host is an address, and the posipaki
+%% side is addressed by one.
 -module(robot).
 -export([start/0, watch/0]).
 
@@ -22,27 +19,26 @@ start() ->
     io:format("robot and echo registered on ~p~n", [node()]),
     receive stop -> ok end.
 
-loop(Reply) ->
+%% Answers text with the answer this name was started with.
+loop(Answer) ->
     receive
-        {From, Text} when is_binary(Text) -> From ! Reply(Text), loop(Reply);
-        {From, _Other} -> From ! <<"not a binary">>, loop(Reply);
-        _Other -> loop(Reply)
+        {From, Text} when is_binary(Text) -> From ! Answer(Text), loop(Answer);
+        {From, _Other} -> From ! <<"not a binary">>, loop(Answer)
     end.
 
-%% Watches the process POSIPAKI_NODE serves under POSIPAKI_NAME: the name monitor is resolved by that node when the frame
-%% arrives, and the pid comes from the process itself, asked `whois`.
+%% Watches the name POSIPAKI_NAME (default `posipaki`) at the node POSIPAKI_NODE names, asks the process itself `whois`
+%% for the pid it answers at, monitors that pid too, and tells it to exit. That node resolves the watch when it arrives.
 watch() ->
     Node = node_to_watch(),
     Name = list_to_atom(text_of("POSIPAKI_NAME", "posipaki")),
     NameMonitor = monitor(process, {Name, Node}),
     io:format("watching ~p at ~p (~p)~n", [Name, Node, NameMonitor]),
     {Name, Node} ! {whois, self()},
-    % One moment both waits end at: a term that is not what a wait reads does not move it.
     Deadline = erlang:monotonic_time(millisecond) + 5000,
     await_pid(Name, Node, NameMonitor, Deadline).
 
-%% Waits for the pid the process answers `whois` with, monitors it, and asks the process to end. A term of another shape
-%% stays in the mailbox. The name's own end is read here too: a name nobody serves answers `noproc` instead of `whois`.
+%% Waits for the `whois` answer, monitors the pid it carries, and asks that pid to exit. A name nobody serves answers
+%% `noproc` here instead; a term that is not the answer stays in the mailbox.
 await_pid(Name, Node, NameMonitor, Deadline) ->
     receive
         {whois, Pid} when is_pid(Pid) ->
@@ -57,7 +53,7 @@ await_pid(Name, Node, NameMonitor, Deadline) ->
             io:format("whois ~p: nothing answered~n", [Name])
     end.
 
-%% Waits for one answer per monitor: the name's, and the pid's.
+%% One answer per monitor: the name's, and the pid's.
 await_downs(0, _Deadline) ->
     ok;
 await_downs(Pending, Deadline) ->
@@ -69,7 +65,7 @@ await_downs(Pending, Deadline) ->
             io:format("no answer for ~p of the monitors~n", [Pending])
     end.
 
-%% The node to watch, as POSIPAKI_NODE says, or a sentence that stops the run.
+%% POSIPAKI_NODE as a node, or a sentence that stops the run.
 node_to_watch() ->
     case os:getenv("POSIPAKI_NODE") of
         false ->
@@ -79,6 +75,7 @@ node_to_watch() ->
             list_to_atom(Text)
     end.
 
+%% An environment variable's text, or the default when it is unset.
 text_of(Name, Default) ->
     case os:getenv(Name) of
         false -> Default;
