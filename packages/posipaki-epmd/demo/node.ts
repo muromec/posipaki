@@ -1,11 +1,11 @@
 #!/usr/bin/env bun
 /**
  * A node of this host that answers: it starts a mapper when none answers, serves one process under its own name, and
- * prints every term that process is handed. The word in a term decides what it does: `hi` answers the process the term
- * names, `exit` ends the process, so a peer monitoring it reads a DOWN. An answer is a send of the actor's own: a served
- * process is never given a wire to write to.
+ * prints every term that process is handed. The opcode a term starts with decides what it does: `hi` answers the process
+ * the term names, `exit` ends the process, so a peer monitoring it reads a DOWN. An answer is a send of the actor's own: a
+ * served process is never given a wire to write to.
  *
- * The words it answers are its own: `whois` says which pid this process answers at, so a peer can monitor it without
+ * The opcodes it answers are its own: `whois` says which pid this process answers at, so a peer can monitor it without
  * being told, and `exit` ends it. Nobody here asks a peer to watch this process: a monitor on the name arrives at this
  * node, which resolves it.
  *
