@@ -60,7 +60,7 @@ cookie does the rest itself.
 $ bun demo/node.ts --name posipaki@192.168.88.27 --cookie pocookie
 posipaki@192.168.88.27 listening on 0.0.0.0:46002
 posipaki@192.168.88.27 serves posipaki and stays up; ^C stops it
-  asked: {#remote<watcher5@192.168.88.20.10>, whois}
+  asked: {whois, #remote<watcher5@192.168.88.20.10>}
   asked: exit
   exit: this process ends, and a peer watching it is told why
 ```
@@ -79,7 +79,9 @@ The answer carries the address the watcher used: a watch on a pid is answered wi
 name. A name is resolved here, once, when the watch arrives — `noproc` at once if nothing serves it — and the answer goes
 back over the connection the watch came in on.
 
-A message arrives with no sender field, so the demo's process reads the address out of the term it was handed.
+A message arrives with no sender field, so the demo's process reads the address out of the term it was handed. The terms
+it is handed start with their opcode, an ask and an answer alike: `{whois, Pid}` asks and `{whois, Pid}` answers, and a
+bare binary is a word alone.
 
 `node.close()` lets those answers go before the connection closes: a peer watching a process is owed the reason it ended,
 and `noconnection` is a different fact. The same wire the other way: `node.watch(pid)` and `node.watchName(ref, name)`

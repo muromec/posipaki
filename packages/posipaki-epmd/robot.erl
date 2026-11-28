@@ -36,7 +36,7 @@ watch() ->
     Name = list_to_atom(text_of("POSIPAKI_NAME", "posipaki")),
     NameMonitor = monitor(process, {Name, Node}),
     io:format("watching ~p at ~p (~p)~n", [Name, Node, NameMonitor]),
-    {Name, Node} ! {self(), <<"whois">>},
+    {Name, Node} ! {whois, self()},
     % One moment both waits end at: a term that is not what a wait reads does not move it.
     Deadline = erlang:monotonic_time(millisecond) + 5000,
     await_pid(Name, Node, NameMonitor, Deadline).
