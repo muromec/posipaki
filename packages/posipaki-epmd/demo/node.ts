@@ -11,14 +11,12 @@
  *
  *   bun demo/node.ts                                            # posipaki@<this host>, cookie from ~/.erlang.cookie
  *   bun demo/node.ts --name probe@10.0.0.2 --cookie s3cret
- *   bun demo/node.ts --say relay --node robot@192.168.88.20     # and say hi to that name on that node
  *
  * It serves until stopped: ^C is how it ends.
  */
 
-import { makeCluster, refFromName } from "../src/cluster.js";
+import { makeCluster } from "../src/cluster.js";
 import { startNode } from "../src/node.js";
-import { binary, tuple } from "../src/terms.js";
 import { Answerer } from "./answerer.js";
 import { cookieOf, nameOf } from "./settings.js";
 
@@ -45,10 +43,6 @@ async function main(): Promise<void> {
   const host = flag(argv, "host") ?? "0.0.0.0";
   const port = Number(flag(argv, "port") ?? "0");
   const served = localPart(self);
-  /** The node this run also says hi to, and the name there. */
-  const net = flag(argv, "node");
-  const say = flag(argv, "say");
-  if (net === undefined && say !== undefined) throw new Error("--say needs --node <node@host>");
 
   // Nobody has to set a mapper up first: this node answers on its own host when none does.
   makeCluster({ epmd: { start: "auto" } });
@@ -58,12 +52,6 @@ async function main(): Promise<void> {
   node.registerProcess(served, answerer);
   console.log(`${self} listening on ${host}:${node.port}`);
   console.error(`${self} serves ${served} and stays up; ^C stops it`);
-
-  // Asked to say hi: the term names the pid of this process, so the answer comes back to it.
-  if (say !== undefined && net !== undefined) {
-    await node.sendReg(say, refFromName(net), tuple(node.pidOf(answerer), binary(Buffer.from("hi", "utf8"))), answerer);
-    console.log(`said hi to ${say} on ${net}`);
-  }
 
   for (const signal of ["SIGINT", "SIGTERM"] as const) {
     process.on(signal, () => {

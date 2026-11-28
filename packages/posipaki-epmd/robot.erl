@@ -1,11 +1,9 @@
-%% The other half of the proof: a node that hosts names, and one of them relays a message both ways.
+%% The other half of the proof: a node that hosts names, and answers what is sent to them.
 %%
 %%   erlc robot.erl
-%%   POSIPAKI_NODE=posipaki@192.168.88.27 \
-%%     erl -name robot@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:start().'
+%%   erl -name robot@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:start().'
 %%
-%% `robot` answers <<"hello ", Text/binary>>, `echo` answers <<"echo: ", Text/binary>>, and `relay` is the round trip:
-%% it answers the node that said hi, then asks POSIPAKI_NODE to answer that same node directly.
+%% `robot` answers <<"hello ", Text/binary>> and `echo` answers <<"echo: ", Text/binary>>.
 %%
 %% `watch/0` is the other way round, and needs nothing of the posipaki side but a node name and a cookie: it monitors the
 %% name that node serves, asks the process itself `whois` for the pid, monitors that too, and tells it to exit.
@@ -21,8 +19,7 @@
 start() ->
     register(robot, spawn(fun() -> loop(fun(Text) -> <<"hello ", Text/binary>> end) end)),
     register(echo, spawn(fun() -> loop(fun(Text) -> <<"echo: ", Text/binary>> end) end)),
-    register(relay, spawn(fun() -> relay(target()) end)),
-    io:format("robot, echo and relay registered on ~p~n", [node()]),
+    io:format("robot and echo registered on ~p~n", [node()]),
     receive stop -> ok end.
 
 loop(Reply) ->
@@ -30,29 +27,6 @@ loop(Reply) ->
         {From, Text} when is_binary(Text) -> From ! Reply(Text), loop(Reply);
         {From, _Other} -> From ! <<"not a binary">>, loop(Reply);
         _Other -> loop(Reply)
-    end.
-
-%% Where the posipaki node is, as this node's environment says.
-target() ->
-    case os:getenv("POSIPAKI_NODE") of
-        false -> undefined;
-        Node -> list_to_atom(Node)
-    end.
-
-%% Answers the node that said hi, then hands it to the posipaki node, which answers it itself.
-relay(undefined) ->
-    receive
-        {From, _Text} -> From ! <<"relay has no POSIPAKI_NODE">>, relay(undefined)
-    end;
-relay(Target) ->
-    receive
-        {From, <<"hi">>} ->
-            From ! <<"tomato: hi">>,
-            {posipaki, Target} ! {From, <<"hi">>},
-            relay(Target);
-        {From, _Text} ->
-            From ! <<"tomato: only hi">>,
-            relay(Target)
     end.
 
 %% The terms this side reads, each by the opcode it starts with: what a served process answers, and what the runtime says
