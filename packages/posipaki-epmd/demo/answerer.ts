@@ -3,11 +3,12 @@
 // process the term itself names — not the one that asked — which is what makes an answer from one node reach a second
 // one. It never sees an address.
 //
-// The words it knows are a table: `hi` is answered, and `exit` ends the process, so a peer watching it reads a DOWN.
+// The words it knows are its methods: `hi` and `whois` answer, and `exit` ends the process, so a peer watching it reads a
+// DOWN. An answer starts with the word it answers, so a peer reads the opcode first and parses what that opcode carries.
 // Two of these facing each other would otherwise answer each other for ever, each term naming the other side: the same
 // rule `robot.erl` keeps, and for the same reason.
 
-import { defineActor, defineMessages, type AnyProcess } from "posipaki";
+import { defineActor, defineMessages } from "posipaki";
 
 import type { EtfTerm } from "../src/node.js";
 import { processTerm, show, type ErlangProcess, type VisibleTerm } from "../src/processes.js";
@@ -28,35 +29,37 @@ function namedIn(body: VisibleTerm): ErlangProcess | null {
   return first?.kind === "remote" ? first.process : null;
 }
 
-/** A word this process knows: the term it answers with, or the reason it ends with. */
-type Word = { readonly reply: (self: AnyProcess) => VisibleTerm } | { readonly ends: string };
-
-/** The words it knows, by what a term carries. A word not here is printed and left alone. */
-const dispatch: Record<string, Word> = {
-  // An answer starts with the word, so a peer reads the opcode first and parses what that opcode carries.
-  hi: { reply: (self) => tuple(atom("hi"), processTerm(self), binary(Buffer.from("answering", "utf8"))) },
-  // The pid this process answers at, which is what a peer monitors it by.
-  whois: { reply: (self) => tuple(atom("whois"), processTerm(self)) },
-  exit: { ends: "asked to" },
-};
-
 /** Says what it was asked, and does what the word asks: answers the process the term names, or ends. */
 export const Answerer = defineActor({
   name: "answerer",
   inMessages: defineMessages<EtfTerm>(),
   outMessages: defineMessages<never>(),
+  methods: {
+    /** Answers `hi`, with the pid this process answers at and the word it says back. */
+    async hi(to: ErlangProcess): Promise<void> {
+      await to.send(tuple(atom("hi"), processTerm(this.self), binary(Buffer.from("answering", "utf8"))));
+    },
+    /** Answers `whois` with the pid a peer monitors this process by. */
+    async whois(to: ErlangProcess): Promise<void> {
+      await to.send(tuple(atom("whois"), processTerm(this.self)));
+    },
+  },
   handlers: {
     async ETF_RAW(asked: EtfTerm) {
       console.log(`  asked: ${show(asked.body)}`);
       const word = wordIn(asked.body);
-      const known = word === null ? undefined : dispatch[word];
-      if (word === null || known === undefined) {
-        console.log("  and nothing here answers it");
+      if (word === null) {
+        console.log("  and nothing to answer: the term carries no word");
         return;
       }
-      if ("ends" in known) {
-        console.log(`  ${word}: this process ends, and a peer watching it is told why`);
-        this.exit(known.ends);
+      // The word is the opcode of the answer: `exit` ends the process, and the others name a method of this actor.
+      if (word === "exit") {
+        console.log("  exit: this process ends, and a peer watching it is told why");
+        this.exit("asked to");
+        return;
+      }
+      if (word !== "hi" && word !== "whois") {
+        console.log(`  and nothing here answers ${word}`);
         return;
       }
       const to = namedIn(asked.body);
@@ -64,8 +67,7 @@ export const Answerer = defineActor({
         console.log("  and nothing to answer: the term names no process");
         return;
       }
-      // The address is the term's, and answering is a send of this actor's own: nothing here emits.
-      await to.send(known.reply(this.self));
+      await this[word](to);
     },
   },
 });
