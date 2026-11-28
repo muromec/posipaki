@@ -58,7 +58,7 @@ cookie does the rest itself.
 $ bun demo/node.ts --name posipaki@192.168.88.27 --cookie pocookie
 posipaki@192.168.88.27 listening on 0.0.0.0:46002
 posipaki@192.168.88.27 serves posipaki and stays up; ^C stops it
-  asked: {#remote<watcher2@192.168.88.20.10>, whois}
+  asked: {#remote<watcher5@192.168.88.20.10>, whois}
   asked: exit
   exit: this process ends, and a peer watching it is told why
 ```
@@ -66,10 +66,11 @@ posipaki@192.168.88.27 serves posipaki and stays up; ^C stops it
 ```
 tomato$ POSIPAKI_NODE=posipaki@192.168.88.27 erl -name watcher@192.168.88.20 -setcookie pocookie \
               -noshell -eval 'robot:watch(), halt().'
-watching posipaki at 'posipaki@192.168.88.27' (#Ref<0.735349037.1664876548.247323>)
-whois posipaki: <10601.1.0> (#Ref<0.735349037.1664876548.247379>)
-down #Ref<0.735349037.1664876548.247323> {posipaki,'posipaki@192.168.88.27'} normal
-down #Ref<0.735349037.1664876548.247379> <10601.1.0> normal
+watching posipaki at 'posipaki@192.168.88.27' (#Ref<0.4252275418.591396869.210899>)
+whois posipaki: <10603.1.0> (#Ref<0.4252275418.591396869.210955>)
+asking <10603.1.0> to exit
+down #Ref<0.4252275418.591396869.210899> {posipaki,'posipaki@192.168.88.27'} normal
+down #Ref<0.4252275418.591396869.210955> <10603.1.0> normal
 ```
 
 The answer carries the address the watcher used: a watch on a pid is answered with the pid, a watch on a name with the
@@ -112,21 +113,24 @@ which needs a connection node 3 opens, and a pid it has never seen the node of.
 bun demo/node.ts --name posipaki@192.168.88.27 --port 46002 --cookie pocookie
 # node 1: serves a process named `probe`, says hi to `relay` on tomato, and hears both answers
 bun demo/node.ts --name probe@192.168.88.27 --port 46001 --cookie pocookie \
-    --say relay --node robot@192.168.88.20
+    --say relay --node robot2@192.168.88.20
 ```
 
 A host needs a mapper for a node here to be found by name: the first node started with `epmd: { start: "auto" }` runs one,
 and `bun src/mapper-cli.ts` is the copy that outlives it. Tomato's `relay` asks *this* host's mapper where `posipaki` is,
 which is the connection node 3 accepts; and node 1 is reached by a pid, so nothing looks it up.
 
+The run below used `robot2@192.168.88.20`: a node of the name started above was already running on that host, and nothing
+in the flow turns on the name of the node in the middle.
+
 The two logs, in order:
 
 ```
-node 1:  said hi to relay on robot@192.168.88.20
+node 1:  said hi to relay on robot2@192.168.88.20
 node 1:    asked: tomato: hi
 node 1:    and nothing here answers it
 node 3:    asked: {#remote<probe@192.168.88.27.1>, hi}
-node 1:    asked: {#remote<posipaki@192.168.88.27.1>, answering, done}
+node 1:    asked: {hi, #remote<posipaki@192.168.88.27.1>, answering}
 node 1:    and nothing here answers it
 ```
 

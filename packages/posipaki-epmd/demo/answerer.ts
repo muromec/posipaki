@@ -7,7 +7,7 @@
 // Two of these facing each other would otherwise answer each other for ever, each term naming the other side: the same
 // rule `robot.erl` keeps, and for the same reason.
 
-import { defineActor, defineMessages } from "posipaki";
+import { defineActor, defineMessages, type AnyProcess } from "posipaki";
 
 import type { EtfTerm } from "../src/node.js";
 import { processTerm, show, type ErlangProcess, type VisibleTerm } from "../src/processes.js";
@@ -28,14 +28,15 @@ function namedIn(body: VisibleTerm): ErlangProcess | null {
   return first?.kind === "remote" ? first.process : null;
 }
 
-/** A word this process knows: the answer it sends, or the reason it ends with. */
-type Word = { readonly answer: string } | { readonly ends: string };
+/** A word this process knows: the term it answers with, or the reason it ends with. */
+type Word = { readonly reply: (self: AnyProcess) => VisibleTerm } | { readonly ends: string };
 
 /** The words it knows, by what a term carries. A word not here is printed and left alone. */
 const dispatch: Record<string, Word> = {
-  hi: { answer: process.env.POSIPAKI_WORDS ?? "answering" },
-  // The pid this process answers at, which is what a peer needs to monitor it: the answer names the asker instead.
-  whois: { answer: "whois" },
+  // An answer starts with the word, so a peer reads the opcode first and parses what that opcode carries.
+  hi: { reply: (self) => tuple(atom("hi"), processTerm(self), binary(Buffer.from("answering", "utf8"))) },
+  // The pid this process answers at, which is what a peer monitors it by.
+  whois: { reply: (self) => tuple(atom("whois"), processTerm(self)) },
   exit: { ends: "asked to" },
 };
 
@@ -64,7 +65,7 @@ export const Answerer = defineActor({
         return;
       }
       // The address is the term's, and answering is a send of this actor's own: nothing here emits.
-      await to.send(tuple(processTerm(this.self), binary(Buffer.from(known.answer, "utf8")), atom("done")));
+      await to.send(known.reply(this.self));
     },
   },
 });

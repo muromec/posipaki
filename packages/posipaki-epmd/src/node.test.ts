@@ -44,9 +44,8 @@ const Answerer = defineActor({
       heardArrived.wake();
       const to = namedIn(asked.body);
       if (to === undefined) return;
-      const words = process.env.POSIPAKI_WORDS ?? "done";
       // An answer is a send of the actor's own, to the process the term names: nothing emits.
-      await to.send(tuple(processTerm(this.self), binary(Buffer.from(words, "utf8"))));
+      await to.send(tuple(processTerm(this.self), binary(Buffer.from("done", "utf8"))));
     },
   },
 });

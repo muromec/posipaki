@@ -55,45 +55,72 @@ relay(Target) ->
             relay(Target)
     end.
 
-%% Watches the process POSIPAKI_NODE serves under POSIPAKI_NAME: a monitor on the name, which that node resolves when it
-%% arrives, and the pid the process itself answers `whois` with.
+%% The terms this side reads, each by the opcode it starts with: what a served process answers, and what the runtime says
+%% when a monitor fires. A term with any other opcode is `unknown`, and each reader ignores what it does not wait for.
+parse({whois, Pid}) when is_pid(Pid) ->
+    {whois, Pid};
+parse({'DOWN', Monitor, process, Watched, Reason}) ->
+    {down, Monitor, Watched, Reason};
+parse(SomethingElse) ->
+    {unknown, SomethingElse}.
+
+%% Watches the process POSIPAKI_NODE serves under POSIPAKI_NAME: the name monitor is resolved by that node when the frame
+%% arrives, and the pid comes from the process itself, asked `whois`.
 watch() ->
+    Node = node_to_watch(),
+    Name = list_to_atom(text_of("POSIPAKI_NAME", "posipaki")),
+    NameMonitor = monitor(process, {Name, Node}),
+    io:format("watching ~p at ~p (~p)~n", [Name, Node, NameMonitor]),
+    {Name, Node} ! {self(), <<"whois">>},
+    await_pid(Name).
+
+%% Waits for the pid the process answers `whois` with, monitors it, and asks the process to end.
+await_pid(Name) ->
+    receive
+        Message ->
+            case parse(Message) of
+                {whois, Pid} ->
+                    PidMonitor = monitor(process, Pid),
+                    io:format("whois ~p: ~p (~p)~n", [Name, Pid, PidMonitor]),
+                    io:format("asking ~p to exit~n", [Pid]),
+                    Pid ! <<"exit">>,
+                    await_downs(2);
+                _NotThePid ->
+                    await_pid(Name)
+            end
+    after 5000 ->
+            io:format("whois ~p: nothing answered~n", [Name])
+    end.
+
+%% Waits for one answer per monitor: the name's, and the pid's.
+await_downs(Pending) when Pending =< 0 ->
+    ok;
+await_downs(Pending) ->
+    receive
+        Message ->
+            case parse(Message) of
+                {down, Monitor, Watched, Reason} ->
+                    io:format("down ~p ~p ~p~n", [Monitor, Watched, Reason]),
+                    await_downs(Pending - 1);
+                _NotADown ->
+                    await_downs(Pending)
+            end
+    after 5000 ->
+            io:format("no answer for ~p of the monitors~n", [Pending])
+    end.
+
+%% The node to watch, as POSIPAKI_NODE says, or a sentence that stops the run.
+node_to_watch() ->
     case os:getenv("POSIPAKI_NODE") of
         false ->
-            io:format("watch needs POSIPAKI_NODE, e.g. posipaki@192.168.88.27~n", []);
-        NodeText ->
-            run_watch(list_to_atom(NodeText), list_to_atom(text_of("POSIPAKI_NAME", "posipaki")))
+            io:format("watch needs POSIPAKI_NODE, e.g. posipaki@192.168.88.27~n", []),
+            halt(1);
+        Text ->
+            list_to_atom(Text)
     end.
 
 text_of(Name, Default) ->
     case os:getenv(Name) of
         false -> Default;
         Text -> Text
-    end.
-
-run_watch(Node, Name) ->
-    ByName = monitor(process, {Name, Node}),
-    io:format("watching ~p at ~p (~p)~n", [Name, Node, ByName]),
-    {Name, Node} ! {self(), <<"whois">>},
-    receive
-        {Pid, _Word, _Done} when is_pid(Pid) ->
-            ByPid = monitor(process, Pid),
-            io:format("whois ~p: ~p (~p)~n", [Name, Pid, ByPid]),
-            Pid ! <<"exit">>,
-            answered(2)
-    after 5000 ->
-            io:format("whois ~p: nothing answered~n", [Name])
-    end.
-
-answered(0) ->
-    ok;
-answered(Left) ->
-    receive
-        {'DOWN', Ref, process, Object, Reason} ->
-            io:format("down ~p ~p ~p~n", [Ref, Object, Reason]),
-            answered(Left - 1);
-        _Other ->
-            answered(Left)
-    after 5000 ->
-            io:format("no answer for ~p of the monitors~n", [Left])
     end.
