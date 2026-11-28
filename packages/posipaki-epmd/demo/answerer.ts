@@ -34,6 +34,8 @@ type Word = { readonly answer: string } | { readonly ends: string };
 /** The words it knows, by what a term carries. A word not here is printed and left alone. */
 const dispatch: Record<string, Word> = {
   hi: { answer: process.env.POSIPAKI_WORDS ?? "answering" },
+  // The pid this process answers at, which is what a peer needs to monitor it: the answer names the asker instead.
+  whois: { answer: "whois" },
   exit: { ends: "asked to" },
 };
 

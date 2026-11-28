@@ -16,8 +16,8 @@ POSIPAKI_NODE=posipaki@192.168.88.27 \
   erl -name robot@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:start().'
 ```
 
-`robot.erl` hosts four names: `robot` answers `<<"hello ", Text>>`, `echo` answers `<<"echo: ", Text>>`, `relay` is the
-round trip below, and `watcher` watches a process of this side and prints what each watch answers. The node runs with
+`robot.erl` hosts three names: `robot` answers `<<"hello ", Text>>`, `echo` answers `<<"echo: ", Text>>`, and `relay` is the
+round trip below. `robot:watch()` is the other direction, run from a node of its own — see below. The node runs with
 `-name` rather than `-sname`: a short-name node refuses to connect to a name whose host is an address, and this side is
 addressed by one.
 
@@ -50,24 +50,26 @@ resolves against — and `processOf(pid)` names the process a pid belongs to in 
 
 ## Being watched
 
-A monitor is a subscription to a process's end, and the other side can hold one on a process this node serves. The demo's
-process answers `hi` and ends on `exit`; with `--watch` the node asks a peer to watch it, by pid and by the name it is
-served under, and that peer tells it to exit:
+A monitor is a subscription to a process's end, and the other side can hold one on a process this node serves. Nothing
+asks for that watch: the demo's process answers `whois` with the pid it answers at, so a peer with the node's name and the
+cookie does the rest itself.
 
 ```
-$ bun demo/node.ts --name posipaki@192.168.88.27 --cookie pocookie --watch watcher --node robot@192.168.88.20
-posipaki@192.168.88.27 listening on 0.0.0.0:45675
+$ bun demo/node.ts --name posipaki@192.168.88.27 --cookie pocookie
+posipaki@192.168.88.27 listening on 0.0.0.0:46002
 posipaki@192.168.88.27 serves posipaki and stays up; ^C stops it
-asked watcher on robot@192.168.88.20 to watch #PID<posipaki@192.168.88.27.1.0> and posipaki
+  asked: {#remote<watcher2@192.168.88.20.10>, whois}
   asked: exit
   exit: this process ends, and a peer watching it is told why
 ```
 
 ```
-robot@192.168.88.20:  watching <11102.1.0> (#Ref<0.3844925653.380370949.156459>) and posipaki at
-                      'posipaki@192.168.88.27' (#Ref<0.3844925653.380370949.156460>)
-                      down #Ref<0.3844925653.380370949.156459> <11102.1.0> normal
-                      down #Ref<0.3844925653.380370949.156460> {posipaki,'posipaki@192.168.88.27'} normal
+tomato$ POSIPAKI_NODE=posipaki@192.168.88.27 erl -name watcher@192.168.88.20 -setcookie pocookie \
+              -noshell -eval 'robot:watch(), halt().'
+watching posipaki at 'posipaki@192.168.88.27' (#Ref<0.735349037.1664876548.247323>)
+whois posipaki: <10601.1.0> (#Ref<0.735349037.1664876548.247379>)
+down #Ref<0.735349037.1664876548.247323> {posipaki,'posipaki@192.168.88.27'} normal
+down #Ref<0.735349037.1664876548.247379> <10601.1.0> normal
 ```
 
 The answer carries the address the watcher used: a watch on a pid is answered with the pid, a watch on a name with the

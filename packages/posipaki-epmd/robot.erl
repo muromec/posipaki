@@ -5,20 +5,24 @@
 %%     erl -name robot@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:start().'
 %%
 %% `robot` answers <<"hello ", Text/binary>>, `echo` answers <<"echo: ", Text/binary>>, and `relay` is the round trip:
-%% it answers the node that said hi, then asks POSIPAKI_NODE to answer that same node directly. `watcher` watches: it
-%% is asked to watch a pid and a name, tells that process to exit, and prints the two answers it gets.
+%% it answers the node that said hi, then asks POSIPAKI_NODE to answer that same node directly.
+%%
+%% `watch/0` is the other way round, and needs nothing of the posipaki side but a node name and a cookie: it monitors the
+%% name that node serves, asks the process itself `whois` for the pid, monitors that too, and tells it to exit.
+%%
+%%   POSIPAKI_NODE=posipaki@192.168.88.27 \
+%%     erl -name watcher@192.168.88.20 -setcookie pocookie -noshell -eval 'robot:watch(), halt().'
 %%
 %% The node runs with -name rather than -sname: a short-name node refuses to connect to a name whose host is an
 %% address, and the posipaki side of this demo is addressed by one.
 -module(robot).
--export([start/0]).
+-export([start/0, watch/0]).
 
 start() ->
     register(robot, spawn(fun() -> loop(fun(Text) -> <<"hello ", Text/binary>> end) end)),
     register(echo, spawn(fun() -> loop(fun(Text) -> <<"echo: ", Text/binary>> end) end)),
     register(relay, spawn(fun() -> relay(target()) end)),
-    register(watcher, spawn(fun() -> watcher() end)),
-    io:format("robot, echo, relay and watcher registered on ~p~n", [node()]),
+    io:format("robot, echo and relay registered on ~p~n", [node()]),
     receive stop -> ok end.
 
 loop(Reply) ->
@@ -51,20 +55,45 @@ relay(Target) ->
             relay(Target)
     end.
 
-%% Watches the process a `{Pid, Name, <<"ping">>}` names — by the pid, and by the name on that pid's node — tells it to
-%% exit, and prints what each watch answers. A watch names the process it is on, so the answer carries what was asked:
-%% the pid for the first, the name for the second.
-watcher() ->
+%% Watches the process POSIPAKI_NODE serves under POSIPAKI_NAME: a monitor on the name, which that node resolves when it
+%% arrives, and the pid the process itself answers `whois` with.
+watch() ->
+    case os:getenv("POSIPAKI_NODE") of
+        false ->
+            io:format("watch needs POSIPAKI_NODE, e.g. posipaki@192.168.88.27~n", []);
+        NodeText ->
+            run_watch(list_to_atom(NodeText), list_to_atom(text_of("POSIPAKI_NAME", "posipaki")))
+    end.
+
+text_of(Name, Default) ->
+    case os:getenv(Name) of
+        false -> Default;
+        Text -> Text
+    end.
+
+run_watch(Node, Name) ->
+    ByName = monitor(process, {Name, Node}),
+    io:format("watching ~p at ~p (~p)~n", [Name, Node, ByName]),
+    {Name, Node} ! {self(), <<"whois">>},
     receive
-        {Pid, Name, <<"ping">>} when is_pid(Pid), is_atom(Name) ->
+        {Pid, _Word, _Done} when is_pid(Pid) ->
             ByPid = monitor(process, Pid),
-            ByName = monitor(process, {Name, node(Pid)}),
-            io:format("watching ~p (~p) and ~p at ~p (~p)~n", [Pid, ByPid, Name, node(Pid), ByName]),
+            io:format("whois ~p: ~p (~p)~n", [Name, Pid, ByPid]),
             Pid ! <<"exit">>,
-            watcher();
+            answered(2)
+    after 5000 ->
+            io:format("whois ~p: nothing answered~n", [Name])
+    end.
+
+answered(0) ->
+    ok;
+answered(Left) ->
+    receive
         {'DOWN', Ref, process, Object, Reason} ->
             io:format("down ~p ~p ~p~n", [Ref, Object, Reason]),
-            watcher();
+            answered(Left - 1);
         _Other ->
-            watcher()
+            answered(Left)
+    after 5000 ->
+            io:format("no answer for ~p of the monitors~n", [Left])
     end.
