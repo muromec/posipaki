@@ -29,15 +29,6 @@ loop(Reply) ->
         _Other -> loop(Reply)
     end.
 
-%% The terms this side reads, each by the opcode it starts with: what a served process answers, and what the runtime says
-%% when a monitor fires. A term with any other opcode is `unknown`, and each reader ignores what it does not wait for.
-parse({whois, Pid}) when is_pid(Pid) ->
-    {whois, Pid};
-parse({'DOWN', Monitor, process, Watched, Reason}) ->
-    {down, Monitor, Watched, Reason};
-parse(SomethingElse) ->
-    {unknown, SomethingElse}.
-
 %% Watches the process POSIPAKI_NODE serves under POSIPAKI_NAME: the name monitor is resolved by that node when the frame
 %% arrives, and the pid comes from the process itself, asked `whois`.
 watch() ->
@@ -46,40 +37,35 @@ watch() ->
     NameMonitor = monitor(process, {Name, Node}),
     io:format("watching ~p at ~p (~p)~n", [Name, Node, NameMonitor]),
     {Name, Node} ! {self(), <<"whois">>},
-    await_pid(Name).
+    % One moment both waits end at: a term that is not what a wait reads does not move it.
+    Deadline = erlang:monotonic_time(millisecond) + 5000,
+    await_pid(Name, Node, NameMonitor, Deadline).
 
-%% Waits for the pid the process answers `whois` with, monitors it, and asks the process to end.
-await_pid(Name) ->
+%% Waits for the pid the process answers `whois` with, monitors it, and asks the process to end. A term of another shape
+%% stays in the mailbox. The name's own end is read here too: a name nobody serves answers `noproc` instead of `whois`.
+await_pid(Name, Node, NameMonitor, Deadline) ->
     receive
-        Message ->
-            case parse(Message) of
-                {whois, Pid} ->
-                    PidMonitor = monitor(process, Pid),
-                    io:format("whois ~p: ~p (~p)~n", [Name, Pid, PidMonitor]),
-                    io:format("asking ~p to exit~n", [Pid]),
-                    Pid ! <<"exit">>,
-                    await_downs(2);
-                _NotThePid ->
-                    await_pid(Name)
-            end
-    after 5000 ->
+        {whois, Pid} when is_pid(Pid) ->
+            PidMonitor = monitor(process, Pid),
+            io:format("whois ~p: ~p (~p)~n", [Name, Pid, PidMonitor]),
+            io:format("asking ~p to exit~n", [Pid]),
+            Pid ! <<"exit">>,
+            await_downs(2, Deadline);
+        {'DOWN', NameMonitor, process, {Name, Node}, Reason} ->
+            io:format("down ~p {~p,~p} ~p~n", [NameMonitor, Name, Node, Reason])
+    after max(0, Deadline - erlang:monotonic_time(millisecond)) ->
             io:format("whois ~p: nothing answered~n", [Name])
     end.
 
 %% Waits for one answer per monitor: the name's, and the pid's.
-await_downs(Pending) when Pending =< 0 ->
+await_downs(0, _Deadline) ->
     ok;
-await_downs(Pending) ->
+await_downs(Pending, Deadline) ->
     receive
-        Message ->
-            case parse(Message) of
-                {down, Monitor, Watched, Reason} ->
-                    io:format("down ~p ~p ~p~n", [Monitor, Watched, Reason]),
-                    await_downs(Pending - 1);
-                _NotADown ->
-                    await_downs(Pending)
-            end
-    after 5000 ->
+        {'DOWN', Monitor, process, Watched, Reason} ->
+            io:format("down ~p ~p ~p~n", [Monitor, Watched, Reason]),
+            await_downs(Pending - 1, Deadline)
+    after max(0, Deadline - erlang:monotonic_time(millisecond)) ->
             io:format("no answer for ~p of the monitors~n", [Pending])
     end.
 
